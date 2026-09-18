@@ -1588,7 +1588,7 @@ function syncRuntimeFromNewestExtension(claudeDir) {
 // alive to notice: the window that comes up afterwards loads a clean bundle, which never requires this
 // file. Patching the new folder now means the reload VS Code is about to ask for comes up patched, with
 // no second reload and nothing to run by hand. The case this cannot reach — an update applied while VS
-// Code was closed — is what the keeper extension is for.
+// Code was closed — is what extension.js covers on the next activation.
 //
 // process.execPath is Code.exe in the extension host; ELECTRON_RUN_AS_NODE turns it back into node, the
 // same way the proxy is spawned.
