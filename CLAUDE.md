@@ -13,9 +13,11 @@ Two kinds of branch exist here, and nothing else is kept:
 - **`main`** — where the work happens. Commit straight onto it. No feature branches, no pull requests,
   no merge commits; `main` always tracks the newest Claude Code release the signatures were verified
   against.
-- **`v<version>`** — one per released version, pointing at the last commit that still works with that
-  Claude Code release, so an older install stays reproducible. Written once, when `main` moves on to
-  the next release, and never developed on.
+- **`v<version>`** — one per released version, pointing at the commit that was released, so an older
+  install stays reproducible. Cut at release, beside the tag, and never developed on. The tag is what
+  `release.yml` builds from; the branch is what somebody checks out when they need that release's
+  source, and it is there from the moment the release exists rather than appearing later, once
+  somebody needs it.
 
 Anything else is rubbish: a `feat/…`, a branch named after whatever it was trying, a leftover from an
 experiment. Delete it locally and on `origin` as soon as its commits are in `main`.
