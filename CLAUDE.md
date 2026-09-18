@@ -8,21 +8,45 @@ dependencies and nothing to build — the `.vsix` is written by `scripts/build-v
 
 ## Branches
 
-`main` is where the work happens. Commit straight onto it: no feature branches, no pull requests, no
-merge commits. There are no version branches any more — an older release is a `.vsix` in GitHub
-Releases and *Install Another Version…* in the Extensions view.
+Two kinds of branch exist here, and nothing else is kept:
+
+- **`main`** — where the work happens. Commit straight onto it. No feature branches, no pull requests,
+  no merge commits; `main` always tracks the newest Claude Code release the signatures were verified
+  against.
+- **`v<version>`** — one per released version, pointing at the last commit that still works with that
+  Claude Code release, so an older install stays reproducible. Written once, when `main` moves on to
+  the next release, and never developed on.
 
 Anything else is rubbish: a `feat/…`, a branch named after whatever it was trying, a leftover from an
-experiment. Delete it locally and on `origin` as soon as its commits are in `main`, checking first that
-`main` contains it (`git branch --merged main`, and `git branch -d`, never `-D`).
+experiment. Delete it locally and on `origin` as soon as its commits are in `main`.
+
+Never create a branch to hold ordinary work, and never leave one behind after merging. Do not offer a
+pull request — the change goes on `main` and gets pushed.
+
+Before deleting any branch, check that `main` already contains it (`git branch --merged main`, and
+`git branch -d`, never `-D`). A release branch is kept even when it is *not* merged — that is the whole
+point of it.
 
 ## Versions
 
-`version` in `package.json` is the extension's own, semver, and is what the Marketplace sees.
-`verifiedAgainst` is the list of Claude Code releases whose bundles the signatures were actually checked
-against — adapting to a new release means adding it there, bumping the patch version and writing a
-CHANGELOG entry. A release tag is `v<version>` and has to match `package.json`, which `release.yml`
-checks.
+`version` in `package.json` **is the Claude Code version the signatures were verified against**, as it
+was in Claudapter: Claude Code 2.1.276 → Vannevar Code 2.1.276. The number is the compatibility
+statement, and it is what the Marketplace shows.
+
+`verifiedAgainst` carries the whole list, newest first — one release of this extension often fits
+several Claude Code builds (2.1.276 and 2.1.274 share every signature). `version` is the first entry of
+that list; the patcher flags anything outside it as unverified.
+
+Adapting to a new Claude Code release: add it to the front of `verifiedAgainst`, set `version` to it,
+write a CHANGELOG entry, tag `v<version>`. `release.yml` refuses a tag that does not match
+`package.json`.
+
+**The one place this scheme runs out.** A second release under the same Claude Code build — a bug fix
+between their releases — has no number left: the Marketplace takes `major.minor.patch` and nothing
+else, and it refuses a version it has already seen. There is no spare component, so that release takes
+the next patch number (`2.1.277` under Claude Code 2.1.276) and `verifiedAgainst` stays as it was. From
+that point `verifiedAgainst`, not `version`, is the truth about compatibility — which is why every part
+of the code that decides anything reads the list and not the number.
 
 ## The internal names do not change
 

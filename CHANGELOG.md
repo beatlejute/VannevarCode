@@ -1,10 +1,11 @@
 # Changelog
 
-Versions are the extension's own. `Verified against` is the list of Claude Code releases whose bundles
-the patch signatures were actually checked against — a release outside that list usually still takes the
-patch, and the notification says so when it does.
+The version is the Claude Code release the signatures were verified against. `Verified against` is the
+whole list — one release of this extension usually fits several Claude Code builds — and a release
+outside that list still takes the patch more often than not, with the notification saying so when it
+does.
 
-## 0.1.0
+## 2.1.276
 
 Verified against Claude Code **2.1.276**, **2.1.274**.
 
