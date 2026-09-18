@@ -51,7 +51,7 @@ another on DeepSeek, a third on your ChatGPT subscription.
 ## Install
 
 Install **Vannevar Code** from the Marketplace (or Open VSX in Cursor, Windsurf and VSCodium), or take
-the `.vsix` from [Releases](https://github.com/beatlejute/vannevar-code/releases) and
+the `.vsix` from [Releases](https://github.com/beatlejute/VannevarCode/releases) and
 
 ```bash
 code --install-extension vannevarcode-2.1.276.vsix
