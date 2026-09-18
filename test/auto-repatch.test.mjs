@@ -177,6 +177,48 @@ try {
     }
     console.log(`OK — every release in verifiedAgainst (${verified.join(', ')}) applies without a warning`);
 
+    // --- patched, but by somebody else ------------------------------------------------------------
+    // The marker says "somebody patched this"; --if-needed is asking "is MY runtime wired in". A bundle
+    // carrying hooks that load host.js out of another directory answers no to the second question, and
+    // reporting up-to-date there is how a window ends up running a runtime nothing maintains — the menu
+    // entry silently absent, the patch apparently on. It happened: two windows, one of them patched by
+    // the install this one replaced.
+    const foreign = fixture('anthropic.claude-code-9.9.9-foreign', {
+        'extension.js': source['extension.js'],
+        'webview/index.js': source['webview/index.js'],
+    });
+    // A real foreign patch leaves a backup behind, which is what a full apply works from
+    writeFileSync(path.join(foreign, 'extension.js.ccx-orig'), source['extension.js']);
+    writeFileSync(path.join(foreign, 'webview', 'index.js.ccx-orig'), source['webview/index.js']);
+    writeFileSync(
+        path.join(foreign, 'extension.js'),
+        source['extension.js'] +
+            '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
+    );
+
+    const rewired = run(PATCHER, [`--dir=${foreign}`, '--if-needed']);
+    assert.equal(rewired.code, 0, `the foreign patch was not replaced:\n${rewired.text.slice(-1500)}`);
+    assert.match(rewired.text, /^ccx-result: patched$/m, 'a bundle wired to another runtime reported up-to-date');
+    const rewritten = readFileSync(path.join(foreign, 'extension.js'), 'utf8');
+    assert.ok(rewritten.includes('".claude","vannevar","host.js"'), 'the hooks do not point at this runtime');
+    assert.ok(!rewritten.includes('"elsewhere"'), 'the foreign hook survived — it was patched on top, not replaced');
+    console.log('OK — hooks that load another runtime are replaced, not mistaken for this one');
+
+    // With no backup beside it there is nothing clean to patch from, and taking the backup from the
+    // patched file would make those hooks permanent
+    const orphan = fixture('anthropic.claude-code-9.9.9-orphan', {
+        'extension.js':
+            source['extension.js'] +
+            '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
+        'webview/index.js': source['webview/index.js'],
+    });
+    const refusedOrphan = run(PATCHER, [`--dir=${orphan}`, '--if-needed']);
+    assert.notEqual(refusedOrphan.code, 0, 'a foreign patch with no backup was written over');
+    assert.match(refusedOrphan.text, /already patched and has no/, `unexpected failure:\n${refusedOrphan.text}`);
+    assert.ok(!existsSync(path.join(orphan, 'extension.js.ccx-orig')), 'a patched file was saved as the backup');
+    console.log('OK — a foreign patch with no backup stops the patcher instead of becoming the backup');
+
+
     // --- the stamp is where the patcher reads itself --------------------------------------------
     const stamped = run(PATCHER, [`--dir=${patched}`, '--status']);
     assert.match(
