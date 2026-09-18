@@ -1,0 +1,11 @@
+node_modules/
+*.log
+*.vsix
+
+# Provider icons are downloaded onto the user's machine, never committed here
+assets/
+*.ico
+
+# ...except the extension's own icon, which is drawn by scripts/make-icon.mjs and has to ship
+*.png
+!images/icon.png

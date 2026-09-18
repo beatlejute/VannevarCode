@@ -1,0 +1,11 @@
+# Only relevant to `vsce package`; scripts/build-vsix.mjs works from an allow-list instead, so the two
+# have to be kept saying the same thing.
+test/**
+docs/**
+scripts/**
+.github/**
+images/**
+!images/icon.png
+.gitignore
+.vscodeignore
+*.vsix

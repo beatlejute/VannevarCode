@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Windows is not redundant here: every path in this project is built with path.join and read back
+    # from a stamp, and a separator bug only ever shows up on one of the two.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # The project has no dependencies, so there is nothing to install — and nothing to audit.
+      - name: Tests
+        run: npm test
+
+      - name: Pack
+        run: node scripts/build-vsix.mjs
