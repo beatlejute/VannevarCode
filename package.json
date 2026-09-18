@@ -9,10 +9,10 @@
     "icon": "images/icon.png",
     "repository": {
         "type": "git",
-        "url": "https://github.com/beatlejute/vannevar-code"
+        "url": "https://github.com/beatlejute/VannevarCode"
     },
     "bugs": {
-        "url": "https://github.com/beatlejute/vannevar-code/issues"
+        "url": "https://github.com/beatlejute/VannevarCode/issues"
     },
     "engines": {
         "vscode": "^1.85.0",
