@@ -119,18 +119,6 @@ an ordinary extension update.
 |---|---|
 | 0.1.0 | 2.1.276, 2.1.274 |
 
-## Coming from Claudapter
-
-Claudapter was the same thing installed from a git clone with `npm run setup`. Install Vannevar Code and
-it takes over on the first window: bindings, pins, retracted messages, provider health, the ChatGPT
-tokens and the downloaded provider icons are copied from `~/.claude/claudapter/` into
-`~/.claude/vannevar/`, the old MCP entry is replaced, and you are offered the removal of the old
-*Claudapter Keeper* extension. Profiles are in `~/.claude/profiles/` and are shared, so they are not
-touched.
-
-Nothing is deleted: `~/.claude/claudapter/` stays where it is, and you can remove it by hand once the
-new one has been running for a while.
-
 ## Commands and settings
 
 | Command | Action |
