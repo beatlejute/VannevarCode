@@ -3,7 +3,7 @@
     "displayName": "Vannevar Code",
     "description": "Per-tab API provider switching for the Claude Code extension: Anthropic, DeepSeek, OpenAI, OpenRouter, Ollama, a ChatGPT subscription — switched from the command menu, per tab.",
     "publisher": "beatlejute",
-    "version": "0.1.0",
+    "version": "2.1.276",
     "verifiedAgainst": ["2.1.276", "2.1.274"],
     "license": "MIT",
     "icon": "images/icon.png",
