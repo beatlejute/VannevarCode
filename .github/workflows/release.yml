@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    # At job level so the two publish steps can ask whether their secret exists before running
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tests
+        run: npm test
+
+      # The tag and the manifest have to agree, or the Marketplace ends up with a version nobody can
+      # find in the repository
+      - name: Check the tag against package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version="$(node -p "require('./package.json').version")"
+          test "$tag" = "$version" || { echo "tag $tag != package.json $version"; exit 1; }
+
+      - name: Pack
+        run: |
+          node scripts/build-vsix.mjs
+          echo "VSIX=$(node -p "const p=require('./package.json');p.name+'-'+p.version+'.vsix'")" >> "$GITHUB_ENV"
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.VSIX }}
+          generate_release_notes: true
+
+      # Both publishes are off until 0.2.0: the .vsix in the release above is the whole channel until
+      # then. Adding the secrets is what turns each of them on — a missing one skips its step instead of
+      # failing the release.
+      - name: Marketplace
+        if: ${{ env.VSCE_PAT != '' }}
+        run: npx --yes @vscode/vsce publish --packagePath "$VSIX"
+
+      - name: Open VSX
+        if: ${{ env.OVSX_PAT != '' }}
+        run: npx --yes ovsx publish "$VSIX" -p "$OVSX_PAT"
