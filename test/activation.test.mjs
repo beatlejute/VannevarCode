@@ -243,6 +243,34 @@ try {
     assert.deepEqual(shown[0].actions, ['Reload Window'], 'a re-apply did not offer the reload');
     console.log('OK — a patch onto an unverified release names both versions and offers the reload');
 
+    // --- this extension updated, not Claude Code ---------------------------------------------------
+    // A new version of Vannevar Code re-applies the patch too, because a release can add a hook the
+    // bundle has never seen. It needs the same reload and a different sentence: "Claude Code was
+    // updated" in front of somebody who just updated this extension is a false statement about their
+    // machine.
+    reset();
+    patcherResult = { code: 0, stdout: 'ccx-result: patched\n' };
+    const stamped = JSON.parse(readFileSync(STAMP, 'utf8'));
+    writeFileSync(STAMP, JSON.stringify({ ...stamped, version: '2.1.200' }));
+    extension.activate(context);
+    await settle();
+
+    assert.deepEqual(
+        spawns.find((s) => s.patcher).args.slice(1),
+        [`--dir=${BUNDLE}`],
+        'a new extension version did not do a full apply — a hook added since the last release would be missing',
+    );
+    assert.equal(
+        JSON.parse(readFileSync(STAMP, 'utf8')).version,
+        PKG.version,
+        'the stamp still names the version that was replaced',
+    );
+    const upgraded = shown.find((s) => s.actions.includes('Reload Window'));
+    assert.ok(upgraded, 'an extension update offered no reload, and the window kept the old bundle');
+    assert.match(upgraded.message, /2\.1\.200/, `the message does not name the version replaced: ${upgraded.message}`);
+    assert.doesNotMatch(upgraded.message, /Claude Code was updated/, 'an extension update blamed Claude Code');
+    console.log('OK — an extension update re-applies in full and says which version replaced which');
+
     // --- the signatures moved ---------------------------------------------------------------------
     // The patcher stops before it writes, so Claude Code is intact and unpatched. The fix arrives as an
     // extension update, so those are the two offers: the updater and the log.

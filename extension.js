@@ -167,15 +167,22 @@ function showLog() {
 // them match the *shape* of an assignment, and a release can move what is being assigned without moving
 // the shape. Someone who runs the patch by hand reads that in its output; an automatic run has no
 // reader, so the notification is the only place it can surface.
-function reloadMessage(result, { first } = {}) {
+function reloadMessage(result, { first, upgradedFrom } = {}) {
     if (first)
         return 'Vannevar: the patch is on. Reload the window, then pick a provider from the command menu.';
-    if (!result.unverified) return 'Vannevar: Claude Code was updated — the patch has been re-applied.';
-    const [, installed, verified] = result.unverified;
-    return (
-        `Vannevar: the patch was re-applied on Claude Code ${installed}, verified only against ` +
-        `${verified}. It went on cleanly, but nothing has checked this release.`
-    );
+    if (result.unverified) {
+        const [, installed, verified] = result.unverified;
+        return (
+            `Vannevar: the patch was re-applied on Claude Code ${installed}, verified only against ` +
+            `${verified}. It went on cleanly, but nothing has checked this release.`
+        );
+    }
+    // Both updates re-apply the patch and both need the reload, and telling them apart is the whole
+    // content of the notification: "Claude Code was updated" in front of somebody who just updated
+    // *this* extension is simply a false statement about their machine.
+    if (upgradedFrom)
+        return `Vannevar: updated to ${pkg.version} from ${upgradedFrom} — the patch has been re-applied.`;
+    return 'Vannevar: Claude Code was updated — the patch has been re-applied.';
 }
 
 // A patch that no longer fits is not a broken Claude Code: the patcher stops before it writes, so the
@@ -299,7 +306,9 @@ async function sync(context, { explicit, patch = true }) {
         return null;
     }
 
-    const first = !currentStamp().version;
+    const was = currentStamp().version;
+    const first = !was;
+    const upgradedFrom = was && was !== pkg.version ? was : null;
     const fresh = syncRuntime(context, bundle);
     installTemplateProfiles(context);
     if (!patch) return bundle;
@@ -314,8 +323,9 @@ async function sync(context, { explicit, patch = true }) {
         return bundle;
     }
 
-    if (explicit) offerReload(result.patched ? reloadMessage(result, { first }) : 'Vannevar: the patch is already on.');
-    else if (result.patched) offerReload(reloadMessage(result, { first }));
+    if (explicit)
+        offerReload(result.patched ? reloadMessage(result, { first, upgradedFrom }) : 'Vannevar: the patch is already on.');
+    else if (result.patched) offerReload(reloadMessage(result, { first, upgradedFrom }));
     return bundle;
 }
 
