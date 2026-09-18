@@ -1,8 +1,8 @@
 'use strict';
 
-// The whole installer, now that there is no installer. Claudapter was a git clone plus `npm run setup`
-// plus a keeper extension that survived Claude Code updates; this file is all three, and the VS Code
-// updater is what replaces the "pull and re-run" step.
+// The whole installer, now that there is no installer. What used to be a git clone, `npm run setup` and
+// a companion extension that survived Claude Code updates is this one file, and the VS Code updater is
+// what replaces the "pull and re-run" step.
 //
 // What it does on every window, in order: find the Claude Code bundle, make sure ~/.claude/vannevar
 // holds this version's runtime, put the hooks back into the bundle if they are not there, and say so
@@ -25,7 +25,6 @@ const pkg = require('./package.json');
 const HOME = os.homedir();
 const CLAUDE_DIR = path.join(HOME, '.claude');
 const RUNTIME = path.join(CLAUDE_DIR, 'vannevar');
-const LEGACY_RUNTIME = path.join(CLAUDE_DIR, 'claudapter');
 const PROFILES_DIR = path.join(CLAUDE_DIR, 'profiles');
 const PATCHER = path.join(RUNTIME, 'apply-patch.mjs');
 const STAMP_FILE = path.join(RUNTIME, 'patch-version.json');
@@ -33,21 +32,7 @@ const MCP_RECEIPT = path.join(RUNTIME, 'mcp-registered.json');
 const LOG_FILE = path.join(RUNTIME, 'extension.log');
 
 const CLAUDE_EXTENSION_ID = 'anthropic.claude-code';
-const LEGACY_KEEPER_ID = 'local.claudapter-keeper';
 const MCP_SERVER_NAME = 'vannevar-agents';
-const LEGACY_MCP_SERVER_NAME = 'claudapter-agents';
-
-// The state files the runtime owns. Profiles are not among them: ~/.claude/profiles is shared with the
-// CLI and with any other tool that reads it, and it was never inside the runtime directory.
-const STATE_FILES = [
-    'bindings.json',
-    'pinned.json',
-    'hidden-messages.json',
-    'agent-health.json',
-    'full-history.json',
-    'chatgpt-auth.json',
-    'proxy.json',
-];
 
 function log(text) {
     try {
@@ -209,73 +194,6 @@ function reportFailure(bundle, out) {
     });
 }
 
-// --- migration from Claudapter --------------------------------------------------------------------
-//
-// Same machine, same user, same state — only the directory and the names changed. Everything is copied
-// rather than moved, and only where nothing is there yet: a second window activating at the same time
-// must not overwrite what the first one has already started writing to, and the old directory stays
-// where it is so that going back is a matter of installing the old thing again.
-function migrateLegacyState() {
-    if (!fs.existsSync(LEGACY_RUNTIME)) return [];
-    const carried = [];
-    fs.mkdirSync(RUNTIME, { recursive: true });
-
-    for (const file of STATE_FILES) {
-        const from = path.join(LEGACY_RUNTIME, file);
-        const to = path.join(RUNTIME, file);
-        if (!fs.existsSync(from) || fs.existsSync(to)) continue;
-        try {
-            fs.copyFileSync(from, to);
-            carried.push(file);
-        } catch (e) {
-            log(`migration: ${file} failed — ${e.message}`);
-        }
-    }
-
-    // Provider icons: downloaded onto this machine, never shipped, and re-downloading them is a script
-    // the user would have to find. Copied as a directory, and only when there is no icons/ yet.
-    const icons = path.join(LEGACY_RUNTIME, 'icons');
-    const iconsTarget = path.join(RUNTIME, 'icons');
-    if (fs.existsSync(icons) && !fs.existsSync(iconsTarget)) {
-        try {
-            fs.cpSync(icons, iconsTarget, { recursive: true });
-            carried.push('icons/');
-        } catch (e) {
-            log(`migration: icons failed — ${e.message}`);
-        }
-    }
-
-    if (carried.length) log(`migrated from ${LEGACY_RUNTIME}: ${carried.join(', ')}`);
-    return carried;
-}
-
-// The old keeper is harmless — its `--if-needed` looks for the same `__ccx` marker this patch writes,
-// so it finds the bundle patched and does nothing — but it is dead weight pointing at a runtime nobody
-// refreshes any more. Offered, never done silently: uninstalling an extension behind someone's back is
-// not this extension's call.
-function offerKeeperRemoval() {
-    let keeper = null;
-    try {
-        keeper = vscode.extensions.getExtension(LEGACY_KEEPER_ID);
-    } catch {}
-    if (!keeper) return;
-
-    vscode.window
-        .showInformationMessage(
-            'Vannevar Code has taken over from Claudapter, including its settings. The old Claudapter ' +
-                'Keeper extension is no longer needed.',
-            'Uninstall Claudapter Keeper',
-            'Leave it',
-        )
-        .then((choice) => {
-            if (choice !== 'Uninstall Claudapter Keeper') return;
-            vscode.commands.executeCommand('workbench.extensions.uninstallExtension', LEGACY_KEEPER_ID).then(
-                () => log('uninstalled the legacy keeper'),
-                (e) => log(`keeper uninstall failed: ${e && e.message}`),
-            );
-        });
-}
-
 // --- the delegated-agent MCP server ---------------------------------------------------------------
 //
 // Registered at user scope, so every project and every tab can reach it, and from ~/.claude/vannevar
@@ -354,11 +272,6 @@ async function registerMcp(bundle, { explicit }) {
 async function ensureMcp(bundle) {
     if (fs.existsSync(MCP_RECEIPT)) return;
     try {
-        // Claudapter's entry points at a runtime nothing refreshes any more, and the two servers offer
-        // the same tools — so the old one goes before the new one is registered.
-        if (fs.existsSync(LEGACY_RUNTIME))
-            await runClaude(bundle, ['mcp', 'remove', LEGACY_MCP_SERVER_NAME, '--scope', 'user']);
-
         const already = await mcpRegistered(bundle);
         const ok = already || (await registerMcp(bundle, { explicit: false }));
         if (ok) writeJson(MCP_RECEIPT, { server: MCP_SERVER_NAME, registeredAt: new Date().toISOString() });
@@ -380,10 +293,8 @@ async function sync(context, { explicit, patch = true }) {
     }
 
     const first = !currentStamp().version;
-    const migrated = migrateLegacyState();
     const fresh = syncRuntime(context, bundle);
     installTemplateProfiles(context);
-    if (migrated.length) offerKeeperRemoval();
     if (!patch) return bundle;
 
     // A fresh runtime means new hooks, and a hook that was added since the last release is not in the
@@ -433,11 +344,7 @@ function activate(context) {
         vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(path.join(PROFILES_DIR, '.')));
     });
 
-    command('vannevar.installMcp', async () => {
-        const bundle = claudeBundle();
-        await runClaude(bundle, ['mcp', 'remove', LEGACY_MCP_SERVER_NAME, '--scope', 'user']);
-        await registerMcp(bundle, { explicit: true });
-    });
+    command('vannevar.installMcp', () => registerMcp(claudeBundle(), { explicit: true }));
 
     // The patch is what makes every other part of this extension exist, so the only thing the setting
     // turns off is re-applying it unattended — the command still does it on demand, and the runtime is
@@ -459,5 +366,5 @@ module.exports = {
     activate,
     deactivate,
     // The activation test drives these directly, with `vscode` and $HOME both stubbed
-    __test: { sync, syncRuntime, migrateLegacyState, claudeBundle, runPatcher, RUNTIME, LEGACY_RUNTIME },
+    __test: { sync, syncRuntime, claudeBundle, runPatcher, RUNTIME },
 };

@@ -8,12 +8,14 @@ patch, and the notification says so when it does.
 
 Verified against Claude Code **2.1.276**, **2.1.274**.
 
-First release as a VS Code extension. Same feature set as Claudapter 2.1.276, installed and kept up to
-date by VS Code instead of by a git clone.
+First release. Everything the patch did as a hand-installed git clone, now installed and kept up to
+date by VS Code.
 
 - One extension instead of a repository, an installer script and a companion keeper extension. On the
   first window it copies its runtime into `~/.claude/vannevar`, patches the installed Claude Code
   bundle, installs the template profiles and registers the delegated-agent MCP server.
+- The runtime directory is `~/.claude/vannevar`, the MCP server is `vannevar-agents`, and the
+  environment variables the delegation server reads are `VANNEVAR_*`.
 - The Claude Code bundle is found through `vscode.extensions.getExtension`, so Cursor, Windsurf,
   Insiders and Remote-SSH/WSL hosts work without configuring anything. Previously only
   `~/.vscode/extensions` was searched.
@@ -22,4 +24,3 @@ date by VS Code instead of by a git clone.
   extension update.
 - A Claude Code update that lands together with a Vannevar Code update now refreshes the runtime from
   the newer extension folder before patching, so it takes one reload instead of two.
-- State carries over from `~/.claude/claudapter/` on the first window, and nothing there is deleted.
