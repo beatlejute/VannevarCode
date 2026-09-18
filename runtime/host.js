@@ -108,6 +108,22 @@ function dlog(...parts) {
     } catch {}
 }
 
+// The ChatGPT sign-in, which the command in the palette runs too — this file is the door from the
+// command menu. Resolved against the runtime directory rather than beside this file, and lazily: in
+// production host.js is a copy inside DIR with the module next to it, while the tests load it from a
+// copy somewhere else, where there is no module and the row simply reads "not signed in".
+let signinModule;
+function signin() {
+    if (signinModule === undefined)
+        try {
+            signinModule = require(path.join(DIR, 'chatgpt-signin.js'));
+        } catch (e) {
+            dlog('chatgpt sign-in unavailable', e && e.message);
+            signinModule = null;
+        }
+    return signinModule;
+}
+
 function readJson(file) {
     try {
         return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -1183,6 +1199,24 @@ function openProfileFile(name) {
     }
 }
 
+// The Settings row in the command menu, which is where the account Claude Code itself runs on is
+// switched — so the subscription is signed into from there rather than from the command palette, and
+// the palette command stays for a window whose patch is off. One flow at a time, guarded on the shared
+// state rather than per webview: every tab draws the same row, and a second flow would find port 1455
+// taken by the first. Both edges are broadcast, because the chip on that row is drawn from ccx:state.
+function startChatgptLogin() {
+    const flow = signin();
+    if (!flow || S.chatgptSigningIn) return;
+    S.chatgptSigningIn = true;
+    broadcast();
+    flow.signIn({ vscode, dir: DIR, onLog: (line) => dlog(line) })
+        .catch((e) => dlog('chatgpt sign-in failed', e && e.message))
+        .then(() => {
+            S.chatgptSigningIn = false;
+            broadcast();
+        });
+}
+
 function stateFor(sessionId, webview) {
     const profiles = listProfiles();
     const active = effectiveProfile(sessionId, webview);
@@ -1201,6 +1235,9 @@ function stateFor(sessionId, webview) {
         // Not about this tab's session — the whole list, since the history list is what reads it
         pinnedSessions: loadPinned(),
         historyBeforeCompaction: historyBeforeCompaction(),
+        // Drawn on the "Sign in to ChatGPT" row in Settings. `signingIn` is host state, not file
+        // state: a flow already running is what the row has to show instead of starting a second one.
+        chatgpt: { ...(signin() ? signin().status(DIR) : { loggedIn: false }), signingIn: Boolean(S.chatgptSigningIn) },
         models: active && active !== 'claude' ? modelsOf(active) : null,
         // `now` rather than a per-row Date.now(): every age in the panel is then measured from the
         // same instant, so two rows probed together never read as a minute apart.
@@ -1880,6 +1917,8 @@ function attachWebview(webview) {
             broadcast();
         } else if (m.type === 'ccx:openProfile') {
             openProfileFile(m.name);
+        } else if (m.type === 'ccx:chatgptLogin') {
+            startChatgptLogin();
         } else if (m.type === 'ccx:hideMessages') {
             const id = m.sessionId || sessionId;
             if (id) {

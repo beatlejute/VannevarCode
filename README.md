@@ -92,7 +92,8 @@ API — set `"CCX_PROXY": "openai"` in the profile's `env` and point `ANTHROPIC_
 `templates/profiles/openai.json` and `codex.json` are installed as working starting points.
 
 The ChatGPT Plus/Pro subscription works through the same adapter with the OAuth flow Codex uses —
-**Vannevar: Sign in to ChatGPT** opens it in a terminal. Tokens
+**Vannevar: Sign in to ChatGPT** runs it in the editor: VS Code opens the sign-in page, a progress
+notification holds the wait, and the account is reported when it is done. Tokens
 live in `~/.claude/vannevar/chatgpt-auth.json`, and an existing `~/.codex/auth.json` is picked up as a
 source. See [docs/internals.md](docs/internals.md) for the details, including corporate proxies.
 
@@ -134,7 +135,7 @@ says 2.1.276 was checked against Claude Code 2.1.276. One release usually fits s
 | **Vannevar: Show log** | the activation log |
 | **Vannevar: Open profiles folder** | `~/.claude/profiles/` |
 | **Vannevar: Register the delegated-agent MCP server** | re-register by hand |
-| **Vannevar: Sign in to ChatGPT (subscription mode)** | the OAuth flow, in a terminal |
+| **Vannevar: Sign in to ChatGPT (subscription mode)** | the OAuth flow, in the editor: the page opens in the browser, the result comes back as a notification |
 
 `vannevar.autoPatch` (default `true`) is the only setting: turned off, the patch is applied only from
 the command menu.
