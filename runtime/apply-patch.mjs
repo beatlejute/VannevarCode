@@ -467,9 +467,23 @@ function patchedFiles() {
     return [...new Set(PATCHES.map((p) => p.file))];
 }
 
+// The marker alone answers "somebody patched this", which is not the question `--if-needed` is asking.
+// Claudapter's hooks carry the same marker and load their host.js out of a different directory, and a
+// runtime this install does not maintain is exactly as useful as no runtime at all — the menu entry is
+// simply absent. So a file whose hooks name a path is patched only when that path is this one; a full
+// apply over the backup then puts the right hooks on.
+//
+// The hooks in webview/index.js carry no path — they talk to `globalThis.__ccx`, which whichever host
+// loaded last installs — so for that file the marker is still the whole answer.
+const HOST_PATH = HOST_LOAD.slice(0, HOST_LOAD.indexOf(';'));
+const HOST_HOOK = '/*__ccx*/let __p=';
+
 function filePatched(dir, rel) {
     const file = path.join(dir, rel);
-    return existsSync(file) && readFileSync(file, 'utf8').includes(MARKER);
+    if (!existsSync(file)) return false;
+    const src = readFileSync(file, 'utf8');
+    if (!src.includes(MARKER)) return false;
+    return !src.includes(HOST_HOOK) || src.includes(HOST_PATH);
 }
 
 function restore(dir) {
@@ -513,7 +527,17 @@ function apply(dir) {
     for (const [rel, patches] of byFile) {
         const file = path.join(dir, rel);
         if (!existsSync(file)) throw Error(`missing ${file}`);
-        if (!existsSync(backupPath(file))) copyFileSync(file, backupPath(file));
+        // The backup is taken once, from a file nobody has written to. A file that already carries the
+        // marker and has no backup beside it was patched by an install that is gone — baking those
+        // hooks into the backup would make them permanent, and every later revert would restore them.
+        if (!existsSync(backupPath(file))) {
+            if (readFileSync(file, 'utf8').includes(MARKER))
+                throw Error(
+                    `${rel} is already patched and has no ${path.basename(backupPath(file))} beside it — ` +
+                        'revert that install first, or reinstall the Claude Code extension.',
+                );
+            copyFileSync(file, backupPath(file));
+        }
 
         let src = readFileSync(backupPath(file), 'utf8');
         for (const p of patches) {
