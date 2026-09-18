@@ -363,6 +363,23 @@ function activate(context) {
 
     command('vannevar.installMcp', () => registerMcp(claudeBundle(), { explicit: true }));
 
+    // A terminal rather than a notification: the OAuth flow prints a URL to open and then waits, and
+    // both halves of that are unreadable anywhere else. The script is in the runtime for the same
+    // reason — scripts/ is not in the package, so there would otherwise be no way into the
+    // subscription on a Marketplace install at all.
+    command('vannevar.loginChatgpt', () => {
+        const script = path.join(RUNTIME, 'login-chatgpt.mjs');
+        if (!fs.existsSync(script))
+            return vscode.window.showWarningMessage(`Vannevar: the runtime is not installed — no ${script}.`);
+        const terminal = vscode.window.createTerminal({
+            name: 'Vannevar: ChatGPT sign-in',
+            shellPath: process.execPath,
+            shellArgs: ['--use-env-proxy', script],
+            env: { ELECTRON_RUN_AS_NODE: '1' },
+        });
+        terminal.show();
+    });
+
     // The patch is what makes every other part of this extension exist, so the only thing the setting
     // turns off is re-applying it unattended — the command still does it on demand, and the runtime is
     // copied either way so that the command has something to run.

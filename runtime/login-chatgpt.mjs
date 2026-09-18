@@ -1,9 +1,13 @@
 #!/usr/bin/env node
-// ChatGPT subscription sign-in (OAuth PKCE) and token status.
-//   node scripts/login-chatgpt.mjs           — sign in
-//   node scripts/login-chatgpt.mjs --status  — show status
+// ChatGPT subscription sign-in (OAuth PKCE) and token status. It lives in the runtime rather than in
+// scripts/ because it is the only way into the subscription and scripts/ is not in the package — a
+// Marketplace install would otherwise document a feature it cannot reach. The "Vannevar: Sign in to
+// ChatGPT" command runs this file in a terminal, where the sign-in URL and the result are readable.
+//
+//   node ~/.claude/vannevar/login-chatgpt.mjs           — sign in
+//   node ~/.claude/vannevar/login-chatgpt.mjs --status  — show status
 
-import { login, status, refresh, readStore, STORE, CODEX_AUTH } from '../src/proxy/auth-chatgpt.mjs';
+import { login, status, refresh, readStore, STORE, CODEX_AUTH } from './proxy/auth-chatgpt.mjs';
 
 const wantStatus = process.argv.includes('--status');
 const wantRefresh = process.argv.includes('--refresh');
@@ -11,7 +15,7 @@ const wantRefresh = process.argv.includes('--refresh');
 if (wantStatus) {
     const state = status();
     if (!state.loggedIn) {
-        console.log('Not signed in. Run: npm run login:chatgpt');
+        console.log('Not signed in. Run the "Vannevar: Sign in to ChatGPT" command.');
         console.log(`Checked sources: ${STORE}, ${CODEX_AUTH}`);
         process.exit(1);
     }
@@ -41,6 +45,6 @@ try {
 } catch (e) {
     console.error(`\nSign-in failed: ${e.message}`);
     if (/unsupported_country/.test(e.message))
-        console.error('  The request bypassed the proxy. Check the route: npm run diag');
+        console.error('  The request bypassed the proxy. Check the route with "npm run diag" in the repository.');
     process.exitCode = 1;
 }
