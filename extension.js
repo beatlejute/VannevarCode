@@ -235,6 +235,11 @@ async function registerMcp(bundle, { explicit }) {
         return false;
     }
 
+    // The command has to work when the CLI spawns it, not when this window does — and the CLI knows
+    // nothing about the extension host. process.execPath is Code.exe here, which without the flag opens
+    // an editor window instead of running the server, so the flag is registered with the entry rather
+    // than inherited from an environment the CLI will not have. Node on PATH cannot be assumed: Claude
+    // Code stopped shipping one in 2.1.227, and a version manager's node moves with every switch.
     await runClaude(bundle, ['mcp', 'remove', MCP_SERVER_NAME, '--scope', 'user']);
     const added = await runClaude(bundle, [
         'mcp',
@@ -242,6 +247,8 @@ async function registerMcp(bundle, { explicit }) {
         MCP_SERVER_NAME,
         '--scope',
         'user',
+        '-e',
+        'ELECTRON_RUN_AS_NODE=1',
         '--',
         process.execPath,
         server,

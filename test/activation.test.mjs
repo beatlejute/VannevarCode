@@ -36,11 +36,13 @@ rmSync(HOME, { recursive: true, force: true });
 // The extension folder as the VS Code updater unpacks it: the manifest, and the runtime that gets
 // copied out of it. Only the files extension.js actually reaches for.
 mkdirSync(path.join(SELF, 'runtime', 'proxy'), { recursive: true });
+mkdirSync(path.join(SELF, 'runtime', 'mcp'), { recursive: true });
 mkdirSync(path.join(SELF, 'templates', 'profiles'), { recursive: true });
 mkdirSync(BUNDLE, { recursive: true });
 writeFileSync(path.join(SELF, 'runtime', 'apply-patch.mjs'), '/* patcher */\n');
 writeFileSync(path.join(SELF, 'runtime', 'host.js'), '/* host */\n');
 writeFileSync(path.join(SELF, 'runtime', 'proxy', 'server.mjs'), '/* proxy */\n');
+writeFileSync(path.join(SELF, 'runtime', 'mcp', 'agent-server.mjs'), '/* agents */\n');
 writeFileSync(path.join(SELF, 'templates', 'profiles', 'openai.json'), '{"env":{}}\n');
 
 // --- the stubs ------------------------------------------------------------------------------------
@@ -181,10 +183,32 @@ try {
     );
     console.log('OK — the patcher runs after the runtime, as node, aimed at the bundle from the API');
 
-    assert.equal(shown.length, 1, `${shown.length} notifications on a first install`);
-    assert.deepEqual(shown[0].actions, ['Reload Window'], 'the first install did not offer the reload it needs');
-    assert.match(shown[0].message, /patch is on/i, `unexpected first-install wording: ${shown[0].message}`);
-    console.log('OK — a first install says the patch is on and offers the reload');
+    // Two on a first install and no more: the patch went on, and the MCP server was registered. Both
+    // are facts about a machine that had neither a minute ago, and the reload is offered once.
+    const reload = shown.filter((s) => s.actions.includes('Reload Window'));
+    assert.equal(reload.length, 1, `${reload.length} reload prompts on a first install`);
+    assert.match(reload[0].message, /patch is on/i, `unexpected first-install wording: ${reload[0].message}`);
+    assert.equal(shown.length, 2, `${shown.length} notifications on a first install: ${JSON.stringify(shown.map((s) => s.message))}`);
+    console.log('OK — a first install says the patch is on, offers the reload once, and reports the MCP server');
+
+    // --- the MCP server is registered so the CLI can actually start it ----------------------------
+    // The entry is spawned by the `claude` CLI, which has none of the extension host's environment.
+    // process.execPath is Code.exe, and Code.exe without ELECTRON_RUN_AS_NODE opens an editor window
+    // instead of running the server — so the flag has to be part of the registration.
+    for (let waited = 0; waited < 1500 && !spawns.some((s) => s.args.includes('add')); waited += 20)
+        await new Promise((go) => setTimeout(go, 20));
+    const add = spawns.find((s) => s.args.includes('add'));
+    assert.ok(add, `the MCP server was never registered: ${JSON.stringify(spawns.map((s) => s.args))}`);
+    assert.ok(add.args.includes('vannevar-agents'), 'the server was registered under another name');
+    assert.equal(
+        add.args[add.args.indexOf('-e') + 1],
+        'ELECTRON_RUN_AS_NODE=1',
+        'the registration is missing ELECTRON_RUN_AS_NODE — the CLI would open a window, not a server',
+    );
+    assert.equal(add.args.at(-2), process.execPath, 'the registration does not run this binary');
+    assert.ok(add.args.at(-1).endsWith('agent-server.mjs'), 'the registration does not point at the server');
+    assert.ok(add.args.includes('user'), 'the server was not registered at user scope');
+    console.log('OK — the MCP entry carries ELECTRON_RUN_AS_NODE, at user scope, pointing at the runtime copy');
 
     // --- the same version, already patched --------------------------------------------------------
     // Every other window on every other day. It must be quiet, and it must not rewrite the runtime.
