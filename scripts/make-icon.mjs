@@ -1,8 +1,14 @@
-// The extension icon, drawn rather than shipped: a relay — two contacts and the armature between them,
-// thrown to one side. It is what the extension does to a tab, and it is what Shannon was pointed at in
-// 1936, which is where the name comes from. No logo of anybody else's is anywhere near it.
+// The extension icon, drawn rather than shipped: a rotary selector seen from the front — a spindle,
+// eight contacts around it and the blade thrown onto one of them. It is literally what the extension
+// does to a tab, and it is the switching Shannon was pointed at in 1936, which is where the name and
+// the whole story in the README come from.
 //
 //   node scripts/make-icon.mjs        # writes images/icon.png at 256×256
+//
+// The silhouette is radial because a selector is radial, and that is the whole of the resemblance to
+// anybody else's mark: a starburst is tapered rays and nothing in the middle, this is a hub with
+// terminals on the ends, in two weights, with one arm thrown off-centre. Nobody's logo is traced,
+// borrowed or recoloured here — see "Trademark hygiene" in docs/vannevar-code-plan.md.
 //
 // Drawn at 4× and box-filtered down, because the alternative is either aliasing or a dependency.
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -17,6 +23,7 @@ const N = SIZE * SCALE;
 // Ink on a deep ground: readable as a 16-pixel tab favicon and as a gallery tile, in either theme
 const GROUND = [22, 25, 33, 255];
 const LINE = [233, 236, 244, 255];
+const DIM = [96, 104, 124, 255];
 const LIVE = [255, 168, 76, 255];
 
 const px = new Uint8Array(N * N * 4);
@@ -29,23 +36,19 @@ function blend(x, y, color, alpha) {
     px[i + 3] = 255;
 }
 
-// Distance from a point to a segment, which is all the drawing this needs: every stroke is a capsule
-function segmentDistance(px0, py0, ax, ay, bx, by) {
+// Every stroke is a capsule, so the whole drawing is "distance to a segment" — with the width allowed
+// to taper along it, which is what turns the wiper from a bar into an arm.
+function stroke(ax, ay, bx, by, w0, w1, color) {
+    const r = Math.max(w0, w1) / 2;
     const dx = bx - ax;
     const dy = by - ay;
     const length = dx * dx + dy * dy;
-    const t = length ? Math.max(0, Math.min(1, ((px0 - ax) * dx + (py0 - ay) * dy) / length)) : 0;
-    return Math.hypot(px0 - (ax + t * dx), py0 - (ay + t * dy));
-}
-
-function stroke(ax, ay, bx, by, width, color) {
-    const r = width / 2;
-    const [x0, x1] = [Math.min(ax, bx) - r - 2, Math.max(ax, bx) + r + 2];
-    const [y0, y1] = [Math.min(ay, by) - r - 2, Math.max(ay, by) + r + 2];
-    for (let y = Math.floor(y0); y <= Math.ceil(y1); y++)
-        for (let x = Math.floor(x0); x <= Math.ceil(x1); x++) {
-            const d = segmentDistance(x + 0.5, y + 0.5, ax, ay, bx, by);
-            blend(x, y, color, Math.max(0, Math.min(1, r - d + 0.5)));
+    for (let y = Math.floor(Math.min(ay, by) - r - 2); y <= Math.ceil(Math.max(ay, by) + r + 2); y++)
+        for (let x = Math.floor(Math.min(ax, bx) - r - 2); x <= Math.ceil(Math.max(ax, bx) + r + 2); x++) {
+            const t = length ? Math.max(0, Math.min(1, ((x + 0.5 - ax) * dx + (y + 0.5 - ay) * dy) / length)) : 0;
+            const d = Math.hypot(x + 0.5 - (ax + t * dx), y + 0.5 - (ay + t * dy));
+            const half = (w0 + (w1 - w0) * t) / 2;
+            blend(x, y, color, Math.max(0, Math.min(1, half - d + 0.5)));
         }
 }
 
@@ -57,31 +60,65 @@ function disc(cx, cy, r, color) {
         }
 }
 
-const u = N / 16; // one unit of the 16-column grid the shape is laid out on
-
-// The two contacts, one above the other on the right
-const contactX = 10.2 * u;
-const upper = 4.4 * u;
-const lower = 10.8 * u;
-stroke(contactX, upper, 14.2 * u, upper, 0.8 * u, LINE);
-stroke(contactX, lower, 14.2 * u, lower, 0.8 * u, LIVE);
-
-// The pivot on the left, and the armature thrown down onto the live contact
-const pivotX = 3.4 * u;
-const pivotY = 7.2 * u;
-stroke(pivotX, pivotY, contactX + 0.6 * u, lower, 0.9 * u, LIVE);
-disc(pivotX, pivotY, 1.1 * u, LINE);
-disc(pivotX, pivotY, 0.45 * u, GROUND);
-
-// The coil that throws it: three turns under the pivot
-for (let i = 0; i < 3; i++) {
-    const y = (11.6 + i * 1.3) * u;
-    stroke(2.6 * u, y, 7.2 * u, y, 0.55 * u, LINE);
+function ring(cx, cy, r, width, color, from = 0, to = Math.PI * 2) {
+    const steps = Math.ceil((to - from) * r);
+    for (let i = 0; i < steps; i++) {
+        const a = from + ((to - from) * i) / steps;
+        const b = from + ((to - from) * (i + 1)) / steps;
+        stroke(cx + Math.cos(a) * r, cy + Math.sin(a) * r, cx + Math.cos(b) * r, cy + Math.sin(b) * r, width, width, color);
+    }
 }
-stroke(2.6 * u, 11.6 * u, 2.6 * u, 14.2 * u, 0.55 * u, LINE);
 
-// The line in: from the left edge to the pivot
-stroke(1.4 * u, pivotY, pivotX - 0.9 * u, pivotY, 0.8 * u, LINE);
+const u = N / 16; // one unit of the 16-column grid the shape is laid out on
+const cx = 8 * u;
+const cy = 8 * u;
+
+// Eight positions, the live one at the upper right. Twelve o'clock is deliberately not a position:
+// a dial whose first stop is off-axis reads as a selector rather than as a star.
+const POSITIONS = 8;
+const LIVE_AT = 7; // counting clockwise from the one just right of the top
+const START = -Math.PI / 2 + Math.PI / POSITIONS;
+const CONTACT_R = 5.5 * u;
+
+// No rim. A ring closes the shape into a wheel, and a wheel is a thing that turns rather than a thing
+// that chooses; without it the eight contacts float and the only closed path is the live one.
+
+// One spoke per position — the wiring a selector has inside it, and the reason the silhouette is
+// radial at all. Dim and thin except the one carrying current, which is the whole statement: the
+// symmetry is there to be broken by which way the switch is thrown.
+for (let i = 0; i < POSITIONS; i++) {
+    const a = START + (Math.PI * 2 * i) / POSITIONS;
+    const live = i === LIVE_AT;
+    if (live) continue;
+    stroke(
+        cx + Math.cos(a) * 2.6 * u,
+        cy + Math.sin(a) * 2.6 * u,
+        cx + Math.cos(a) * (CONTACT_R - 0.85 * u),
+        cy + Math.sin(a) * (CONTACT_R - 0.85 * u),
+        0.72 * u,
+        0.3 * u,
+        DIM,
+    );
+    disc(cx + Math.cos(a) * CONTACT_R, cy + Math.sin(a) * CONTACT_R, 0.52 * u, LINE);
+}
+
+// The closed position: the wiper, thrown onto its contact and touching it
+const liveAngle = START + (Math.PI * 2 * LIVE_AT) / POSITIONS;
+stroke(
+    cx,
+    cy,
+    cx + Math.cos(liveAngle) * CONTACT_R,
+    cy + Math.sin(liveAngle) * CONTACT_R,
+    1.6 * u,
+    0.7 * u,
+    LIVE,
+);
+disc(cx + Math.cos(liveAngle) * CONTACT_R, cy + Math.sin(liveAngle) * CONTACT_R, 1.05 * u, LIVE);
+disc(cx + Math.cos(liveAngle) * CONTACT_R, cy + Math.sin(liveAngle) * CONTACT_R, 0.36 * u, GROUND);
+
+// The spindle
+disc(cx, cy, 1.6 * u, LINE);
+disc(cx, cy, 0.66 * u, GROUND);
 
 const small = resizeRgba(px, N, N, SIZE, SIZE);
 const out = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'images', 'icon.png');
