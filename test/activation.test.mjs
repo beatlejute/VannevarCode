@@ -19,6 +19,7 @@ const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const realOs = require('node:os');
 const realChild = require('node:child_process');
+const { EventEmitter } = require('node:events');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
@@ -40,6 +41,7 @@ mkdirSync(path.join(SELF, 'runtime', 'mcp'), { recursive: true });
 mkdirSync(path.join(SELF, 'templates', 'profiles'), { recursive: true });
 mkdirSync(BUNDLE, { recursive: true });
 writeFileSync(path.join(SELF, 'runtime', 'apply-patch.mjs'), '/* patcher */\n');
+writeFileSync(path.join(SELF, 'runtime', 'login-chatgpt.mjs'), '/* sign-in */\n');
 writeFileSync(path.join(SELF, 'runtime', 'host.js'), '/* host */\n');
 writeFileSync(path.join(SELF, 'runtime', 'proxy', 'server.mjs'), '/* proxy */\n');
 writeFileSync(path.join(SELF, 'runtime', 'mcp', 'agent-server.mjs'), '/* agents */\n');
@@ -49,11 +51,17 @@ writeFileSync(path.join(SELF, 'templates', 'profiles', 'openai.json'), '{"env":{
 
 const shown = [];
 const executed = [];
+const terminals = [];
+const opened = [];
+const copied = [];
+const progress = [];
 let answer = (choice) => Promise.resolve(choice);
 let configuration = { autoPatch: true };
+let openExternalResult = true;
 
 const vscodeStub = {
-    Uri: { file: (p) => ({ fsPath: p }) },
+    Uri: { file: (p) => ({ fsPath: p }), parse: (s) => ({ toString: () => s }) },
+    ProgressLocation: { Notification: 15 },
     window: {
         showInformationMessage: (message, ...actions) => {
             shown.push({ kind: 'info', message, actions });
@@ -64,6 +72,14 @@ const vscodeStub = {
             return answer(undefined);
         },
         showTextDocument: () => Promise.resolve(undefined),
+        // Registered so that a sign-in that falls back to a terminal is a failed assertion rather than
+        // a crash in the stub — the whole point of the command is that it never opens one.
+        createTerminal: (options) => {
+            terminals.push(options);
+            return { show() {}, dispose() {} };
+        },
+        withProgress: (options, run) =>
+            run({ report: (step) => progress.push({ options, ...step }) }, { onCancellationRequested() {} }),
     },
     commands: {
         registerCommand: (id, run) => ({ id, run, dispose() {} }),
@@ -78,7 +94,13 @@ const vscodeStub = {
     workspace: {
         getConfiguration: () => ({ get: (key, fallback) => (key in configuration ? configuration[key] : fallback) }),
     },
-    env: { openExternal: () => Promise.resolve(true) },
+    env: {
+        openExternal: (uri) => {
+            opened.push(String(uri.toString()));
+            return Promise.resolve(openExternalResult);
+        },
+        clipboard: { writeText: (text) => copied.push(text) && Promise.resolve() },
+    },
 };
 
 // Every spawn extension.js makes, in order, with what was on disk at the moment it was made — which is
@@ -103,12 +125,29 @@ function execFileStub(file, args, options, callback) {
     return { on() {} };
 }
 
+// The sign-in is the one thing that streams rather than waits for an exit, so it is spawned instead of
+// execFile'd: the stub hands back a child the test writes the OAuth events into by hand.
+const logins = [];
+
+function spawnStub(file, args, options) {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdout.setEncoding = () => {};
+    child.stderr.setEncoding = () => {};
+    child.kill = () => {
+        child.killed = true;
+    };
+    logins.push({ file, args, env: (options && options.env) || {}, child });
+    return child;
+}
+
 const load = Module._load;
 Module._load = (request, ...rest) => {
     if (request === 'vscode') return vscodeStub;
     if (request === 'os' || request === 'node:os') return { ...realOs, homedir: () => HOME };
     if (request === 'child_process' || request === 'node:child_process')
-        return { ...realChild, execFile: execFileStub };
+        return { ...realChild, execFile: execFileStub, spawn: spawnStub };
     return load(request, ...rest);
 };
 
@@ -126,6 +165,11 @@ function reset() {
     shown.length = 0;
     executed.length = 0;
     spawns.length = 0;
+    logins.length = 0;
+    terminals.length = 0;
+    opened.length = 0;
+    copied.length = 0;
+    progress.length = 0;
 }
 
 // activate() fires the work and does not await it — a window must not wait on a patch to come up — so
@@ -316,6 +360,71 @@ try {
     assert.deepEqual(explicit.args.slice(1), [`--dir=${BUNDLE}`], 'the command did not ask for a full apply');
     assert.equal(shown.length, 1, 'a command run said nothing — a hand-run patch always answers');
     console.log('OK — with autoPatch off, the command applies the patch on demand and answers');
+
+    // --- the ChatGPT sign-in, in the interface ----------------------------------------------------
+    // No terminal: VS Code opens the page, a progress notification holds the wait, and the answer is a
+    // notification. What the child process must keep is --use-env-proxy — node reads the proxy
+    // variables at startup, and without them auth.openai.com answers unsupported_country.
+    reset();
+    const signIn = context.subscriptions.find((s) => s.id === 'vannevar.loginChatgpt');
+    const running = signIn.run();
+    const started = logins.at(-1);
+
+    assert.ok(started, 'the sign-in command spawned nothing');
+    assert.equal(terminals.length, 0, 'the sign-in opened a terminal instead of using the interface');
+    assert.equal(started.file, process.execPath, 'the sign-in did not run this binary');
+    assert.ok(started.args.includes('--use-env-proxy'), 'the sign-in would go out direct: unsupported_country');
+    assert.ok(started.args.includes('--json'), 'the sign-in was not asked for events the extension can read');
+    assert.ok(started.args.some((a) => a.endsWith('login-chatgpt.mjs')), `wrong script: ${started.args.join(' ')}`);
+    assert.equal(started.env.ELECTRON_RUN_AS_NODE, '1', 'Code.exe without the flag opens a window, not the flow');
+
+    const authorizeUrl = 'https://auth.openai.com/oauth/authorize?client_id=app&state=abc&scope=openid';
+    started.child.stdout.emit('data', `${JSON.stringify({ event: 'authorize', url: authorizeUrl })}\n`);
+    await new Promise((go) => setTimeout(go, 20));
+    assert.deepEqual(opened, [authorizeUrl], 'the sign-in page was not opened by VS Code');
+    assert.ok(progress.some((p) => /browser/i.test(p.message || '')), 'the progress said nothing about the browser');
+
+    started.child.stdout.emit('data', `${JSON.stringify({ event: 'signed-in', accountId: 'acct_9' })}\n`);
+    started.child.emit('close', 0);
+    await running;
+    await new Promise((go) => setTimeout(go, 20));
+    assert.equal(shown.length, 1, `${shown.length} notifications for one sign-in`);
+    assert.equal(shown[0].kind, 'info', 'a completed sign-in was reported as a warning');
+    assert.match(shown[0].message, /acct_9/, `the account is not in the notification: ${shown[0].message}`);
+    console.log('OK — the sign-in runs as node with the proxy flag, opens the page in VS Code and reports the account');
+
+    // --- a browser that did not open ---------------------------------------------------------------
+    // The flow is alive on localhost:1455 and unreachable, and the URL is the only way back into it.
+    reset();
+    openExternalResult = false;
+    answer = () => Promise.resolve('Copy sign-in link');
+    const stranded = signIn.run();
+    logins.at(-1).child.stdout.emit('data', `${JSON.stringify({ event: 'authorize', url: authorizeUrl })}\n`);
+    await new Promise((go) => setTimeout(go, 20));
+    assert.deepEqual(copied, [authorizeUrl], 'a browser that did not open left no way to reach the sign-in page');
+    logins.at(-1).child.emit('close', 1);
+    await stranded;
+    openExternalResult = true;
+    answer = () => Promise.resolve(undefined);
+    console.log('OK — a browser that refuses to open offers the link on the clipboard');
+
+    // --- the sign-in failed -------------------------------------------------------------------------
+    reset();
+    const failing = signIn.run();
+    logins
+        .at(-1)
+        .child.stdout.emit(
+            'data',
+            `${JSON.stringify({ event: 'error', message: 'port 1455 is busy (Codex CLI running?)' })}\n`,
+        );
+    logins.at(-1).child.emit('close', 1);
+    await failing;
+    await new Promise((go) => setTimeout(go, 20));
+    assert.equal(shown.length, 1, `${shown.length} notifications for one failed sign-in`);
+    assert.equal(shown[0].kind, 'warning', 'a failed sign-in was reported as information');
+    assert.match(shown[0].message, /1455/, `the reason is not in the notification: ${shown[0].message}`);
+    assert.deepEqual(shown[0].actions, ['Show log'], 'a failed sign-in did not offer the log');
+    console.log('OK — a failed sign-in says why, in a notification, and offers the log');
 } finally {
     Module._load = load;
     rmSync(HOME, { recursive: true, force: true });

@@ -151,6 +151,20 @@
                 'Model',
                 toggleAutocompact
             );
+            // Settings, not Model: the row above it is "Switch account", which is the same question
+            // asked of Anthropic — which account is this running on. The ChatGPT subscription is the
+            // one provider whose credentials are not a key pasted into a profile, so it is the one
+            // that needs a row of its own.
+            registry.registerAction(
+                {
+                    id: 'ccx-chatgpt',
+                    label: 'Sign in to ChatGPT…',
+                    description: 'OAuth sign-in for the ChatGPT Plus/Pro subscription',
+                    trailingComponent: chatgptTag(),
+                },
+                'Settings',
+                startChatgptLogin
+            );
             registry.registerAction(
                 {
                     id: 'ccx-full-history',
@@ -165,6 +179,28 @@
         } catch (e) {
             console.warn('ccx: registerAction failed', e);
         }
+    }
+
+    // What the sign-in row says on its right: the state of the tokens on disk, as the host reads them.
+    // An expired token is not a reason to sign in again — the proxy refreshes it on the next call — but
+    // it is the state, and the row is the only place it is ever visible.
+    function chatgptTag() {
+        if (!jsx || !state.chatgpt) return undefined;
+        var text = state.chatgpt.signingIn
+            ? 'signing in…'
+            : state.chatgpt.loggedIn
+              ? state.chatgpt.expired
+                  ? 'expired'
+                  : 'signed in'
+              : undefined;
+        return text ? jsx('span', { className: 'ccx-prov-tag', children: text }) : undefined;
+    }
+
+    // The host owns the flow: it spawns the script with the proxy flag, opens the page through VS Code
+    // and reports the result. The page only asks for it, and redraws when ccx:state comes back.
+    function startChatgptLogin() {
+        if (state.chatgpt && state.chatgpt.signingIn) return;
+        send({ type: 'ccx:chatgptLogin' });
     }
 
     function tallyText(rows) {
@@ -360,6 +396,7 @@
                 // The state the page keeps is rebuilt field by field, not merged — anything the host
                 // sends and this list does not name is dropped on the next push.
                 historyBeforeCompaction: d.historyBeforeCompaction === true,
+                chatgpt: d.chatgpt || null,
             };
             rememberHistoryBeforeCompaction(state.historyBeforeCompaction);
             adoptAttachmentPrompts(d.attachmentPrompts);

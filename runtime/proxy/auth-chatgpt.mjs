@@ -131,7 +131,10 @@ function openBrowser(url) {
 }
 
 // Interactive login: serves localhost:1455, opens the browser, exchanges the code for tokens.
-async function login({ timeoutMs = 300_000 } = {}) {
+// `onAuthorize` is for a caller that opens the page itself — the extension hands the URL to VS Code,
+// which knows about the user's browser and about a remote window's port forwarding, and neither
+// rundll32 nor xdg-open does.
+async function login({ timeoutMs = 300_000, onAuthorize } = {}) {
     const { verifier, challenge } = pkce();
     const state = base64url(randomBytes(24));
     const params = new URLSearchParams({
@@ -173,7 +176,7 @@ async function login({ timeoutMs = 300_000 } = {}) {
             res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
             res.end(
                 `<!doctype html><meta charset="utf-8"><body style="font:16px system-ui;padding:40px">${
-                    received ? 'Done — close this tab and return to the terminal.' : `Sign-in failed: ${error || 'no code returned'}`
+                    received ? 'Done — close this tab and return to the editor.' : `Sign-in failed: ${error || 'no code returned'}`
                 }</body>`
             );
             if (error) return finish(reject, Error(`OAuth: ${error}`));
@@ -189,6 +192,7 @@ async function login({ timeoutMs = 300_000 } = {}) {
             )
         );
         server.listen(CALLBACK_PORT, '127.0.0.1', () => {
+            if (onAuthorize) return onAuthorize(authorizeUrl);
             console.log(`\nOpen this URL if the browser did not start automatically:\n${authorizeUrl}\n`);
             openBrowser(authorizeUrl);
         });

@@ -18,7 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 
 const pkg = require('./package.json');
 
@@ -277,6 +277,110 @@ async function registerMcp(bundle, { explicit }) {
     return true;
 }
 
+// --- the ChatGPT sign-in --------------------------------------------------------------------------
+//
+// The OAuth flow has two halves a user has to see — a page to open and an answer to read — and neither
+// of them needs a terminal. VS Code opens the page itself, which is the only thing that resolves the
+// user's actual browser and, in a remote window, forwards the callback port back to the machine that
+// browser runs on; the waiting in between is what a progress notification is for.
+//
+// The flow still runs as a child process rather than inside the extension host, for one reason:
+// --use-env-proxy. Node reads the proxy variables once, at startup, so a fetch from this process would
+// go out direct — and auth.openai.com answers unsupported_country wherever ChatGPT is not served.
+async function openSignInPage(url) {
+    let opened = false;
+    try {
+        opened = await vscode.env.openExternal(vscode.Uri.parse(url));
+    } catch (e) {
+        log(`openExternal failed: ${e && e.message}`);
+    }
+    if (opened) return;
+    // The flow is alive and unreachable at this point, and the URL is the only way back into it — a few
+    // hundred characters of PKCE that nobody retypes off a notification.
+    vscode.window
+        .showWarningMessage('Vannevar: the sign-in page did not open by itself.', 'Copy sign-in link')
+        .then((choice) => choice === 'Copy sign-in link' && vscode.env.clipboard.writeText(url));
+}
+
+function loginChatgpt() {
+    const script = path.join(RUNTIME, 'login-chatgpt.mjs');
+    if (!fs.existsSync(script))
+        return vscode.window.showWarningMessage(`Vannevar: the runtime is not installed — no ${script}.`);
+
+    return vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Vannevar: signing in to ChatGPT',
+            cancellable: true,
+        },
+        (progress, cancel) =>
+            new Promise((finish) => {
+                const child = spawn(process.execPath, ['--use-env-proxy', script, '--json'], {
+                    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+                    windowsHide: true,
+                });
+
+                let result = null;
+                let cancelled = false;
+                let rest = '';
+
+                // One JSON object per line on stdout; anything else the child says is for the log.
+                const handle = (line) => {
+                    if (!line) return;
+                    let event = null;
+                    try {
+                        event = JSON.parse(line);
+                    } catch {}
+                    if (!event || !event.event) return log(`chatgpt sign-in: ${line}`);
+                    log(`chatgpt sign-in: ${event.event}${event.message ? ` — ${event.message}` : ''}`);
+                    if (event.event === 'authorize') {
+                        progress.report({ message: 'finish the sign-in in the browser' });
+                        openSignInPage(event.url);
+                    } else result = event;
+                };
+                const read = (chunk) => {
+                    rest += chunk;
+                    const lines = rest.split('\n');
+                    rest = lines.pop();
+                    for (const line of lines) handle(line.trim());
+                };
+
+                child.stdout.setEncoding('utf8');
+                child.stdout.on('data', read);
+                child.stderr.setEncoding('utf8');
+                child.stderr.on('data', (chunk) => log(`chatgpt sign-in (stderr): ${String(chunk).trim()}`));
+                child.on('error', (e) => {
+                    result = { event: 'error', message: e.message };
+                });
+
+                cancel.onCancellationRequested(() => {
+                    cancelled = true;
+                    child.kill();
+                });
+
+                child.on('close', (code) => {
+                    handle(rest.trim());
+                    finish();
+                    if (cancelled) return log('chatgpt sign-in: cancelled');
+
+                    if (result && result.event === 'signed-in') {
+                        vscode.window.showInformationMessage(
+                            `Vannevar: signed in to ChatGPT${result.accountId ? ` (account ${result.accountId})` : ''}. ` +
+                                'Pick a profile with "CCX_PROXY": "openai" to use the subscription.',
+                        );
+                        return;
+                    }
+
+                    const reason = (result && result.message) || `the sign-in ended with code ${code}`;
+                    const hint = result && result.proxyBypassed ? ' The request went out without the proxy.' : '';
+                    vscode.window
+                        .showWarningMessage(`Vannevar: the ChatGPT sign-in failed — ${reason}.${hint}`, 'Show log')
+                        .then((choice) => choice === 'Show log' && showLog());
+                });
+            }),
+    );
+}
+
 // Once, on the first activation that finds no entry. It is not a question: the server is what the
 // "run this on another provider" tool is, the extension is what the user installed to get it, and a
 // dialog about a registration nobody can act on without reading the README is worse than the fact.
@@ -363,22 +467,7 @@ function activate(context) {
 
     command('vannevar.installMcp', () => registerMcp(claudeBundle(), { explicit: true }));
 
-    // A terminal rather than a notification: the OAuth flow prints a URL to open and then waits, and
-    // both halves of that are unreadable anywhere else. The script is in the runtime for the same
-    // reason — scripts/ is not in the package, so there would otherwise be no way into the
-    // subscription on a Marketplace install at all.
-    command('vannevar.loginChatgpt', () => {
-        const script = path.join(RUNTIME, 'login-chatgpt.mjs');
-        if (!fs.existsSync(script))
-            return vscode.window.showWarningMessage(`Vannevar: the runtime is not installed — no ${script}.`);
-        const terminal = vscode.window.createTerminal({
-            name: 'Vannevar: ChatGPT sign-in',
-            shellPath: process.execPath,
-            shellArgs: ['--use-env-proxy', script],
-            env: { ELECTRON_RUN_AS_NODE: '1' },
-        });
-        terminal.show();
-    });
+    command('vannevar.loginChatgpt', loginChatgpt);
 
     // The patch is what makes every other part of this extension exist, so the only thing the setting
     // turns off is re-applying it unattended — the command still does it on demand, and the runtime is
