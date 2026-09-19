@@ -150,6 +150,10 @@ console.log('OK — the host keeps the switch on disk and joins a boundary to wh
 // relink of the kept tail, the leaf choice, the loop guard. A hand-written stand-in would only prove that
 // the stand-in agrees. So the patcher runs over a copy of the real bundle, and the patched walk is lifted
 // out of it along with whatever it calls.
+//
+// Returns null where there is no Claude Code to read — a CI runner, a fresh checkout — and Parts 2 and 4
+// are skipped loudly rather than failing, exactly as auto-repatch.test.mjs does it. Parts 1 and 3 need
+// nothing but this repository and still run.
 
 function cleanExtension() {
     let obsolete = {};
@@ -157,14 +161,20 @@ function cleanExtension() {
         obsolete = JSON.parse(readFileSync(join(EXTENSIONS_ROOT, '.obsolete'), 'utf8')) || {};
     } catch {}
     const version = (name) => (name.match(/-(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
-    const dir = readdirSync(EXTENSIONS_ROOT)
+    let entries = [];
+    try {
+        entries = readdirSync(EXTENSIONS_ROOT);
+    } catch {
+        return null;
+    }
+    const dir = entries
         .filter((name) => name.startsWith('anthropic.claude-code-') && !obsolete[name])
         .sort((a, b) => {
             const [x, y] = [version(a), version(b)];
             return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
         })
         .pop();
-    assert.ok(dir, `no Claude Code extension under ${EXTENSIONS_ROOT} — the stock walk cannot be exercised`);
+    if (!dir) return null;
     const pick = (rel) => {
         const file = join(EXTENSIONS_ROOT, dir, rel);
         return existsSync(`${file}.ccx-orig`) ? `${file}.ccx-orig` : file;
@@ -201,93 +211,99 @@ function definitionOf(src, name) {
 }
 
 const stock = cleanExtension();
-const fixture = join(tmpdir(), `ccx-history-bundle-${process.pid}`, path.basename(stock.dir));
-mkdirSync(join(fixture, 'webview'), { recursive: true });
-copyFileSync(stock.extension, join(fixture, 'extension.js'));
-copyFileSync(stock.webview, join(fixture, 'webview', 'index.js'));
-const patcher = new URL('../runtime/apply-patch.mjs', import.meta.url);
-const run = spawnSync(process.execPath, [patcher.pathname.replace(/^\/([A-Za-z]:)/, '$1'), `--dir=${fixture}`], {
-    encoding: 'utf8',
-    env: { ...process.env, CCX_NO_UPSTREAM_CHECK: '1' },
-});
-assert.equal(run.status, 0, `the patcher failed on the installed bundle:\n${run.stdout}${run.stderr}`);
-const patched = readFileSync(join(fixture, 'extension.js'), 'utf8');
-const patchedPage = readFileSync(join(fixture, 'webview', 'index.js'), 'utf8');
-rmSync(path.dirname(fixture), { recursive: true, force: true });
+// Part 4 reads this too, so it outlives the block below.
+let patchedPage = null;
 
-const hook = patched.indexOf('stitchCompactions(');
-assert.ok(hook !== -1, 'the walk carries no stitch hook');
-assert.equal(patched.split('stitchCompactions(').length - 1, 2, 'both copies of the walk are hooked');
-assert.equal(patched.split('historyBeforeCompaction()').length - 1, 2, 'both readers ask before skipping to the last boundary');
-const walkStart = patched.lastIndexOf('async function ', hook);
-const walkName = /^async function ([\w$]+)\(/.exec(patched.slice(walkStart))[1];
+if (!stock) {
+    console.log(`SKIP — no Claude Code extension under ${EXTENSIONS_ROOT}; the stock walk was not exercised`);
+} else {
+    const fixture = join(tmpdir(), `ccx-history-bundle-${process.pid}`, path.basename(stock.dir));
+    mkdirSync(join(fixture, 'webview'), { recursive: true });
+    copyFileSync(stock.extension, join(fixture, 'extension.js'));
+    copyFileSync(stock.webview, join(fixture, 'webview', 'index.js'));
+    const patcher = new URL('../runtime/apply-patch.mjs', import.meta.url);
+    const run = spawnSync(process.execPath, [patcher.pathname.replace(/^\/([A-Za-z]:)/, '$1'), `--dir=${fixture}`], {
+        encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, `the patcher failed on the installed bundle:\n${run.stdout}${run.stderr}`);
+    const patched = readFileSync(join(fixture, 'extension.js'), 'utf8');
+    patchedPage = readFileSync(join(fixture, 'webview', 'index.js'), 'utf8');
+    rmSync(path.dirname(fixture), { recursive: true, force: true });
 
-const walkContext = {
-    setImmediate, Promise, Map, Set, Error, console,
-    require: (id) => (id === 'path' ? path : id === 'os' ? { homedir: () => home } : host),
-};
-vm.createContext(walkContext);
-vm.runInContext(functionAt(patched, walkStart), walkContext);
-const loaded = new Set([walkName]);
+    const hook = patched.indexOf('stitchCompactions(');
+    assert.ok(hook !== -1, 'the walk carries no stitch hook');
+    assert.equal(patched.split('stitchCompactions(').length - 1, 2, 'both copies of the walk are hooked');
+    assert.equal(patched.split('historyBeforeCompaction()').length - 1, 2, 'both readers ask before skipping to the last boundary');
+    const walkStart = patched.lastIndexOf('async function ', hook);
+    const walkName = /^async function ([\w$]+)\(/.exec(patched.slice(walkStart))[1];
 
-async function walk(rows) {
-    for (let attempt = 0; attempt < 30; attempt++) {
-        try {
-            return await walkContext[walkName](rows.map((r) => ({ ...r })));
-        } catch (e) {
-            // Thrown from inside the vm context, so it is that context's ReferenceError, not this one's
-            const missing = e && typeof e.message === 'string' && /^([\w$]+) is not defined$/.exec(e.message);
-            if (!missing || loaded.has(missing[1])) throw e;
-            loaded.add(missing[1]);
-            vm.runInContext(definitionOf(patched, missing[1]), walkContext);
+    const walkContext = {
+        setImmediate, Promise, Map, Set, Error, console,
+        require: (id) => (id === 'path' ? path : id === 'os' ? { homedir: () => home } : host),
+    };
+    vm.createContext(walkContext);
+    vm.runInContext(functionAt(patched, walkStart), walkContext);
+    const loaded = new Set([walkName]);
+
+    async function walk(rows) {
+        for (let attempt = 0; attempt < 30; attempt++) {
+            try {
+                return await walkContext[walkName](rows.map((r) => ({ ...r })));
+            } catch (e) {
+                // Thrown from inside the vm context, so it is that context's ReferenceError, not this one's
+                const missing = e && typeof e.message === 'string' && /^([\w$]+) is not defined$/.exec(e.message);
+                if (!missing || loaded.has(missing[1])) throw e;
+                loaded.add(missing[1]);
+                vm.runInContext(definitionOf(patched, missing[1]), walkContext);
+            }
         }
+        throw Error('the walk kept asking for more of the bundle');
     }
-    throw Error('the walk kept asking for more of the bundle');
-}
 
-const ids = (chain) => chain.map((r) => r.uuid);
+    const ids = (chain) => chain.map((r) => r.uuid);
 
-writeFileSync(HISTORY_FILE, JSON.stringify({ enabled: false }));
-const before = ids(await walk(transcript()));
-assert.deepEqual(before, ['b1', 's1', 'u3', 'a3', 'u4', 'a4'], 'off: the stock walk starts at the boundary');
+    writeFileSync(HISTORY_FILE, JSON.stringify({ enabled: false }));
+    const before = ids(await walk(transcript()));
+    assert.deepEqual(before, ['b1', 's1', 'u3', 'a3', 'u4', 'a4'], 'off: the stock walk starts at the boundary');
 
-writeFileSync(HISTORY_FILE, JSON.stringify({ enabled: true }));
-const after = ids(await walk(transcript()));
-assert.deepEqual(
-    after,
-    ['u1', 'a1', 'u2', 'a2', 'b1', 's1', 'u3', 'a3', 'u4', 'a4'],
-    'on: everything before the compaction leads in, and the kept tail is shown once, after the summary',
-);
-assert.deepEqual(after.slice(-before.length), before, 'what the stock walk showed is untouched at the end');
-
-// Two compactions: the second boundary's kept tail starts right after the first summary's own kept tail.
-{
-    const rows = transcript();
-    rows.push(
-        user('u5', 'a4', 'kept again'),
-        assistant('a5', 'u5', 'kept again answer'),
-        {
-            type: 'system', subtype: 'compact_boundary', uuid: 'b2', parentUuid: null, logicalParentUuid: 'a5',
-            sessionId: 's', timestamp: at(), isSidechain: false,
-            compactMetadata: {
-                trigger: 'manual', preTokens: 90000,
-                preservedSegment: { headUuid: 'u5', anchorUuid: 's2', tailUuid: 'a5' },
-                preservedMessages: { anchorUuid: 's2', uuids: ['u5', 'a5'], allUuids: ['u5', 'a5'] },
-            },
-        },
-        user('s2', 'b2', 'This session is being continued…', { isCompactSummary: true, isVisibleInTranscriptOnly: true }),
-        user('u6', 's2', 'latest'),
-        assistant('a6', 'u6', 'six'),
-    );
-    const chain = ids(await walk(rows));
+    writeFileSync(HISTORY_FILE, JSON.stringify({ enabled: true }));
+    const after = ids(await walk(transcript()));
     assert.deepEqual(
-        chain,
-        ['u1', 'a1', 'u2', 'a2', 'b1', 's1', 'u3', 'a3', 'u4', 'a4', 'b2', 's2', 'u5', 'a5', 'u6', 'a6'],
-        'every compaction is crossed, each kept tail once',
+        after,
+        ['u1', 'a1', 'u2', 'a2', 'b1', 's1', 'u3', 'a3', 'u4', 'a4'],
+        'on: everything before the compaction leads in, and the kept tail is shown once, after the summary',
     );
-}
+    assert.deepEqual(after.slice(-before.length), before, 'what the stock walk showed is untouched at the end');
 
-console.log(`OK — the stock walk (${walkName}) crosses every compaction once the boundary is stitched`);
+    // Two compactions: the second boundary's kept tail starts right after the first summary's own kept tail.
+    {
+        const rows = transcript();
+        rows.push(
+            user('u5', 'a4', 'kept again'),
+            assistant('a5', 'u5', 'kept again answer'),
+            {
+                type: 'system', subtype: 'compact_boundary', uuid: 'b2', parentUuid: null, logicalParentUuid: 'a5',
+                sessionId: 's', timestamp: at(), isSidechain: false,
+                compactMetadata: {
+                    trigger: 'manual', preTokens: 90000,
+                    preservedSegment: { headUuid: 'u5', anchorUuid: 's2', tailUuid: 'a5' },
+                    preservedMessages: { anchorUuid: 's2', uuids: ['u5', 'a5'], allUuids: ['u5', 'a5'] },
+                },
+            },
+            user('s2', 'b2', 'This session is being continued…', { isCompactSummary: true, isVisibleInTranscriptOnly: true }),
+            user('u6', 's2', 'latest'),
+            assistant('a6', 'u6', 'six'),
+        );
+        const chain = ids(await walk(rows));
+        assert.deepEqual(
+            chain,
+            ['u1', 'a1', 'u2', 'a2', 'b1', 's1', 'u3', 'a3', 'u4', 'a4', 'b2', 's2', 'u5', 'a5', 'u6', 'a6'],
+            'every compaction is crossed, each kept tail once',
+        );
+    }
+
+    console.log(`OK — the stock walk (${walkName}) crosses every compaction once the boundary is stitched`);
+}
 
 // --- Part 3: the page — the switch, the cap, and fork/rewind above the compaction --------------
 
@@ -437,16 +453,22 @@ assert.equal(storage.get('ccx.historyBeforeCompaction'), '0');
 console.log('OK — the page lifts the cap and hides fork/rewind above the last compaction only while on');
 
 // --- Part 4: the wiring — what the patched page calls is what the page exposes ------------------
+//
+// This reads the page Part 2 patched, so it goes the same way Part 2 did when there is no bundle to patch.
 
-for (const name of ['keepEveryMessage', 'beforeCompaction']) {
-    assert.ok(patchedPage.includes(`globalThis.__ccx.${name}(`), `the patched page never calls ${name}`);
-    assert.equal(typeof ccx[name], 'function', `window.__ccx does not expose ${name}`);
+if (!patchedPage) {
+    console.log('SKIP — no patched page from Part 2; the page wiring was not checked against the real bundle');
+} else {
+    for (const name of ['keepEveryMessage', 'beforeCompaction']) {
+        assert.ok(patchedPage.includes(`globalThis.__ccx.${name}(`), `the patched page never calls ${name}`);
+        assert.equal(typeof ccx[name], 'function', `window.__ccx does not expose ${name}`);
+    }
+    assert.equal(patchedPage.split('globalThis.__ccx.beforeCompaction(').length - 1, 2, 'both the action menu and the Rewind list ask');
+    assert.ok(
+        patchedPage.includes('"ccx-autocompact","ccx-full-history","switch-models-on-flag"'),
+        'the Model sort order places the switch under auto-compact',
+    );
 }
-assert.equal(patchedPage.split('globalThis.__ccx.beforeCompaction(').length - 1, 2, 'both the action menu and the Rewind list ask');
-assert.ok(
-    patchedPage.includes('"ccx-autocompact","ccx-full-history","switch-models-on-flag"'),
-    'the Model sort order places the switch under auto-compact',
-);
 
 console.log('\nOK — history before compaction reaches the page, and only as a view');
 rmSync(home, { recursive: true, force: true });
