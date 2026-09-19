@@ -9,6 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
+
+// Whether this node can be told to honour the proxy variables — see the probe section far below.
+const USES_ENV_PROXY =
+    spawnSync(process.execPath, ['--use-env-proxy', '-e', '0'], { encoding: 'utf8' }).status === 0;
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccx-mcp-'));
 const profiles = path.join(dir, 'profiles');
@@ -334,14 +339,25 @@ async function main() {
     await preflight({ ...providerEnv, HTTPS_PROXY: 'http://127.0.0.1:9', HTTP_PROXY: 'http://127.0.0.1:9' }, 'haiku');
     assert.strictEqual(probed.max_tokens, 1, 'a loopback endpoint is probed directly even under a declared proxy');
 
-    // a non-loopback target whose proxy cannot be reached cannot be asked at all
-    await preflight(proxiedEnv, 'haiku', 'routed-dead');
-    assert.match(
-        describeHealth('routed-dead'),
-        /no answer .*did not respond/,
-        'a proxy that cannot be reached is recorded as unanswered, never as a refusal',
-    );
-    assert.strictEqual(await preflight(proxiedEnv, 'haiku'), null, 'an unanswered route does not block the run');
+    // a non-loopback target whose proxy cannot be reached cannot be asked at all.
+    //
+    // Only where this node can route in the first place. The probe child is started with
+    // --use-env-proxy, which arrived in Node 22.15; an older node refuses the flag, and the server
+    // deliberately falls back to a direct probe rather than reporting every provider unreachable
+    // forever. Under that fallback the request reaches the target and comes back with the answer the
+    // section above set up, so there is no unanswered route to assert on — the behaviour is right,
+    // the assertion simply has nothing to measure.
+    if (!USES_ENV_PROXY) {
+        console.log(`SKIP — node ${process.versions.node} has no --use-env-proxy; the proxied probe route was not exercised`);
+    } else {
+        await preflight(proxiedEnv, 'haiku', 'routed-dead');
+        assert.match(
+            describeHealth('routed-dead'),
+            /no answer .*did not respond/,
+            'a proxy that cannot be reached is recorded as unanswered, never as a refusal',
+        );
+        assert.strictEqual(await preflight(proxiedEnv, 'haiku'), null, 'an unanswered route does not block the run');
+    }
     // the refusal reaches the caller as the reason the task never started. The profile has to map
     // the default (sonnet) family, or the probe would decline to guess and let the run proceed.
     writeProfile('broken', { env: { ...providerEnv, ANTHROPIC_DEFAULT_SONNET_MODEL: 'mid-model' } });
