@@ -5,6 +5,19 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.278
+
+Verified against Claude Code **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.278 cost no signature: every injection point matched the shape it already matched,
+through a rename of the two anchors that are written structurally for exactly that reason. 2.1.277
+never landed here.
+
+- The ChatGPT sign-in happens in the editor instead of a terminal. VS Code opens the sign-in page —
+  which is what resolves the real browser, and what forwards the callback port in a remote window —
+  and a progress notification holds the wait. The same flow is on the command menu's Settings
+  section, beside the account Claude Code itself is signed in with.
+
 ## 2.1.276
 
 Verified against Claude Code **2.1.276**, **2.1.274**.
