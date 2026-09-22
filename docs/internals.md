@@ -209,7 +209,7 @@ function Rci(e){if(e.startsWith("sonnet"))return"sonnet";if(e.startsWith("opus")
 Neither `t5p`'s `r` object nor `Rci`'s prefix match knows `fable`, even though the model exists
 elsewhere (`latest_per_family:{fable:"claude-fable-5", …}`). So `claude-opus-5` / `claude-sonnet-5` /
 `claude-haiku-4-5` remap everywhere, but `claude-fable-5` only remaps through the adapter's
-`profileModelRules` — i.e. only for profiles routed through `127.0.0.1:8787` (codex/openai). Direct
+`profileModelRules` — i.e. only for profiles routed through `127.0.0.1:8787` (codex/openai/gemini). Direct
 providers (`qwen`, `deepseek`, `glm`, `minimax`) send `claude-fable-5` verbatim and get a 400.
 
 Decision: not worked around — waiting on an upstream fix. Re-check both sites in the CLI bundle on
@@ -1089,6 +1089,32 @@ A diagnostic trap: the error looks like a missing-parameter problem, which tempt
 | tool arguments | `tool_calls[].function.arguments` deltas | `response.function_call_arguments.delta` |
 
 Both formats collapse into the same Anthropic events: `message_start` → `content_block_start/delta/stop` (`text_delta`, `input_json_delta`) → `message_delta` (`stop_reason`, usage) → `message_stop`.
+
+### Gemini: the native API, not its OpenAI layer
+
+`protocol: "gemini"` (`translate-gemini.mjs`) speaks `models/<model>:streamGenerateContent?alt=sse` and `:generateContent`, with the key in `x-goog-api-key`. Google's OpenAI compatibility endpoint would have been one more `chat` upstream, and it breaks the CLI three ways:
+
+- **Tool schemas.** Claude Code's schemas carry `$schema`, `additionalProperties`, `propertyNames`, `const`, `exclusiveMinimum`. Against the legacy `Schema` proto each of those is a 400 for the whole request (`Unknown name "propertyNames" … Cannot find field`), and so is an object without properties (`should be non-empty for OBJECT type`). Natively the schema goes in `parametersJsonSchema`, which takes JSON Schema as it is; only the root `$schema` is taken out, and a tool that takes nothing is declared without parameters.
+- **Thought signatures.** Gemini 3 validates the first function call of every step in the current turn and answers a missing signature with a 400 — the 2.5 models treat it as optional. On the compatibility layer the signature rides in a non-standard `tool_calls[].extra_content.google.thought_signature`; natively it is `thoughtSignature` on the part.
+- **Stop reasons.** The compatibility layer reports a tool call with `finish_reason: "stop"`, which ends the CLI's loop. Natively a call is a `functionCall` part, and the adapter derives `tool_use` from the parts, not from `finishReason`.
+
+Signatures are kept in a process-wide store keyed by the tool_use id the adapter minted for the call (`toolu_` + 24 hex — Gemini's own ids are neither sent back nor relied on, and a response is matched to its call by name and order). A call the store does not know — history from another provider, or from before the proxy restarted — gets `skip_thought_signature_validator`, the value Gemini documents for exactly that case. A 400 that mentions a signature while real ones were replayed is retried once with placeholders only, for the same reason the Responses path drops replayed reasoning: a rejected step would otherwise stay rejected for the rest of the turn.
+
+An answer with nothing in it — `MALFORMED_FUNCTION_CALL`, `MISSING_THOUGHT_SIGNATURE`, an empty `STOP` — is returned as a 502, not as an empty `end_turn`, so the CLI retries instead of ending the task. A refusal (`SAFETY`, `RECITATION`, a blocked prompt) ends as `stop_reason: "refusal"` with the reason as its text. `usage` subtracts `cachedContentTokenCount` from the prompt like the other paths do, and counts `thoughtsTokenCount` as output, which is how it is billed.
+
+The stream is framed with `\r\n\r\n` as well as `\n\n` (Google's own SDKs split on both), so `readSse` normalises line endings, and it also delivers a last event that has no blank line after it.
+
+Gemini 3 gets no `temperature`/`top_p`/`top_k`: Google recommends its default of 1.0 and documents looping below it. `thinkingLevel` in the `gemini` entry of `proxy.json` sets `generationConfig.thinkingConfig`; without it the model's own default applies.
+
+Measured against the live API (free-tier key, through the corporate proxy) with a simulated Claude Code tool loop — the real tool schemas, `$schema`/`propertyNames`/`prefixItems`/lookahead patterns included, and faked tool results:
+
+| model | result |
+|---|---|
+| `gemini-3.5-flash-lite` | 4 steps (two parallel `Read`s, `Write`, `Bash`, answer), streamed and not |
+| `gemini-3.8-flash` | the same 4 steps; thinking shows up as output tokens (161 on the first step) |
+| `gemini-3.1-pro-preview` | `429`, `limit: 0` — not in the free tier |
+
+The same turn sent straight to the API, one function call in the current step: no signature → `400 Function call is missing a thought_signature in functionCall parts`; a made-up one → `400 Corrupted thought signature.` (what the retry keys on); `skip_thought_signature_validator` → `200`. The delegated-agent probe's shape (`max_tokens: 1`) comes back as an empty `max_tokens` answer with `200`, not as a failure. Without the corporate proxy every request is `400 User location is not supported for the API use`.
 
 ## Native binary
 

@@ -1,7 +1,7 @@
 {
     "name": "vannevarcode",
     "displayName": "Vannevar Code",
-    "description": "Per-tab API provider switching for the Claude Code extension: Anthropic, DeepSeek, OpenAI, OpenRouter, Ollama, a ChatGPT subscription — switched from the command menu, per tab.",
+    "description": "Per-tab API provider switching for the Claude Code extension: Anthropic, DeepSeek, OpenAI, Gemini, OpenRouter, Ollama, a ChatGPT subscription — switched from the command menu, per tab.",
     "publisher": "beatlejute",
     "version": "2.1.278",
     "verifiedAgainst": ["2.1.278", "2.1.276", "2.1.274"],
@@ -22,7 +22,7 @@
     "activationEvents": ["onStartupFinished"],
     "main": "./extension.js",
     "categories": ["Other"],
-    "keywords": ["claude-code", "provider", "openai", "deepseek", "proxy"],
+    "keywords": ["claude-code", "provider", "openai", "gemini", "deepseek", "proxy"],
     "contributes": {
         "commands": [
             { "command": "vannevar.applyPatch", "title": "Vannevar: Apply patch to Claude Code" },
@@ -55,6 +55,6 @@
         "proxy": "node --use-env-proxy runtime/proxy/server.mjs",
         "login:chatgpt": "node --use-env-proxy runtime/login-chatgpt.mjs",
         "auth:status": "node runtime/login-chatgpt.mjs --status",
-        "test": "node test/proxy.test.mjs && node test/responses.test.mjs && node test/model-overrides.test.mjs && node test/profile-icons.test.mjs && node test/env-isolation.test.mjs && node test/proxy-revival.test.mjs && node test/attachment-prompt.test.mjs && node test/fresh-tab-switch.test.mjs && node test/resume-guard.test.mjs && node test/foreign-message-id.test.mjs && node test/compact-on-switch.test.mjs && node test/content-search.test.mjs && node test/message-timestamps.test.mjs && node test/retract-last-message.test.mjs && node test/spellcheck.test.mjs && node test/model-routing.test.mjs && node test/agent-server.test.mjs && node test/agent-live-frame.test.mjs && node test/pinned-sessions.test.mjs && node test/provider-health.test.mjs && node test/autocompact.test.mjs && node test/full-history.test.mjs && node test/auto-repatch.test.mjs && node test/update-watcher.test.mjs && node test/state-contract.test.mjs && node test/activation.test.mjs"
+        "test": "node test/proxy.test.mjs && node test/responses.test.mjs && node test/gemini.test.mjs && node test/model-overrides.test.mjs && node test/profile-icons.test.mjs && node test/env-isolation.test.mjs && node test/proxy-revival.test.mjs && node test/attachment-prompt.test.mjs && node test/fresh-tab-switch.test.mjs && node test/resume-guard.test.mjs && node test/foreign-message-id.test.mjs && node test/compact-on-switch.test.mjs && node test/content-search.test.mjs && node test/message-timestamps.test.mjs && node test/retract-last-message.test.mjs && node test/spellcheck.test.mjs && node test/model-routing.test.mjs && node test/agent-server.test.mjs && node test/agent-live-frame.test.mjs && node test/pinned-sessions.test.mjs && node test/provider-health.test.mjs && node test/autocompact.test.mjs && node test/full-history.test.mjs && node test/auto-repatch.test.mjs && node test/update-watcher.test.mjs && node test/state-contract.test.mjs && node test/activation.test.mjs"
     }
 }
