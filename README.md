@@ -44,8 +44,8 @@ another on DeepSeek, a third on your ChatGPT subscription.
   draw it.
 - **Delegating a task to another provider** through a bundled MCP server, with a live frame under the
   subagent showing what it is doing while it does it.
-- **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, OpenRouter, DeepSeek, Groq,
-  Together, Ollama — and the ChatGPT Plus/Pro subscription.
+- **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
+  Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
 
 ## Install
@@ -58,7 +58,7 @@ code --install-extension vannevarcode-2.1.278.vsix
 ```
 
 Nothing else to run: on the first window it copies its runtime into `~/.claude/vannevar`, applies the
-patch to the installed Claude Code bundle, drops two template profiles into `~/.claude/profiles/` and
+patch to the installed Claude Code bundle, drops three template profiles into `~/.claude/profiles/` and
 registers the delegated-agent MCP server. Then reload the window when it asks.
 
 Requirements: the `anthropic.claude-code` extension, and VS Code 1.85 or newer. There is no Node
@@ -96,6 +96,21 @@ The ChatGPT Plus/Pro subscription works through the same adapter with the OAuth 
 notification holds the wait, and the account is reported when it is done. Tokens
 live in `~/.claude/vannevar/chatgpt-auth.json`, and an existing `~/.codex/auth.json` is picked up as a
 source. See [docs/internals.md](docs/internals.md) for the details, including corporate proxies.
+
+## Gemini
+
+`templates/profiles/gemini.json` routes a tab to the Gemini API through the same adapter, which
+speaks Gemini's own `generateContent` rather than its OpenAI compatibility layer. Put a key from
+[Google AI Studio](https://aistudio.google.com/apikey) in `ANTHROPIC_AUTH_TOKEN`; the template maps
+the families to Gemini 3.8 Flash and 3.5 Flash-Lite, with the `[1m]` marker for their 1,048,576-token
+context. Gemini 3.1 Pro is not in the free tier — a free key gets `429` with `limit: 0` — so with
+billing enabled, point the opus and fable families at `gemini-3.1-pro-preview[1m]`. How hard the model
+thinks is Gemini's own default unless the `gemini` entry in `~/.claude/vannevar/proxy.json` sets
+`"thinkingLevel"` (`"LOW"`, `"MEDIUM"`, `"HIGH"`).
+
+The Gemini API refuses some regions outright (`400 User location is not supported for the API use`);
+from one of those it takes an `HTTPS_PROXY` in the `env` block of `proxy.json`, which is where the
+adapter's outbound proxy is configured anyway.
 
 ## After a Claude Code update
 

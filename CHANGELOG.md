@@ -5,6 +5,16 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## Unreleased
+
+- A Gemini profile. `templates/profiles/gemini.json` routes a tab through the adapter to the Gemini
+  API, which it speaks natively (`generateContent`) instead of through Google's OpenAI compatibility
+  layer: tool schemas go as JSON Schema, Gemini 3's thought signatures come back with the calls they
+  belong to, and a tool call ends the turn as `tool_use`. An existing `~/.claude/profiles` gets the
+  new template on the next window; nothing already there is touched.
+- The adapter reads a stream framed with `\r\n` and delivers a last event that has no blank line
+  after it.
+
 ## 2.1.278
 
 Verified against Claude Code **2.1.278**, **2.1.276**, **2.1.274**.

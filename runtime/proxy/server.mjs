@@ -1,5 +1,6 @@
 // Local adapter: accepts the Anthropic Messages API from Claude Code
-// and talks to an OpenAI-compatible /chat/completions endpoint.
+// and talks to an OpenAI-compatible /chat/completions endpoint, the Responses API,
+// or the Gemini API's own generateContent.
 //
 //   node src/proxy/server.mjs [--port 8787] [--config <path>]
 //
@@ -23,6 +24,13 @@ import {
     createResponsesCollector,
     createReasoningStore,
 } from './translate-responses.mjs';
+import {
+    anthropicToGemini,
+    geminiToAnthropic,
+    createGeminiStreamTranslator,
+    createSignatureStore,
+    SKIP_SIGNATURE,
+} from './translate-gemini.mjs';
 import { getAuth } from './auth-chatgpt.mjs';
 
 const RUNTIME = path.join(os.homedir(), '.claude', 'vannevar');
@@ -30,7 +38,8 @@ const DEFAULT_CONFIG = path.join(RUNTIME, 'proxy.json');
 const LOG_FILE = path.join(RUNTIME, 'proxy.log');
 const PROFILES_DIR = path.join(os.homedir(), '.claude', 'profiles');
 
-// protocol: 'chat' = /chat/completions with an API key; 'responses' = /responses (Responses API).
+// protocol: 'chat' = /chat/completions with an API key; 'responses' = /responses (Responses API);
+// 'gemini' = models/<model>:generateContent (Gemini API, key in x-goog-api-key).
 // auth: 'key' = key from header/config; 'chatgpt-oauth' = ChatGPT subscription token.
 const DEFAULTS = {
     port: 8787,
@@ -41,6 +50,7 @@ const DEFAULTS = {
         together: { baseUrl: 'https://api.together.xyz/v1', protocol: 'chat' },
         ollama: { baseUrl: 'http://127.0.0.1:11434/v1', protocol: 'chat' },
         'openai-responses': { baseUrl: 'https://api.openai.com/v1', protocol: 'responses' },
+        gemini: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta', protocol: 'gemini' },
         codex: {
             baseUrl: 'https://chatgpt.com/backend-api/codex',
             protocol: 'responses',
@@ -231,7 +241,7 @@ function writeEvent(res, event, data) {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-async function buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel, reasoning } = {}) {
+async function buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel, reasoning, signatures } = {}) {
     const protocol = upstream.protocol || 'chat';
     const base = upstream.baseUrl.replace(/\/$/, '');
     // What the caller asked for, which is not always what the upstream is asked for: the codex
@@ -239,6 +249,27 @@ async function buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel
     const clientStream = !!anthropic.stream;
     // modelOverrides remap the model the caller asked for before the upstream ever sees it
     const request = upstreamModel ? { ...anthropic, model: upstreamModel } : anthropic;
+
+    if (protocol === 'gemini') {
+        const { model, request: translated } = anthropicToGemini(request, {
+            signatures,
+            thinkingLevel: upstream.thinkingLevel,
+        });
+        const key = upstreamKey(req, upstream);
+        const method = clientStream ? 'streamGenerateContent?alt=sse' : 'generateContent';
+        return {
+            protocol,
+            model,
+            url: `${base}/models/${encodeURIComponent(model)}:${method}`,
+            headers: {
+                'content-type': 'application/json',
+                ...(key ? { 'x-goog-api-key': key } : {}),
+                ...(upstream.headers || {}),
+            },
+            request: translated,
+            stream: clientStream,
+        };
+    }
 
     if (protocol === 'responses') {
         const translated = anthropicToResponses(request, {
@@ -286,7 +317,7 @@ async function buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel
     };
 }
 
-async function handleMessages(req, res, body, upstream, name, modelRules, reasoning) {
+async function handleMessages(req, res, body, upstream, name, modelRules, reasoning, signatures) {
     let anthropic;
     try {
         anthropic = JSON.parse(body);
@@ -301,20 +332,21 @@ async function handleMessages(req, res, body, upstream, name, modelRules, reason
 
     let call;
     try {
-        call = await buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel, reasoning });
+        call = await buildUpstreamCall(req, anthropic, upstream, name, { upstreamModel, reasoning, signatures });
     } catch (e) {
         return sendError(res, 401, e.message, 'authentication_error');
     }
     const { protocol, url, headers, request } = call;
+    const model = call.model || request.model;
 
     log('request', {
         upstream: name,
         protocol,
-        model: request.model,
+        model,
         ...(requestedModel !== upstreamModel ? { requested: requestedModel } : {}),
         stream: !!call.stream,
-        items: protocol === 'responses' ? request.input.length : request.messages.length,
-        tools: request.tools ? request.tools.length : 0,
+        items: (request.input || request.messages || request.contents).length,
+        tools: (protocol === 'gemini' ? request.tools?.[0]?.functionDeclarations : request.tools)?.length || 0,
     });
 
     let upstreamResponse;
@@ -334,7 +366,24 @@ async function handleMessages(req, res, body, upstream, name, modelRules, reason
             reasoning.clear();
             return handleMessages(req, res, body, upstream, name, modelRules);
         }
+        // The same trap on Gemini: a signature it no longer accepts (the step was answered by another
+        // model of the profile, say) would fail every later request of the turn. Placeholders pass.
+        const signatureRejected = upstreamResponse.status === 400 && protocol === 'gemini' && /signature/i.test(text);
+        if (signatureRejected && signatures && replaysSignatures(request)) {
+            log('thought signature rejected, retrying with placeholders', text.slice(0, 300));
+            return handleMessages(req, res, body, upstream, name, modelRules, reasoning, signatures.blind());
+        }
         return sendError(res, upstreamResponse.status, `upstream ${upstreamResponse.status}: ${text.slice(0, 500)}`);
+    }
+
+    if (protocol === 'gemini') {
+        const onSignature = (id, signature) => signatures?.remember(id, signature);
+        if (call.stream) {
+            const translator = createGeminiStreamTranslator(model, { onSignature, inputTokens: estimateTokens(anthropic) });
+            return streamTranslated(req, res, upstreamResponse, translator);
+        }
+        const { message, failure } = geminiToAnthropic(await upstreamResponse.json(), model, { onSignature });
+        return failure ? sendFailure(res, failure) : sendJson(res, 200, message);
     }
 
     if (!call.stream) {
@@ -353,8 +402,10 @@ async function handleMessages(req, res, body, upstream, name, modelRules, reason
         );
     }
 
-    if (protocol === 'responses')
-        return streamResponses(req, res, upstreamResponse, request, reasoning, estimateTokens(anthropic));
+    if (protocol === 'responses') {
+        const translator = createResponsesStreamTranslator(request.model, { inputTokens: estimateTokens(anthropic) });
+        return streamTranslated(req, res, upstreamResponse, translator, () => reasoning?.remember(translator.output));
+    }
 
     res.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
@@ -407,8 +458,10 @@ async function handleMessages(req, res, body, upstream, name, modelRules, reason
     res.end();
 }
 
-// Splits an SSE body into (event name, payload) pairs. Shared by both Responses paths so the
-// streamed and the collected answer are built from exactly the same framing.
+// Splits an SSE body into (event name, payload) pairs. Shared by the Responses and Gemini paths so
+// the streamed and the collected answer are built from exactly the same framing. Line endings are
+// normalised first: Google's SDKs split its streams on \r\n\r\n as well as \n\n. A \r at the very
+// end of the buffer waits for the next read, which may bring its \n.
 async function readSse(req, upstreamResponse, onEvent) {
     const reader = upstreamResponse.body.getReader();
     const decoder = new TextDecoder();
@@ -420,34 +473,39 @@ async function readSse(req, upstreamResponse, onEvent) {
         reader.cancel().catch(() => {});
     });
 
+    const dispatch = (block) => {
+        let eventName = null;
+        let dataLine = '';
+        for (const line of block.split('\n')) {
+            if (line.startsWith('event:')) eventName = line.slice(6).trim();
+            else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
+        }
+        if (!dataLine || dataLine === '[DONE]') return;
+
+        let payload;
+        try {
+            payload = JSON.parse(dataLine);
+        } catch (e) {
+            log('sse chunk parse failed', e.message);
+            return;
+        }
+        onEvent(eventName || payload.type, payload);
+    };
+
     while (!closed) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        buffer = (buffer + decoder.decode(value, { stream: true })).replace(/\r\n/g, '\n').replace(/\r(?!$)/g, '\n');
 
         let sep;
         while ((sep = buffer.indexOf('\n\n')) !== -1) {
             const block = buffer.slice(0, sep);
             buffer = buffer.slice(sep + 2);
-
-            let eventName = null;
-            let dataLine = '';
-            for (const line of block.split('\n')) {
-                if (line.startsWith('event:')) eventName = line.slice(6).trim();
-                else if (line.startsWith('data:')) dataLine += line.slice(5).trim();
-            }
-            if (!dataLine || dataLine === '[DONE]') continue;
-
-            let payload;
-            try {
-                payload = JSON.parse(dataLine);
-            } catch (e) {
-                log('responses chunk parse failed', e.message);
-                continue;
-            }
-            onEvent(eventName || payload.type, payload);
+            dispatch(block);
         }
     }
+    // A body that ends without the blank line after its last event still delivered that event
+    if (!closed && buffer.trim()) dispatch(buffer.replace(/\r/g, '\n'));
 }
 
 // An overloaded upstream is retryable, so it keeps the status the CLI backs off on
@@ -461,7 +519,20 @@ const describeFailure = (failure) =>
         .filter(Boolean)
         .join(' · ');
 
-async function streamResponses(req, res, upstreamResponse, request, reasoning, inputTokens) {
+// A refusal the upstream reported in its body rather than in its status, answered as the status it means
+function sendFailure(res, failure) {
+    log('upstream reported failure', describeFailure(failure));
+    const status = failureStatus(failure.message);
+    return sendError(res, status, failure.message, status === 529 ? 'overloaded_error' : 'api_error');
+}
+
+// Whether the request replays a signature Gemini itself issued, as opposed to only placeholders
+const replaysSignatures = (request) =>
+    (request.contents || []).some((c) => c.parts.some((p) => p.thoughtSignature && p.thoughtSignature !== SKIP_SIGNATURE));
+
+// One SSE stream through a translator that has `event(name, payload)`, `finish()`, `failure` and
+// `completed` — the Responses and the Gemini ones both do. `onComplete` runs after a normal finish.
+async function streamTranslated(req, res, upstreamResponse, translator, onComplete) {
     // Headers are sent lazily: while they are pending, a failure can still be reported with a real HTTP status;
     // otherwise the CLI sees "200 with an empty body" and cannot tell it was an error
     const ensureHeaders = () => {
@@ -473,7 +544,6 @@ async function streamResponses(req, res, upstreamResponse, request, reasoning, i
         });
     };
 
-    const translator = createResponsesStreamTranslator(request.model, { inputTokens });
     const emit = (events) => {
         if (!events.length) return;
         ensureHeaders();
@@ -500,7 +570,7 @@ async function streamResponses(req, res, upstreamResponse, request, reasoning, i
             writeEvent(res, 'error', { type: 'error', error: { type: 'api_error', message } });
         } else {
             emit(translator.finish());
-            reasoning?.remember(translator.output);
+            onComplete?.();
         }
     } catch (e) {
         log('stream failed', e.message);
@@ -521,11 +591,7 @@ async function collectResponses(req, res, upstreamResponse, request, reasoning) 
         return sendError(res, 502, e.message);
     }
 
-    if (collector.failure) {
-        log('upstream reported failure', describeFailure(collector.failure));
-        const status = failureStatus(collector.failure.message);
-        return sendError(res, status, collector.failure.message, status === 529 ? 'overloaded_error' : 'api_error');
-    }
+    if (collector.failure) return sendFailure(res, collector.failure);
     if (!collector.completed) return sendError(res, 502, 'upstream stream ended without a terminal event');
 
     const payload = collector.result;
@@ -538,6 +604,8 @@ function createServer(config) {
     const rulesFor = createModelRulesLoader(config);
     // One store for the process: the keys are call_ids, which are unique across upstreams anyway
     const reasoning = createReasoningStore();
+    // Keyed by tool_use ids this proxy minted, so no other upstream's call can collide with one
+    const signatures = createSignatureStore();
     return http.createServer(async (req, res) => {
         const url = new URL(req.url, 'http://localhost');
         const segments = url.pathname.split('/').filter(Boolean);
@@ -577,7 +645,7 @@ function createServer(config) {
                     targetBody = JSON.stringify(parsed);
                 }
             } catch {}
-            return handleMessages(req, res, targetBody, targetUpstream, targetName, rulesFor(targetName), reasoning);
+            return handleMessages(req, res, targetBody, targetUpstream, targetName, rulesFor(targetName), reasoning, signatures);
         }
 
         return sendError(res, 404, `not found: ${url.pathname}`);
