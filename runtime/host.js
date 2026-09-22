@@ -911,6 +911,21 @@ function envFor(baseEnv, resumeSessionId, opts) {
         env.NO_PROXY = env.NO_PROXY ? `${env.NO_PROXY},${noProxy}` : noProxy;
         env.no_proxy = env.NO_PROXY;
     }
+
+    // From Claude Code 2.1.278 auto mode asks the server to run its safety classifier inside the
+    // session's own requests — it sends a `safeguards` field and reads `safeguard_results` back —
+    // and stops billing for it. Nothing this extension routes to can answer that way: the adapter
+    // translates to the Responses or Gemini protocol entirely, and DeepSeek or GLM never saw the
+    // field. Left to discover that by itself, the CLI holds the first checked action and reports
+    // that the session is not eligible. Saying so up front skips the notice and leaves auto mode on
+    // its own classifier requests, which is what it would have fallen back to anyway. The variable
+    // is ignored on a direct connection to Anthropic and Bedrock and Vertex do serve the checks, so
+    // only a profile that routes somewhere else gets it. It is documented as temporary, and a value
+    // the user set themselves — in the profile or in settings.json, which the CLI layers on top —
+    // still wins.
+    if (!targetsAnthropic(profile, baseEnv) && !('CLAUDE_CODE_AUTO_MODE_SERVER' in env)) {
+        env.CLAUDE_CODE_AUTO_MODE_SERVER = '0';
+    }
     dlog('envFor', { profile, session: resumeSessionId || 'new', baseUrl: profileEnv(profile).ANTHROPIC_BASE_URL });
     console.log(`ccx: spawning with profile "${profile}" (session ${resumeSessionId || 'new'})`);
     return env;

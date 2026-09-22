@@ -14,6 +14,16 @@ does.
   new template on the next window; nothing already there is touched.
 - The adapter reads a stream framed with `\r\n` and delivers a last event that has no blank line
   after it.
+- Auto mode stops being interrupted on a third-party profile. From Claude Code 2.1.278 auto mode asks
+  the server to run its safety classifier inside the session's own requests — a `safeguards` field
+  out, `safeguard_results` back — and charges nothing for it. No endpoint this extension routes to
+  answers that way: the adapter translates to the Responses or Gemini protocol entirely, and DeepSeek
+  or GLM never saw the field. The CLI used to discover that by holding the first checked action
+  behind a notice saying the session is not eligible. A profile that routes away from
+  `api.anthropic.com` now says so up front with `CLAUDE_CODE_AUTO_MODE_SERVER=0`, which keeps auto
+  mode on the CLI's own classifier requests — the same checks, billed as token usage as they always
+  were. The subscription profile, a profile that only swaps the Anthropic account, and Bedrock and
+  Vertex all keep the free server-side checks, and a value you set yourself still wins.
 
 ## 2.1.278
 

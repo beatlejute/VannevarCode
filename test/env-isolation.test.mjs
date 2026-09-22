@@ -99,6 +99,26 @@ const second = envFor(ambient, 'sess-second');
 assert.ok(!('ANTHROPIC_API_KEY' in second), 'ambient key outranks a token-only profile and must be stripped');
 assert.equal(second.ANTHROPIC_AUTH_TOKEN, 'sk-ant-second', 'token-only profile did not take effect');
 
+// Auto mode's server-side classifier (Claude Code 2.1.278+) only works where the endpoint understands
+// the `safeguards` field. DeepSeek does not, so the profile has to opt out before the CLI finds out the
+// hard way and holds an action behind a not-eligible notice.
+assert.equal(third.CLAUDE_CODE_AUTO_MODE_SERVER, '0', 'third-party endpoint must opt out of server-side auto mode');
+assert.ok(
+    !('CLAUDE_CODE_AUTO_MODE_SERVER' in anthropic),
+    'the subscription profile talks to Anthropic directly and must keep the free server-side classifier',
+);
+// Same Anthropic endpoint, different account: the checks work there, so nothing is opted out.
+assert.ok(
+    !('CLAUDE_CODE_AUTO_MODE_SERVER' in second),
+    'a token-only profile still reaches api.anthropic.com and must keep the free server-side classifier',
+);
+// A user who set it themselves outranks us — it is their environment and the flag is documented as temporary.
+assert.equal(
+    envFor({ ...ambient, CLAUDE_CODE_AUTO_MODE_SERVER: '1' }, 'sess-third-party').CLAUDE_CODE_AUTO_MODE_SERVER,
+    '1',
+    'an explicit CLAUDE_CODE_AUTO_MODE_SERVER must survive',
+);
+
 // No binding, no profile: the environment is passed through untouched, by identity.
 assert.strictEqual(envFor(ambient, 'sess-unknown'), ambient, 'unbound session must pass the environment through');
 
