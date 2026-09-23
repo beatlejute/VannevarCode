@@ -187,9 +187,23 @@ function versionOf(dirName) {
     return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0];
 }
 
+// Where the editor keeps its extensions. The extension stamped the Claude Code bundle it resolved
+// through the VS Code API beside this server, and its parent is that root; guessing
+// ~/.vscode/extensions is wrong in Cursor, Windsurf, Insiders and on a Remote-SSH host, all of which
+// run this server too. apply-patch.mjs reads the same stamp for the same reason. The parent rather
+// than the stamped path itself, because Claude Code updates between activations and the newest folder
+// beside it is the one to spawn.
+function extensionsRoot() {
+    try {
+        const json = JSON.parse(fs.readFileSync(path.join(RUNTIME, 'patch-version.json'), 'utf8'));
+        if (typeof json.extensionPath === 'string' && json.extensionPath) return path.dirname(json.extensionPath);
+    } catch {}
+    return path.join(HOME, '.vscode', 'extensions');
+}
+
 function resolveClaudeBinary() {
     if (process.env.VANNEVAR_CLAUDE_BIN) return process.env.VANNEVAR_CLAUDE_BIN;
-    const root = path.join(HOME, '.vscode', 'extensions');
+    const root = extensionsRoot();
     const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
     try {
         const dir = fs

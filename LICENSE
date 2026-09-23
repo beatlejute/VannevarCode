@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Claudapter contributors
+Copyright (c) 2026 Vannevar Code contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,8 +22,8 @@ SOFTWARE.
 
 ---
 
-This license covers the source code of Claudapter only.
+This license covers the source code of Vannevar Code only.
 
-It does not cover, and Claudapter does not redistribute, any part of the
+It does not cover, and Vannevar Code does not redistribute, any part of the
 Claude Code extension, the Claude Code CLI, or any provider's trademarks,
 logos or API clients. See DISCLAIMER.md.
