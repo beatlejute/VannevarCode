@@ -5,6 +5,17 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.281
+
+Verified against Claude Code **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Nothing in the extension changed. Open VSX reserves a version identity permanently once it has been
+published — deleting the upload does not give the number back — and 2.1.280 was uploaded there before
+the publisher agreement was signed, which leaves it deactivated and unrepublishable. This release
+carries the same code under the next patch number so the Open VSX listing can exist at all; the
+Marketplace and the `.vsix` in the GitHub release are unaffected, and `verifiedAgainst` stays as it
+was, because the build this was verified against did not move.
+
 ## 2.1.280
 
 Verified against Claude Code **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.

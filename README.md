@@ -54,7 +54,7 @@ Install **Vannevar Code** from the Marketplace (or Open VSX in Cursor, Windsurf 
 the `.vsix` from [Releases](https://github.com/beatlejute/VannevarCode/releases) and
 
 ```bash
-code --install-extension vannevarcode-2.1.280.vsix
+code --install-extension vannevarcode-2.1.281.vsix
 ```
 
 Nothing else to run: on the first window it copies its runtime into `~/.claude/vannevar`, applies the
@@ -136,8 +136,13 @@ The version number is the Claude Code release the signatures were verified again
 says 2.1.280 was checked against Claude Code 2.1.280. One release usually fits several builds, and
 `verifiedAgainst` in the manifest carries the whole list:
 
+A release that fixes something between two Claude Code builds has no number of its own to take, so it
+takes the next patch and `verifiedAgainst` stays where it was — which is why the list, not the version,
+is what every part of the code reads.
+
 | Vannevar Code | Fits Claude Code |
 |---|---|
+| 2.1.281 | 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.280 | 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.278 | 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.276 | 2.1.276, 2.1.274 |
