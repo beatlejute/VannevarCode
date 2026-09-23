@@ -34,10 +34,13 @@ All of it under your home directory, in plain files you can read and delete:
 | `~/.claude/vannevar/pinned.json` | session ids pinned to the top of the list |
 | `~/.claude/vannevar/hidden-messages.json` | messages you took back |
 | `~/.claude/vannevar/agent-health.json` | the last answer each provider gave |
+| `~/.claude/vannevar/agent-sessions.json` | which profile and which directory each delegated run used, so it can be resumed |
+| `~/.claude/vannevar/agent-runs/` | one manifest per delegated run: its id, session, profile and how it ended — no conversation text |
+| `~/.claude/vannevar/mcp-registered.json` | a receipt saying the delegated-agent MCP server has been registered, so it is not registered twice |
 | `~/.claude/vannevar/chatgpt-auth.json` | ChatGPT OAuth tokens, if you use that mode |
 | `~/.claude/vannevar/proxy.json` | adapter settings |
 | `~/.claude/vannevar/icons/` | downloaded provider icons |
-| `~/.claude/vannevar/debug.log`, `extension.log` | local diagnostics: which profile a spawn used, what the patcher did |
+| `~/.claude/vannevar/debug.log`, `extension.log`, `agent-server.log` | local diagnostics: which profile a spawn used, what the patcher did, what the agent server was asked |
 
 `~/.claude/settings.json` is never modified. Nothing in this list is uploaded, synced or shared, and
 deleting `~/.claude/vannevar/` removes everything the extension has ever stored.
