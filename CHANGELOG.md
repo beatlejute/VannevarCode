@@ -5,7 +5,14 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## Unreleased
+## 2.1.280
+
+Verified against Claude Code **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.280 cost no signature either: every injection point matched the shape it already
+matched, through a third rename running of the two anchors that are written structurally for exactly
+that reason. 2.1.279 never landed here, so the patch number this release had taken under Claude Code
+2.1.278 goes unused and the work below ships under the new build instead.
 
 - A Gemini profile. `templates/profiles/gemini.json` routes a tab through the adapter to the Gemini
   API, which it speaks natively (`generateContent`) instead of through Google's OpenAI compatibility
