@@ -12,12 +12,12 @@ another on DeepSeek, a third on your ChatGPT subscription.
 
 | | |
 |---|---|
-| ![Command menu — "Switch provider…" entry](images/2.jpg) | ![Profile picker with provider list](images/3.jpg) |
+| ![Command menu — "Switch provider…" entry](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/2.jpg) | ![Profile picker with provider list](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/3.jpg) |
 | *"Switch provider…" is the first entry in the Model section of the command menu* | *Each profile from `~/.claude/profiles/` is listed with its actual upstream model* |
-| ![Switched to deepseek — tab icon, badge, model label](images/4.jpg) | ![Running on DeepSeek V4 Pro](images/1.jpg) |
+| ![Switched to deepseek — tab icon, badge, model label](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/4.jpg) | ![Running on DeepSeek V4 Pro](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/1.jpg) |
 | *The active profile appears in the badge; the model picker shows the real upstream model* | *Same tab — answer from DeepSeek V4 Pro, 1M context* |
 
-![Session history, each row marked with its provider icon](images/5.jpg)
+![Session history, each row marked with its provider icon](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/5.jpg)
 
 *The session history: every past session carries the icon of the provider it actually ran on.*
 
@@ -95,7 +95,7 @@ The ChatGPT Plus/Pro subscription works through the same adapter with the OAuth 
 **Vannevar: Sign in to ChatGPT** runs it in the editor: VS Code opens the sign-in page, a progress
 notification holds the wait, and the account is reported when it is done. Tokens
 live in `~/.claude/vannevar/chatgpt-auth.json`, and an existing `~/.codex/auth.json` is picked up as a
-source. See [docs/internals.md](docs/internals.md) for the details, including corporate proxies.
+source. See [docs/internals.md](https://github.com/beatlejute/VannevarCode/blob/main/docs/internals.md) for the details, including corporate proxies.
 
 ## Gemini
 
@@ -166,7 +166,7 @@ the command menu.
 
 - **This modifies a proprietary bundle.** The Claude Code extension is `© Anthropic PBC, All rights
   reserved`; patching the installed files is at odds with its terms. Everything is reversible with
-  *Revert patch*, and nothing patched is ever distributed — see [DISCLAIMER.md](DISCLAIMER.md).
+  *Revert patch*, and nothing patched is ever distributed — see [DISCLAIMER.md](https://github.com/beatlejute/VannevarCode/blob/main/DISCLAIMER.md).
 - **Switching providers restarts the process.** `env` is fixed when `claude` spawns, so the switch
   relaunches the channel with `resume`.
 - **Session binding appears after the first response** — before that the session id does not exist yet.
@@ -192,11 +192,11 @@ because it was the pointer, not the analyzer, that set the work free.
 
 ## More
 
-- [docs/internals.md](docs/internals.md) — the injection points, the adapter, and what every release of
+- [docs/internals.md](https://github.com/beatlejute/VannevarCode/blob/main/docs/internals.md) — the injection points, the adapter, and what every release of
   Claude Code did to the signatures.
-- [PRIVACY.md](PRIVACY.md) — what leaves the machine, and what never does.
-- [DISCLAIMER.md](DISCLAIMER.md) — the legal position.
-- [CHANGELOG.md](CHANGELOG.md)
+- [PRIVACY.md](https://github.com/beatlejute/VannevarCode/blob/main/PRIVACY.md) — what leaves the machine, and what never does.
+- [DISCLAIMER.md](https://github.com/beatlejute/VannevarCode/blob/main/DISCLAIMER.md) — the legal position.
+- [CHANGELOG.md](https://github.com/beatlejute/VannevarCode/blob/main/CHANGELOG.md)
 
 Not affiliated with, endorsed by, or connected to Anthropic. "Claude" and "Claude Code" are used only
 to say what this works with.
