@@ -12,14 +12,25 @@ another on DeepSeek, a third on your ChatGPT subscription.
 
 | | |
 |---|---|
-| ![Command menu — "Switch provider…" entry](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/2.jpg) | ![Profile picker with provider list](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/3.jpg) |
-| *"Switch provider…" is the first entry in the Model section of the command menu* | *Each profile from `~/.claude/profiles/` is listed with its actual upstream model* |
-| ![Switched to deepseek — tab icon, badge, model label](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/4.jpg) | ![Running on DeepSeek V4 Pro](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/1.jpg) |
-| *The active profile appears in the badge; the model picker shows the real upstream model* | *Same tab — answer from DeepSeek V4 Pro, 1M context* |
+| ![Command menu — "Switch provider…" entry with the deepseek badge](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/4.jpg) | ![Profile picker with provider list](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/3.jpg) |
+| *"Switch provider…" heads the Model section of the command menu; the badge shows the active profile, the model row the real upstream model* | *Each profile from `~/.claude/profiles/` is listed with its actual upstream model* |
 
-![Session history, each row marked with its provider icon](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/5.jpg)
+![Switching to gemini — Compact & switch or Switch as is](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/6.jpg)
 
-*The session history: every past session carries the icon of the provider it actually ran on.*
+*A tab with history asks first: the new provider starts with a cold cache, so a summary is cheaper to send than the whole transcript.*
+
+| | |
+|---|---|
+| ![Session history, each row marked with its provider icon](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/5.jpg) | ![Provider status — the last call to each profile](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/2.jpg) |
+| *The session history: every past session carries the icon of the provider it actually ran on* | *"Provider status…": what the last real call to each profile found, and how long ago it was made* |
+
+![Running on DeepSeek V4 Pro](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/1.jpg)
+
+*One tab, one provider: an answer from DeepSeek V4 Pro with its 1M context, next to tabs running on other providers.*
+
+![A task delegated to codex — the frame under the subagent call](https://raw.githubusercontent.com/beatlejute/VannevarCode/main/images/7.jpg)
+
+*A task delegated to another provider through the bundled MCP server: the frame under the call names the profile and model, and counts time and tool calls while the subagent is still working.*
 
 ## What you get
 
