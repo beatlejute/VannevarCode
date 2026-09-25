@@ -5,6 +5,15 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.282
+
+Verified against Claude Code **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.282 cost no signature: the two anchors written structurally for exactly this renamed
+for the fourth release running, and every injection point matched the shape it already matched.
+Nothing else in the extension changed. Claude Code 2.1.281 never landed here — this extension's own
+2.1.281 is the Open VSX re-publish below and has nothing to do with it.
+
 ## 2.1.281
 
 Verified against Claude Code **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
