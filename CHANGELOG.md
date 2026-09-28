@@ -5,6 +5,14 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.283
+
+Verified against Claude Code **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.283 cost no signature: of the two anchors written structurally for exactly this, only
+the session environment's renamed this time, and every injection point matched the shape it already
+matched. Nothing else in the extension changed.
+
 ## 2.1.282
 
 Verified against Claude Code **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
