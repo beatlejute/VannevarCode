@@ -193,6 +193,25 @@ try {
         }
         console.log(`OK — every release in verifiedAgainst (${verified.join(', ')}) applies without a warning`);
 
+        // --- a signature that moved in the second file only -------------------------------------------
+        // extension.js is patched first, and a refusal that came from webview/index.js used to arrive
+        // after extension.js had already been written: half a patch, on a bundle the result line said
+        // nothing about. Every file is now patched in memory before any of them is written.
+        const half = fixture('anthropic.claude-code-9.9.9-half', {
+            'extension.js': source['extension.js'],
+            'webview/index.js': SOURCE,
+        });
+        const refusedHalf = run(PATCHER, [`--dir=${half}`, '--if-needed']);
+        assert.notEqual(refusedHalf.code, 0, 'a webview with no matching signature must fail loudly');
+        assert.match(refusedHalf.text, /webview\/index\.js: signature matched 0 times/, `unexpected failure:\n${refusedHalf.text}`);
+        assert.doesNotMatch(refusedHalf.text, /^ccx-result:/m, 'a refused run must not report a result');
+        assert.equal(
+            readFileSync(path.join(half, 'extension.js'), 'utf8'),
+            source['extension.js'],
+            'extension.js was written although the webview refused the patch',
+        );
+        console.log('OK — a signature that moved in the webview leaves extension.js unwritten too');
+
         // --- patched, but by somebody else ------------------------------------------------------------
         // The marker says "somebody patched this"; --if-needed is asking "is MY runtime wired in". A bundle
         // carrying hooks that load host.js out of another directory answers no to the second question, and

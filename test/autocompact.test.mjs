@@ -284,11 +284,17 @@ console.log('OK — the page adds a switch of the app\'s own and compacts on the
 
 const patcher = readFileSync(new URL('../runtime/apply-patch.mjs', import.meta.url), 'utf8');
 assert.match(patcher, /"toggle-thinking","ccx-autocompact",/, 'the new id sits under Thinking');
-assert.match(
-    patcher,
-    /find:\s*'\["model","effort-level","toggle-thinking","switch-models-on-flag","account-usage"\]'/,
-    'the find pattern stays the stock list',
-);
+// The find pattern is the stock list, whichever release's: 2.1.284 added "ultracode" to it, and an entry of
+// the page's own must never be what it looks for, or a patched list would be matched a second time.
+const sortOrderFind = /^\s*find: \/(\\\["model",.*"account-usage"\\\])\/,$/m.exec(patcher);
+assert.ok(sortOrderFind, 'the Model sort order is no longer found by a pattern');
+const sortOrder = new RegExp(sortOrderFind[1], 'g');
+for (const stock of [
+    '["model","effort-level","toggle-thinking","switch-models-on-flag","account-usage"]',
+    '["model","effort-level","ultracode","toggle-thinking","switch-models-on-flag","account-usage"]',
+])
+    assert.equal(stock.match(sortOrder)?.length, 1, `the stock list ${stock} is not found`);
+assert.doesNotMatch(sortOrderFind[1], /ccx-/, 'the find pattern names an id of the page');
 
 console.log('OK — the Model sort order names ccx-autocompact after toggle-thinking');
 
