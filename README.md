@@ -48,8 +48,8 @@ another on DeepSeek, a third on your ChatGPT subscription.
   Anthropic with a `400`, forever, because it is re-read from the transcript on every relaunch. Spawns
   going to Anthropic have those ids dropped first; ids Anthropic itself issued are left alone.
 - **Provider icons** on the tab and on every row of the session history, **pinned sessions**, **real
-  model names** in the picker, **message timestamps**, **quote selection**, **local spellcheck**,
-  **taking back the last message**, **searching sessions by what was said in them**.
+  model names** in the picker, **quote selection**, **local spellcheck**, **taking back the last
+  message**, **searching sessions by what was said in them**.
 - **"Provider status…"** — one row per profile with the verdict of the last call actually made to it:
   answered, refused (with the provider's own words), never replied, never asked. Nothing is probed to
   draw it.

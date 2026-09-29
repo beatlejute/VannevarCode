@@ -5,6 +5,14 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## Unreleased
+
+- Message timestamps are gone from this extension. Claude Code 2.1.284 draws its own — a time on every
+  message and a date line where the day changes — behind **Claude Code: Show Message Timestamps**
+  (`claudeCode.showMessageTimestamps`, off by default), and two sets of the same labels on one message
+  were the only thing the pair could produce. Turn the stock setting on to keep seeing times. On a
+  Claude Code older than 2.1.284 there is no setting to turn on, and messages carry no time at all.
+
 ## 2.1.284
 
 Verified against Claude Code **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**,

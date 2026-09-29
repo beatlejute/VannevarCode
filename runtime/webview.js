@@ -61,11 +61,6 @@
     var spellcheckText = '';
     var spellcheckUnknown = new Set();
     var spellcheckSuggestions = {};
-    // uuid -> epoch ms, straight from the session's .jsonl. The page's own message.timestamp cannot be
-    // trusted for anything but a live turn: its class defaults that field to Date.now(), and replayed
-    // history is rebuilt without one, so a resumed transcript reports "now" for every past message.
-    var messageTimes = {};
-    var messageTimesSession = null;
     // The pinned session ids, mirrored from the host. Two consumers: the row marks, drawn from the
     // DOM side, and the session list's own ordering, which only ever sees what pushPinned() hands
     // to its state setter — the component re-reads nothing on its own.
@@ -424,7 +419,6 @@
             if (overlayKind === 'health') openHealth();
             decorateModelPicker();
             decorateSessionList();
-            decorateTranscript();
             decorateAgentFrames();
             decorateSidebar();
             applyHidden();
@@ -445,10 +439,6 @@
             searchSetter(d.matches && d.matches.length ? new Set(d.matches) : null);
         } else if (d.type === 'ccx:spellcheckResult') {
             applySpellcheckResult(d);
-        } else if (d.type === 'ccx:timestampsResult') {
-            if (d.sessionId !== messageTimesSession) return;
-            messageTimes = d.times || {};
-            decorateTranscript();
         } else if (d.type === 'ccx:cache') {
             // The host reports the 1h tier only; anything else is treated as "no signal" so a stale
             // timer never fires on a session that has since dropped to the 5m tier.
@@ -858,21 +848,16 @@
         pin.title = pinned ? 'Unpin from the top of the list' : 'Pin to the top of the list';
     }
 
-    // --- Message timestamps, chat-app style --------------------------------------------------
+    // --- The transcript message behind a bubble ---------------------------------------------
     //
     // Each transcript turn is rendered from a `message` prop — {type, uuid, content, timestamp, …} —
     // carried straight from the .jsonl line that produced it, which is not otherwise exposed anywhere
     // in the DOM or in ccx:state. The same fiber read as sessionIdOfRow gets it: no signal unwrapping
     // needed here, `message` is a plain object, not a signal.
     //
-    // Written as data-* + a CSS pseudo-element, the same way the session-list provider mark is: a real
-    // child node risks React's own reconciliation of that bubble (most of all the assistant one, which
-    // keeps re-rendering while a turn is still streaming) clobbering it on the next commit, where a
-    // data attribute on the node React already owns survives untouched.
-    // 'timestamp' in message alone is not enough to trust an object found this way — walking up through
+    // A `message` prop alone is not enough to trust an object found this way — walking up through
     // memoized props of intermediate wrappers can surface something else entirely that happens to carry
-    // a field of that name (a live status/notification object, for one, which is exactly why every
-    // bubble was showing the same near-current time instead of its own). A transcript message has this
+    // a field of that name (a live status/notification object, for one). A transcript message has this
     // whole shape together; nothing else plausibly does.
     function isTranscriptMessage(message) {
         return (
@@ -897,143 +882,6 @@
             if (isTranscriptMessage(message)) return message;
         }
         return null;
-    }
-
-    function formatMessageTime(date) {
-        try {
-            return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(date);
-        } catch (e) {
-            return '';
-        }
-    }
-
-    function dayKey(date) {
-        return date.getFullYear() + '-' + date.getMonth() + '-' + date.getDate();
-    }
-
-    // "Today" / "Yesterday" through Intl.RelativeTimeFormat rather than a hand-rolled table — it is
-    // already locale-correct, and every language this needs it in is one the runtime already knows.
-    function formatDaySeparator(date) {
-        var today = new Date();
-        var diffDays = Math.round(
-            (new Date(today.getFullYear(), today.getMonth(), today.getDate()) -
-                new Date(date.getFullYear(), date.getMonth(), date.getDate())) /
-                86400000
-        );
-        if (diffDays === 0 || diffDays === 1) {
-            try {
-                return new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' }).format(-diffDays, 'day');
-            } catch (e) {
-                /* fall through to a plain date */
-            }
-        }
-        try {
-            var opts =
-                date.getFullYear() === today.getFullYear()
-                    ? { day: 'numeric', month: 'long' }
-                    : { day: 'numeric', month: 'long', year: 'numeric' };
-            return new Intl.DateTimeFormat(undefined, opts).format(date);
-        } catch (e) {
-            return date.toDateString();
-        }
-    }
-
-    // The .jsonl is fetched once per session. Live turns are not in it yet and do not need to be:
-    // a message created in this page during this session carries a real Date.now() from its own
-    // construction, so the in-page value is right for exactly the messages the file lacks.
-    function ensureMessageTimes() {
-        var id = state.sessionId;
-        if (!id || id === messageTimesSession) return;
-        messageTimesSession = id;
-        messageTimes = {};
-        send({ type: 'ccx:timestamps', sessionId: id });
-    }
-
-    function messageDate(message) {
-        if (!message) return null;
-        var ms = message.uuid ? messageTimes[message.uuid] : undefined;
-        var date = ms ? new Date(ms) : message.timestamp ? new Date(message.timestamp) : null;
-        return date && !isNaN(date.getTime()) ? date : null;
-    }
-
-    // Real child nodes, not pseudo-elements. An assistant bubble has BOTH of its pseudo-element slots
-    // spoken for by the app itself: `.timelineMessage_:before` is the coloured status dot, and
-    // `.timelineMessage_:after` is the vertical timeline rail — with `top:18px` on the first message of
-    // a run, `height:18px` on the last, and `display:none` on a lone one. Generating content into
-    // either slot silently replaces that, which is what first stretched the rail and then lost it
-    // outright. Nothing about them may be touched, so the timestamp needs nodes of its own.
-    //
-    // Appended rather than prepended: React reconciles by walking references it already holds, and an
-    // unknown node at the end stays out of the way of its insertBefore calls. Position is decided in
-    // CSS instead — the time is absolute, the date pill uses flex `order` — so neither depends on where
-    // in the child list it actually sits. If a commit does drop one, the MutationObserver pass puts it
-    // back within its 60 ms debounce.
-    function ensureLabel(node, className, tag) {
-        for (var i = 0; i < node.children.length; i++)
-            if (node.children[i].className === className) return node.children[i];
-        var el = document.createElement(tag);
-        el.className = className;
-        node.appendChild(el);
-        return el;
-    }
-
-    function dropLabel(node, className) {
-        for (var i = 0; i < node.children.length; i++)
-            if (node.children[i].className === className) {
-                node.children[i].remove();
-                return;
-            }
-    }
-
-    function decorateTranscript() {
-        try {
-            ensureMessageTimes();
-            // Same selector interruptIsCurrent() already reads the transcript with — document order,
-            // both message kinds.
-            var nodes = document.querySelectorAll('[data-testid="assistant-message"], [class*="userMessageContainer_"]');
-            var prevDay = null;
-            // Some bubbles render a second matching container inside themselves, and both fibers lead to
-            // the same message — decorating both printed the same time twice, one directly under the
-            // other. Document order guarantees an ancestor is seen before its descendant, so keeping the
-            // outermost of each nest is enough.
-            var decorated = [];
-            for (var i = 0; i < nodes.length; i++) {
-                var node = nodes[i];
-                var nested = false;
-                for (var j = 0; j < decorated.length; j++)
-                    if (decorated[j].contains(node)) {
-                        nested = true;
-                        break;
-                    }
-                var date = nested ? null : messageDate(messagePropOf(node));
-                if (!date) {
-                    delete node.dataset.ccxTime;
-                    delete node.dataset.ccxDate;
-                    dropLabel(node, 'ccx-msg-time');
-                    dropLabel(node, 'ccx-msg-date');
-                    continue;
-                }
-                decorated.push(node);
-                var time = formatMessageTime(date);
-                // The attribute is what opens the gutter in CSS; the node is what fills it.
-                if (node.dataset.ccxTime !== time) node.dataset.ccxTime = time;
-                var timeEl = ensureLabel(node, 'ccx-msg-time', 'span');
-                if (timeEl.textContent !== time) timeEl.textContent = time;
-                var key = dayKey(date);
-                if (key !== prevDay) {
-                    var label = formatDaySeparator(date);
-                    if (node.dataset.ccxDate !== label) node.dataset.ccxDate = label;
-                    var dateEl = ensureLabel(node, 'ccx-msg-date', 'div');
-                    if (dateEl.textContent !== label) dateEl.textContent = label;
-                } else if (node.dataset.ccxDate) {
-                    delete node.dataset.ccxDate;
-                    dropLabel(node, 'ccx-msg-date');
-                }
-                prevDay = key;
-            }
-        } catch (e) {
-            /* no timestamps is a plainer transcript, not a broken one */
-        }
     }
 
     // --- Live subagent frames ------------------------------------------------------------------
@@ -1244,9 +1092,9 @@
         return el;
     }
 
-    // The frame is appended to the tool-call div rather than inserted anywhere particular, for the
-    // reason the timestamps already are: React reconciles that subtree by references it holds, and an
-    // unknown node at the end stays clear of its insertBefore calls. If a commit does drop it, the
+    // The frame is appended to the tool-call div rather than inserted anywhere particular: React
+    // reconciles that subtree by references it holds, and an unknown node at the end stays clear of
+    // its insertBefore calls. If a commit does drop it, the
     // observer puts it back on the next pass.
     function paintFrame(host, id, open, meta, events) {
         var frame = ensureChild(host, 'ccx-agent-frame');
@@ -1889,7 +1737,6 @@
             timer = setTimeout(function () {
                 decorateModelPicker();
                     decorateSessionList();
-                decorateTranscript();
                 decorateAgentFrames();
                 decorateSidebar();
                 applyHidden();
@@ -2622,8 +2469,8 @@
     // Three jobs, called from the DOM observer and from ccx:state. First it accounts for the retract's
     // own turns — the hidden "ignore it" instruction, then the assistant's answer to it — by finding
     // their uuids in messages.value the moment they appear; then it hides every message whose uuid is
-    // in the set. Hiding rides on a data attribute rather than inline style, the same way the
-    // timestamps do — an assistant bubble keeps re-rendering while a turn streams.
+    // in the set. Hiding rides on a data attribute rather than inline style — an assistant bubble
+    // keeps re-rendering while a turn streams, and React leaves an attribute it does not own alone.
     function applyHidden() {
         var s = activeSession();
         var msgs = s && s.messages && s.messages.value;
@@ -2666,9 +2513,9 @@
                 var node = nodes[i];
                 var msg = messagePropOf(node);
                 if (!msg) continue;
-                // Document order puts an ancestor before its descendant, so keeping only the
-                // outermost node of each message hides the whole bubble once, the way the timestamp
-                // pass keeps the outermost bubble for its label.
+                // Some bubbles render a second matching container inside themselves, and both fibers
+                // lead to the same message. Document order puts an ancestor before its descendant, so
+                // keeping only the outermost node of each message hides the whole bubble once.
                 var nested = false;
                 for (var j = 0; j < seen.length; j++)
                     if (seen[j].contains(node)) { nested = true; break; }
@@ -3107,27 +2954,6 @@
         '.ccx-pin[data-ccx-pinned="1"]{color:var(--app-link-foreground, var(--vscode-textLink-foreground, var(--vscode-foreground)))}',
         '.ccx-pin[data-ccx-pinned="1"] svg{fill:currentColor;fill-opacity:.22}',
         '.ccx-pin:hover{background:var(--app-ghost-button-hover-background, var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2)));color:var(--app-primary-foreground, var(--vscode-foreground))}',
-        // A gutter, not a line of its own: pinned into the left margin the time sits beside the
-        // message's opening line and costs no height at all, which is what the stock tool-call rows
-        // already look like — rail, dot, time, content.
-        //
-        // Note what is NOT here: any ::before or ::after on the message itself. Both slots belong to
-        // the app — `.timelineMessage_:before` is the status dot, `.timelineMessage_:after` is the
-        // vertical rail (top:18px first in a run, height:18px last, display:none when alone). Writing
-        // to either replaces it, which stretched the rail and then lost it. The labels are real child
-        // nodes instead, and every stock rule about the rail keeps applying untouched.
-        // border-box, so the 84px gutter is carved out of the width the bubble already had instead of
-        // being added to it. A user bubble is a shrink-to-fit inline-block (and width:100% in sticky
-        // mode) whose inner box is max-width:100%: with content-box sizing the padding grows the whole
-        // container past the panel, which pushed the right edge of every user message off screen.
-        '[data-ccx-time]{box-sizing:border-box;max-width:100%;padding-left:84px}',
-        // Absolute labels keep the stock message layout and timeline untouched. A date-bearing bubble
-        // reserves a small header inside itself, so the separator never floats over the previous bubble.
-        '.ccx-msg-time{position:absolute;left:24px;top:8px;width:52px;height:1.5em;display:flex;align-items:center;white-space:nowrap;font-size:11px;line-height:1;opacity:.55;font-variant-numeric:tabular-nums;user-select:none;pointer-events:none}',
-        '.ccx-msg-date{position:absolute;left:50%;top:4px;transform:translateX(-50%);width:fit-content;max-width:90%;white-space:nowrap;margin:0;padding:2px 10px;border-radius:10px;font-size:11px;text-align:center;opacity:.6;background:var(--vscode-badge-background);user-select:none}',
-        // The date occupies this bubble's header; the time then stays beside the first content line.
-        '[data-ccx-date]{padding-top:34px}',
-        '[data-ccx-date] .ccx-msg-time{top:42px}',
         '.ccx-toast{position:fixed;left:50%;transform:translateX(-50%);bottom:16px;z-index:10001;display:flex;gap:8px;align-items:center;padding:8px 12px;border-radius:6px;font:12px var(--vscode-font-family);color:var(--vscode-notifications-foreground, var(--vscode-foreground));background:var(--vscode-notifications-background, var(--vscode-editorWidget-background));border:1px solid var(--vscode-notificationCenter-border, var(--vscode-widget-border));box-shadow:0 4px 16px rgba(0,0,0,.4)}',
         '.ccx-toast-btn{font:12px var(--vscode-font-family);padding:3px 10px;border-radius:4px;cursor:pointer;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:none}',
         '.ccx-toast-btn-quiet{color:var(--vscode-button-secondaryForeground, var(--vscode-foreground));background:var(--vscode-button-secondaryBackground, transparent);border:1px solid var(--vscode-button-border, var(--vscode-widget-border))}',
@@ -3156,14 +2982,12 @@
     if (document.body) {
         syncChip();
         decorateSessionList();
-        decorateTranscript();
         watchComposerSpellcheck();
         watchPicker();
     } else {
         document.addEventListener('DOMContentLoaded', function () {
             syncChip();
             decorateSessionList();
-            decorateTranscript();
             watchComposerSpellcheck();
             watchPicker();
         });
