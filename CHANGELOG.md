@@ -12,6 +12,15 @@ does.
   (`claudeCode.showMessageTimestamps`, off by default), and two sets of the same labels on one message
   were the only thing the pair could produce. Turn the stock setting on to keep seeing times. On a
   Claude Code older than 2.1.284 there is no setting to turn on, and messages carry no time at all.
+- Delegated runs appear in Claude Code's agent map, beside its own subagents. Each `run_agent` call is a
+  row under whichever agent made it, named by its profile and a short label, with its time and context;
+  a run started by a subagent whose turns never reach the tab sits at the top, and a run another run
+  started hangs under that run. The pill beside the model picker counts them. Behind a row, *Open
+  transcript* shows the run's whole conversation, and *Stop agent* ends it — the run's MCP server stops
+  it and tells the calling agent the user did. `run_agent` takes an optional `description` for the label;
+  without one the first line of the prompt stands in. The card's model segment follows the call's own
+  `model`, or the tab's model when the call named none, and its tool-call list stays empty: both are
+  drawn by Claude Code from the tab, and changing them would take a signature.
 
 ## 2.1.284
 

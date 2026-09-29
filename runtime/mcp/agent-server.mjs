@@ -68,6 +68,11 @@ const RUN_FILE_TTL_MS = 2 * 60 * 60 * 1000;
 // already in the tool call the user is looking at and in the agent's own transcript, so this adds
 // no exposure — but it is capped rather than copied whole.
 const MAX_RUN_PROMPT = 8000;
+const MAX_RUN_DESCRIPTION = 120;
+// How often a running delegate looks for a stop request from the agent map. The request is a file
+// beside the manifest rather than a field in it: the manifest is read-modify-written here, and a
+// second writer in the extension host would race that write and lose one side of it.
+const STOP_POLL_MS = 1000;
 
 const MAX_SESSIONS = 300;
 // A finished background task is kept so its report can be collected more than once; the oldest are
@@ -808,12 +813,22 @@ function runFile(id) {
     return path.join(RUNS_DIR, `${id}.json`);
 }
 
+function stopFile(id) {
+    return path.join(RUNS_DIR, `${id}.stop`);
+}
+
+function dropStopRequest(id) {
+    try {
+        fs.unlinkSync(stopFile(id));
+    } catch {}
+}
+
 function sweepRuns(now = Date.now()) {
     let files = [];
     try {
         files = fs
             .readdirSync(RUNS_DIR)
-            .filter((f) => f.endsWith('.json'))
+            .filter((f) => f.endsWith('.json') || f.endsWith('.stop'))
             .map((f) => ({ f, at: fs.statSync(path.join(RUNS_DIR, f)).mtimeMs }))
             .sort((a, b) => a.at - b.at);
     } catch {
@@ -821,7 +836,15 @@ function sweepRuns(now = Date.now()) {
     }
     const drop = new Set();
     for (const { f, at } of files) if (now - at > RUN_FILE_TTL_MS) drop.add(f);
-    for (let i = 0; files.length - drop.size > MAX_RUN_FILES && i < files.length; i++) drop.add(files[i].f);
+    // A stop request outlives its run only when this server died in the middle of one. It is swept by
+    // age like a manifest, but it is not a run, so it does not count against the cap below.
+    const manifests = files.filter(({ f }) => f.endsWith('.json'));
+    let kept = manifests.filter(({ f }) => !drop.has(f)).length;
+    for (let i = 0; kept > MAX_RUN_FILES && i < manifests.length; i++) {
+        if (drop.has(manifests[i].f)) continue;
+        drop.add(manifests[i].f);
+        kept--;
+    }
     for (const f of drop) {
         try {
             fs.unlinkSync(path.join(RUNS_DIR, f));
@@ -835,15 +858,25 @@ function writeRun(id, patch) {
     writeJson(runFile(id), { ...current, ...patch, id, at: new Date().toISOString() });
 }
 
-function openRun(ctx) {
+function openRun(ctx, background) {
     // A resumed run keeps the id it is resuming, which is also the transcript the host will tail —
     // so the two cases need no different treatment here.
     const id = ctx.liveSession;
     if (!id) return null;
     sweepRuns();
+    // A request aimed at an earlier run of the same session must not stop this one on its first poll.
+    dropStopRequest(id);
     writeRun(id, {
         session: id,
         parent: process.env[PARENT_VAR] || null,
+        // The session of the CLI this server serves, which the CLI hands every MCP server it spawns.
+        // It is how a tab finds a run no block of its own called — one started by a native subagent
+        // whose turns never reach the page. It is fixed when this server starts, so a tab that has
+        // since cleared or resumed into another session no longer matches it; the page treats it
+        // as a fallback for exactly that reason.
+        owner: process.env.CLAUDE_CODE_SESSION_ID || null,
+        description: ctx.description || null,
+        background: Boolean(background),
         profile: ctx.profile,
         model: ctx.model,
         mode: ctx.mode,
@@ -1089,7 +1122,11 @@ async function prepare(params) {
     if (session) args.push('--resume', session);
     else args.push('--session-id', liveSession);
 
-    return { profile, prompt, mode, cwd, timeout, model, session, liveSession, bin, env, args, depth };
+    // A label for the agent map, where a whole prompt does not fit. Not sent to the agent: it is the
+    // caller's name for the task, not part of it.
+    const description = typeof params.description === 'string' ? params.description.trim().slice(0, MAX_RUN_DESCRIPTION) : '';
+
+    return { profile, prompt, description, mode, cwd, timeout, model, session, liveSession, bin, env, args, depth };
 }
 
 async function execute(ctx, task) {
@@ -1097,10 +1134,25 @@ async function execute(ctx, task) {
     log('run', { profile, mode, model, session: session || null, cwd, depth: ctx.depth, background: !!task });
 
     const startedAt = Date.now();
-    const run = openRun(ctx);
+    const run = openRun(ctx, Boolean(task));
     const child = spawn(bin, args, { cwd, env, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     running.add(child);
     if (task) task.child = child;
+
+    // "Stop agent" in Claude Code's agent map. The host cannot end the run itself — it has no handle
+    // on this child, and a pid read back out of a file could belong to anything by then — so it
+    // leaves a request and this server, which does hold the child, carries it out.
+    let stopRequested = false;
+    const stopWatch = run
+        ? setInterval(() => {
+              if (!fs.existsSync(stopFile(run))) return;
+              stopRequested = true;
+              if (task) task.stopped = true;
+              clearInterval(stopWatch);
+              killTree(child);
+          }, STOP_POLL_MS)
+        : null;
+    stopWatch?.unref?.();
 
     let stdout = '';
     let stderr = '';
@@ -1134,10 +1186,16 @@ async function execute(ctx, task) {
     });
     running.delete(child);
     if (task) task.child = null;
+    clearInterval(stopWatch);
+    if (run) dropStopRequest(run);
 
     if (outcome.spawnError) {
         closeRun(run, 'failed', { error: outcome.spawnError });
         throw new Error(`could not start the CLI (${bin}): ${outcome.spawnError}`);
+    }
+    if (stopRequested) {
+        closeRun(run, 'stopped');
+        throw new Error(`the "${profile}" agent was stopped by the user after ${span(Date.now() - startedAt)}`);
     }
     if (task?.stopped) {
         closeRun(run, 'stopped');
@@ -1349,6 +1407,11 @@ const TOOLS = [
                     description:
                         'The complete task. A new agent shares no context with this conversation and needs every fact; a resumed one already has its own, so a follow-up sentence is enough.',
                 },
+                description: {
+                    type: 'string',
+                    description:
+                        'A short (3-5 word) label for the task, shown in Claude Code’s agent map. Not sent to the agent.',
+                },
                 session: {
                     type: 'string',
                     description:
@@ -1539,6 +1602,7 @@ if (isEntrypoint) {
 export {
     TOOLS,
     callTool,
+    execute,
     handle,
     prepare,
     envForProfile,

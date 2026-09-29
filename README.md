@@ -54,7 +54,8 @@ another on DeepSeek, a third on your ChatGPT subscription.
   answered, refused (with the provider's own words), never replied, never asked. Nothing is probed to
   draw it.
 - **Delegating a task to another provider** through a bundled MCP server, with a live frame under the
-  subagent showing what it is doing while it does it.
+  subagent showing what it is doing while it does it, and a row of its own in Claude Code's agent map —
+  with its transcript and a working *Stop agent*.
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
