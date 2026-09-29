@@ -826,6 +826,50 @@ What it cannot do is show an old run. `B5t`, the transcript → SDK-message conv
 outright (`if (e.isSidechain) return !1`), so a session replayed from disk comes back without any of its
 subagents' turns. Watching a run is live-only unless the `.jsonl` is read separately.
 
+### The agent map is one Map on the session, and it takes entries from outside (2.1.274)
+
+The agent map — the "N agents" pill beside the model picker and the dialog it opens — is drawn
+entirely from one signal on the session object, `agentMapAgents`: a `Map` of task id → entry. The session
+fills it from `system/task_*` events and rebuilds it from the transcript on load (`T61`, which walks the
+`Agent`/`Task` tool calls only). Every reader is on the page — the pill (`QF0`: working count and dot),
+the dialog (`kH0`), the footer's width budget and one telemetry count — so an entry put there from outside
+is drawn like the app's own and reaches nothing that talks to the CLI.
+
+The dialog needs only these fields of an entry:
+
+```js
+{ taskId, toolUseId, parentToolUseId, description, prompt, subagentType, isBackgrounded,
+  startTime, endTime, status /* working|finished|failed|stopped */, usage: {totalTokens, durationMs},
+  result, error }
+```
+
+`lb1` nests an entry under the one whose `toolUseId` equals its `parentToolUseId` (`null` is the top),
+and `ab1` fills in a missing `parentToolUseId` from the message that made the call — only when it is
+`undefined`, so an entry that sets it is left alone. The selection key is `toolUseId ?? taskId`, which is
+why a call's entry keeps its card open when it switches from "built from the call" to "built from the
+run".
+
+Two things about writing to it. The app rewrites the Map on its own: `T61` replaces it on load, and `ub1`
+marks every working entry `stopped` when the tab's process ends. So `syncAgentMap` in `webview.js` puts its
+entries back whenever a pass finds them missing or altered — and, because the check is object identity and
+an unchanged entry is the very object written last time, an intact Map is never written, which is what
+keeps a write (a re-render, a mutation, another pass) from feeding itself.
+
+And the card's two buttons go to the CLI: `getSubagentTranscript(taskId)` reads a subagent file under the
+tab's session, `stopSubagent(taskId)` sends `stop_subagent` down the channel. Both are session methods on
+the prototype, so an own property on the instance shadows them; the page wraps them for ids starting with
+`ccx:` and passes everything else through. "Open transcript" feeds whatever comes back through `WH0` →
+`lw`, the same accumulator the stream uses, so the host answers with the run's `.jsonl` lines reshaped as
+SDK messages (`type`, `message`, `uuid`, `timestamp`, `is_meta`, `parent_tool_use_id: null`).
+
+What an entry cannot say. The card's meta line prints `subagentType` and then a model of its own: the
+`model` field of the call's input (capitalised when it is a bare alias), or the *tab's* model when the
+input has none. A delegated run sets `subagentType` to the model that actually answered, so the line reads
+right when the call named a model and carries the tab's model after it when it did not. The card's "Tool
+calls (N)" list is built from the tab's messages under the call's id, which a delegated run never writes,
+so it reads 0; the transcript behind "Open transcript" has them all. Fixing either means a signature in
+the dialog, and every signature is required, so both are left as they are.
+
 ### A compaction hides history three times, and deletes none of it (2.1.274)
 
 `/compact` and auto-compaction only append. The transcript gets a `system`/`compact_boundary` line and a

@@ -611,7 +611,12 @@ function tailTranscript(sessionId, state) {
     }
     if (size === state.size) return state;
     let from = size < state.size ? 0 : state.offset;
-    if (size < state.size) state.events = [];
+    if (size < state.size) {
+        state.events = [];
+        state.tools = 0;
+        state.context = 0;
+        state.model = null;
+    }
     if (size - from > MAX_TAIL_BYTES) from = size - MAX_TAIL_BYTES;
 
     let text = '';
@@ -643,11 +648,33 @@ function tailTranscript(sessionId, state) {
         }
         if (!entry || (entry.type !== 'user' && entry.type !== 'assistant')) continue;
         blockEvents(entry, state.events);
+        if (entry.type === 'assistant') noteAssistant(entry.message, state);
     }
     if (state.events.length > MAX_RUN_EVENTS) state.events = state.events.slice(-MAX_RUN_EVENTS);
     state.size = size;
     state.offset = size - Buffer.byteLength(trailing, 'utf8');
     return state;
+}
+
+// What the agent map shows for a run beside its time: the model that actually answered, how full its
+// context is, and how many tools it has called. The first is not the one the run asked for — a
+// profile maps `sonnet` to whatever its provider serves — and the transcript is the only place that
+// says. The second is the measure Claude Code puts on its own subagents: the last turn's input, cache
+// and output, which is the context the next turn starts from, not a running total.
+function noteAssistant(message, state) {
+    if (!message || typeof message !== 'object') return;
+    if (typeof message.model === 'string' && message.model && message.model !== '<synthetic>') state.model = message.model;
+    const u = message.usage;
+    if (u && typeof u === 'object') {
+        const context =
+            (Number(u.input_tokens) || 0) +
+            (Number(u.cache_creation_input_tokens) || 0) +
+            (Number(u.cache_read_input_tokens) || 0) +
+            (Number(u.output_tokens) || 0);
+        if (context > 0) state.context = context;
+    }
+    if (Array.isArray(message.content))
+        for (const block of message.content) if (block && block.type === 'tool_use') state.tools++;
 }
 
 function agentRunsPayload() {
@@ -658,13 +685,19 @@ function agentRunsPayload() {
 
     return runs.map((run) => {
         let state = tails.get(run.session);
-        if (!state) tails.set(run.session, (state = { offset: 0, size: -1, events: [] }));
+        if (!state) tails.set(run.session, (state = { offset: 0, size: -1, events: [], tools: 0, context: 0, model: null }));
         tailTranscript(run.session, state);
         return {
             session: run.session,
             parent: typeof run.parent === 'string' ? run.parent : null,
+            owner: typeof run.owner === 'string' ? run.owner : null,
+            description: typeof run.description === 'string' ? run.description : null,
+            background: Boolean(run.background),
             profile: run.profile || null,
             model: run.model || null,
+            servedModel: state.model || null,
+            contextTokens: state.context || null,
+            toolUses: state.tools,
             mode: run.mode || null,
             cwd: run.cwd || null,
             prompt: typeof run.prompt === 'string' ? run.prompt : '',
@@ -706,6 +739,79 @@ function pumpAgentRuns() {
 function wakeAgentRuns() {
     clearTimeout(S.agentRunsTimer);
     S.agentRunsTimer = setTimeout(pumpAgentRuns, 0);
+}
+
+// "Open transcript" on a delegated run in the agent map. Claude Code answers that button by reading a
+// subagent file under the tab's own session; a delegated run is a session of its own, so the page asks
+// here instead and gets the run's transcript in the shape the app's own reader returns — SDK messages,
+// which the dialog feeds through the same accumulator it uses for a subagent. Sidechains are left out
+// for the same reason the stock replay drops them, and a transcript too large to post is cut to its
+// tail rather than refused.
+const MAX_AGENT_TRANSCRIPT_BYTES = 8 * 1024 * 1024;
+
+function agentTranscript(sessionId) {
+    const file = transcriptPathFor(sessionId);
+    if (!file) return { ok: false, error: 'this run left no transcript' };
+    let text = '';
+    let cut = false;
+    let fd = null;
+    try {
+        const size = fs.statSync(file).size;
+        const from = Math.max(0, size - MAX_AGENT_TRANSCRIPT_BYTES);
+        cut = from > 0;
+        fd = fs.openSync(file, 'r');
+        const buffer = Buffer.alloc(size - from);
+        fs.readSync(fd, buffer, 0, buffer.length, from);
+        text = buffer.toString('utf8');
+    } catch (e) {
+        return { ok: false, error: e.message };
+    } finally {
+        if (fd !== null)
+            try {
+                fs.closeSync(fd);
+            } catch {}
+    }
+    const lines = text.split('\n');
+    // A cut lands mid-line, and so can a write still in progress: both ends are dropped, not parsed.
+    if (cut) lines.shift();
+    const messages = [];
+    for (const line of lines) {
+        if (!line.trim()) continue;
+        let entry = null;
+        try {
+            entry = JSON.parse(line);
+        } catch {
+            continue;
+        }
+        if (!entry || (entry.type !== 'user' && entry.type !== 'assistant') || entry.isSidechain) continue;
+        if (!entry.message || typeof entry.message !== 'object') continue;
+        messages.push({
+            type: entry.type,
+            message: entry.message,
+            uuid: entry.uuid,
+            timestamp: entry.timestamp,
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            is_meta: entry.isMeta === true,
+        });
+    }
+    return { ok: true, messages };
+}
+
+// "Stop agent" on a delegated run. Only a run its manifest still calls running is asked, and asking is
+// all this does: the MCP server that owns the child polls for the request, ends the run and closes the
+// manifest as stopped — which is what the map then shows.
+function requestAgentStop(sessionId) {
+    if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId)) return { ok: false, error: 'not a run' };
+    const run = readJson(path.join(AGENT_RUNS_DIR, `${sessionId}.json`));
+    if (!run || run.state !== 'running') return { ok: false, error: 'the run has already finished' };
+    try {
+        fs.writeFileSync(path.join(AGENT_RUNS_DIR, `${sessionId}.stop`), String(Date.now()));
+    } catch (e) {
+        return { ok: false, error: e.message };
+    }
+    dlog('agent stop requested', { session: sessionId });
+    return { ok: true };
 }
 
 // --- Content search for the session picker --------------------------------------------------
@@ -1867,6 +1973,10 @@ function attachWebview(webview) {
                     suggestions: result ? result.suggestions : null,
                 });
             });
+        } else if (m.type === 'ccx:agentTranscript') {
+            post(webview, { type: 'ccx:agentReply', seq: m.seq, ...agentTranscript(m.session) });
+        } else if (m.type === 'ccx:stopAgent') {
+            post(webview, { type: 'ccx:agentReply', seq: m.seq, ...requestAgentStop(m.session) });
         } else if (m.type === 'ccx:debug') {
             dlog('ccx:debug indicator', m);
         } else if (m.type === 'ccx:pinSession') {
@@ -1931,6 +2041,8 @@ module.exports = {
     envFor,
     profileIcons,
     agentRunsPayload,
+    agentTranscript,
+    requestAgentStop,
     historyBeforeCompaction,
     stitchCompactions,
 };

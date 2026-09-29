@@ -448,12 +448,16 @@
             if (autocompactPref()) scheduleAutocompact();
             else cancelAutocompact();
         } else if (d.type === 'ccx:agentRuns') {
-            // Inert data for a read-only frame. It is never written into the composer, never sent
-            // back to the host, and never handed to the app's own session object — the tab's context
-            // is the tool call and its result, and that is all it stays.
+            // Inert data for a read-only frame and for the agent map's rows. It is never written into
+            // the composer, nothing of what a run said goes back to the host (the map's two buttons send
+            // a run's session id and nothing else), and the only thing of the app's it reaches is the
+            // agent map's own Map, which is view state (see syncAgentMap) — the tab's context is the
+            // tool call and its result, and that is all it stays.
             agentRuns = Array.isArray(d.runs) ? d.runs : [];
             claimedRuns = {};
             decorateAgentFrames();
+        } else if (d.type === 'ccx:agentReply') {
+            onAgentReply(d);
         }
     });
 
@@ -1036,14 +1040,19 @@
             // A run with a parent was started by another agent, not by this tab: it belongs inside
             // its parent's frame and must never be adopted by a block of its own.
             if (run.parent || claimedRuns[run.session]) continue;
-            var a = run.prompt || '';
-            var b = prompt;
-            var n = Math.min(a.length, b.length);
-            if (!n || a.slice(0, n) !== b.slice(0, n)) continue;
+            if (!samePrompt(run.prompt, prompt)) continue;
             if (!best || (run.startedAt || 0) >= (best.startedAt || 0)) best = run;
         }
         if (best) claimedRuns[best.session] = true;
         return best;
+    }
+
+    // The manifest carries the prompt capped, so the shorter of the two is compared against the other.
+    function samePrompt(a, b) {
+        a = a || '';
+        b = b || '';
+        var n = Math.min(a.length, b.length);
+        return n > 0 && a.slice(0, n) === b.slice(0, n);
     }
 
     function span(ms) {
@@ -1243,6 +1252,8 @@
     }
 
     function decorateAgentFrames() {
+        // Every moment a frame can change is a moment the agent map can, so the two ride the same passes.
+        syncAgentMap();
         try {
             claimedRuns = {};
             var nodes = document.querySelectorAll('[class*="toolUse_"]');
@@ -1284,6 +1295,328 @@
         } catch (e) {
             /* a missing frame is a plainer tool call, not a broken transcript */
         }
+    }
+
+    // --- Delegated runs in the agent map --------------------------------------------------------
+    //
+    // Claude Code has an agent map (every release on the verified list has it, 2.1.274 on): a pill
+    // beside the model picker that counts the tab's live subagents, and a dialog with one row per agent
+    // — status, time, context — and a card behind each row with the prompt, the result, "Open
+    // transcript" and "Stop agent". All of it is drawn from one signal on the session, `agentMapAgents`,
+    // a Map of task id → entry that the app fills from its own task events. A run_agent call is not a
+    // task, so a delegated run never appeared there.
+    //
+    // It does now, by the same route: an entry of ours goes into that Map, and the pill, the tree and
+    // the card are the app's own. The entries are view state and nothing else — the Map is read by the
+    // pill, the dialog and one telemetry count, never by anything that talks to the CLI, and the tab's
+    // context stays the tool call and its result.
+    //
+    // Where a run comes from decides where it hangs:
+    //   - a run_agent call in this tab's messages is one entry, keyed by its tool_use id, under whoever
+    //     made the call — the main agent, or an inline subagent. Its run is matched by prompt, the way
+    //     the inline frame matches it. A call whose run is gone (swept, or from an old session) still
+    //     gets an entry, built from the call and its result, as the app does for its own subagents;
+    //   - a run whose `owner` is this tab's session but which no call here explains was started by a
+    //     subagent whose turns never reach the page. It goes at the top level;
+    //   - a run whose `parent` is one of the above hangs under it.
+    //
+    // The app rewrites the Map on its own events: it rebuilds it from the transcript when a session
+    // loads, and marks every working entry stopped when the tab's process ends. So ours are put back on
+    // any pass that finds them missing or altered, and left alone when they are intact — the same
+    // object, no write — which is what keeps one write from setting off the next.
+    //
+    // Two of the card's buttons would send the CLI an id it has never heard of, so the session's own
+    // methods are wrapped for our ids: "Open transcript" asks the host for the run's own transcript,
+    // "Stop agent" asks the host to have the run's MCP server end it.
+    var MAP_PREFIX = 'ccx:';
+    var MAP_RUN_PREFIX = 'ccx:run:';
+    // A run starts after the call that asked for it. The slack is for the clocks: the call's time is
+    // the CLI's, the run's is the MCP server's, and those agree only as well as one machine does.
+    var MAP_CLOCK_SLACK_MS = 60000;
+    var mapMemo = {};
+    var mapReplies = {};
+    var mapSeq = 0;
+
+    function isMapEntry(taskId) {
+        return typeof taskId === 'string' && taskId.indexOf(MAP_PREFIX) === 0;
+    }
+
+    function mapEntry(taskId) {
+        var memo = isMapEntry(taskId) ? mapMemo[taskId] : null;
+        return memo ? memo.entry : null;
+    }
+
+    function runAgentCalls(messages) {
+        var calls = [];
+        if (!Array.isArray(messages)) return calls;
+        for (var i = 0; i < messages.length; i++) {
+            var m = messages[i];
+            if (!m || m.type !== 'assistant' || !Array.isArray(m.content)) continue;
+            for (var j = 0; j < m.content.length; j++) {
+                var raw = blockOf(m.content[j]);
+                if (!raw || raw.type !== 'tool_use' || raw.name !== MCP_AGENT_TOOL || typeof raw.id !== 'string') continue;
+                // The same precedence the app uses to place a call under the subagent that made it.
+                var parent = m.sdkParentToolUseId !== undefined ? m.sdkParentToolUseId : m.parentToolUseId;
+                calls.push({
+                    block: raw,
+                    wrapper: m.content[j],
+                    parent: parent || null,
+                    // createdAt is the CLI's own time for the turn; `timestamp` is when this page built
+                    // the object, which on a reopened session is long after the run it asked for.
+                    at: m.createdAt || 0,
+                    shown: m.createdAt || m.timestamp || 0,
+                });
+            }
+        }
+        return calls;
+    }
+
+    function callResult(wrapper) {
+        var value;
+        try {
+            value = wrapper && wrapper.toolResult && 'value' in wrapper.toolResult ? wrapper.toolResult.value : undefined;
+        } catch (e) {
+            return null;
+        }
+        if (!value) return null;
+        var content = value.content !== undefined ? value.content : value;
+        var text = '';
+        if (typeof content === 'string') text = content;
+        else if (Array.isArray(content))
+            text = content
+                .map(function (c) {
+                    return c && typeof c.text === 'string' ? c.text : '';
+                })
+                .filter(Boolean)
+                .join('\n');
+        return { text: text, isError: value.is_error === true };
+    }
+
+    // The row says which provider a run went out on; the app's own rows have no need to.
+    function mapLabel(profile, description, prompt) {
+        var text = typeof description === 'string' ? description.trim() : '';
+        if (!text && typeof prompt === 'string') {
+            var lines = prompt.split('\n');
+            for (var i = 0; i < lines.length && !text; i++) text = lines[i].trim();
+            if (text.length > 80) text = text.slice(0, 79) + '…';
+        }
+        return (profile ? profile + ' · ' : '') + (text || 'agent');
+    }
+
+    function mapStatus(state) {
+        if (state === 'running') return 'working';
+        if (state === 'done') return 'finished';
+        if (state === 'stopped') return 'stopped';
+        return 'failed';
+    }
+
+    function lastText(events) {
+        if (!Array.isArray(events)) return undefined;
+        for (var i = events.length - 1; i >= 0; i--) if (events[i] && events[i].k === 'text' && events[i].t) return events[i].t;
+        return undefined;
+    }
+
+    function runEntry(run, taskId, toolUseId, parentToolUseId) {
+        var status = mapStatus(run.state);
+        var endTime = status === 'working' ? undefined : run.finishedAt || undefined;
+        return {
+            taskId: taskId,
+            toolUseId: toolUseId,
+            parentToolUseId: parentToolUseId,
+            description: mapLabel(run.profile, run.description, run.prompt),
+            prompt: run.prompt || undefined,
+            // The card prints this beside the status. The model the transcript says answered, not the
+            // alias the run asked for — the profile decides what `sonnet` means.
+            subagentType: run.servedModel || run.model || undefined,
+            isBackgrounded: run.background === true,
+            startTime: run.startedAt || undefined,
+            endTime: endTime,
+            status: status,
+            usage: {
+                totalTokens: run.contextTokens || undefined,
+                toolUses: run.toolUses || undefined,
+                durationMs: endTime && run.startedAt ? endTime - run.startedAt : undefined,
+            },
+            result: status === 'finished' ? lastText(run.events) : undefined,
+            error:
+                status === 'failed'
+                    ? run.error || (run.state === 'timeout' ? 'The run was killed when its time ran out.' : undefined)
+                    : undefined,
+            ccxSession: run.session,
+            ccxLive: status === 'working',
+        };
+    }
+
+    // No manifest left behind the call: what the call and its result say is all there is. The run's
+    // answer comes first in the result, then a `---` and the server's report, which names the session
+    // the transcript is under.
+    function callEntry(call, busy) {
+        var input = call.block.input || {};
+        var result = callResult(call.wrapper);
+        var status = result ? (result.isError ? 'failed' : 'finished') : busy ? 'working' : 'stopped';
+        var text = result ? result.text : '';
+        var cut = text.lastIndexOf('\n\n---\n');
+        var session = cut > -1 ? /\bsession: ([0-9a-f-]{36})\b/i.exec(text.slice(cut)) : null;
+        return {
+            taskId: MAP_PREFIX + call.block.id,
+            toolUseId: call.block.id,
+            parentToolUseId: call.parent,
+            description: mapLabel(input.profile, input.description, input.prompt),
+            prompt: typeof input.prompt === 'string' ? input.prompt : undefined,
+            subagentType: typeof input.model === 'string' ? input.model : undefined,
+            isBackgrounded: input.background === true,
+            startTime: call.shown || undefined,
+            status: status,
+            result: status === 'finished' ? (cut > -1 ? text.slice(0, cut) : text) || undefined : undefined,
+            error: status === 'failed' ? text.slice(0, 2000) || undefined : undefined,
+            ccxSession: session ? session[1] : undefined,
+            ccxLive: false,
+        };
+    }
+
+    // The earliest unclaimed run that started after the call — so two calls with one prompt pair off
+    // in order rather than both taking the newest.
+    function runForCall(call, claimed) {
+        var prompt = call.block.input && call.block.input.prompt;
+        if (typeof prompt !== 'string' || !prompt.trim()) return null;
+        var best = null;
+        for (var i = 0; i < agentRuns.length; i++) {
+            var run = agentRuns[i];
+            if (run.parent || claimed[run.session] || !samePrompt(run.prompt, prompt)) continue;
+            if (call.at && run.startedAt && run.startedAt < call.at - MAP_CLOCK_SLACK_MS) continue;
+            if (!best || (run.startedAt || 0) < (best.startedAt || 0)) best = run;
+        }
+        return best;
+    }
+
+    function mapEntriesFor() {
+        var entries = [];
+        var calls = runAgentCalls(sessionField('messages'));
+        var busy = Boolean(sessionField('busy'));
+        var tab = sessionField('sessionId');
+        var claimed = {};
+        var placed = {};
+        for (var i = 0; i < calls.length; i++) {
+            var call = calls[i];
+            var run = runForCall(call, claimed);
+            if (!run) {
+                entries.push(callEntry(call, busy));
+                continue;
+            }
+            claimed[run.session] = true;
+            placed[run.session] = call.block.id;
+            entries.push(runEntry(run, MAP_PREFIX + call.block.id, call.block.id, call.parent));
+        }
+        for (var j = 0; j < agentRuns.length; j++) {
+            var owned = agentRuns[j];
+            if (owned.parent || claimed[owned.session] || !tab || owned.owner !== tab) continue;
+            claimed[owned.session] = true;
+            placed[owned.session] = MAP_RUN_PREFIX + owned.session;
+            entries.push(runEntry(owned, placed[owned.session], placed[owned.session], null));
+        }
+        // The server refuses a third level, so two passes would do; looping until nothing moves costs
+        // nothing and does not lean on that limit.
+        for (var moved = true; moved; ) {
+            moved = false;
+            for (var k = 0; k < agentRuns.length; k++) {
+                var nested = agentRuns[k];
+                if (!nested.parent || claimed[nested.session] || !placed[nested.parent]) continue;
+                claimed[nested.session] = true;
+                placed[nested.session] = MAP_RUN_PREFIX + nested.session;
+                entries.push(runEntry(nested, placed[nested.session], placed[nested.session], placed[nested.parent]));
+                moved = true;
+            }
+        }
+        return entries;
+    }
+
+    function syncAgentMap() {
+        try {
+            var session = sessionObj;
+            var signal = session && session.agentMapAgents;
+            if (!signal || typeof signal !== 'object' || !('value' in signal)) return;
+            var current = signal.value;
+            if (!current || typeof current.forEach !== 'function' || typeof current.get !== 'function') return;
+            adoptAgentMethods(session);
+
+            // An entry whose content has not changed is the very object written last time, so the
+            // identity check below is what "nothing to do" means.
+            var wanted = mapEntriesFor();
+            var memo = {};
+            for (var i = 0; i < wanted.length; i++) {
+                var stamp = JSON.stringify(wanted[i]);
+                var prev = mapMemo[wanted[i].taskId];
+                if (prev && prev.stamp === stamp) wanted[i] = prev.entry;
+                memo[wanted[i].taskId] = { stamp: stamp, entry: wanted[i] };
+            }
+            mapMemo = memo;
+
+            var dirty = false;
+            for (var j = 0; j < wanted.length && !dirty; j++) if (current.get(wanted[j].taskId) !== wanted[j]) dirty = true;
+            if (!dirty)
+                current.forEach(function (entry, key) {
+                    if (isMapEntry(key) && !memo[key]) dirty = true;
+                });
+            if (!dirty) return;
+
+            var next = new Map();
+            current.forEach(function (entry, key) {
+                if (!isMapEntry(key)) next.set(key, entry);
+            });
+            for (var k = 0; k < wanted.length; k++) next.set(wanted[k].taskId, wanted[k]);
+            signal.value = next;
+        } catch (e) {
+            /* a map without our rows is the stock map, not a broken one */
+        }
+    }
+
+    function adoptAgentMethods(session) {
+        if (session.__ccxAgentMap) return;
+        var transcript = session.getSubagentTranscript;
+        var stop = session.stopSubagent;
+        if (typeof transcript !== 'function' || typeof stop !== 'function') return;
+        session.__ccxAgentMap = true;
+        session.getSubagentTranscript = function (taskId) {
+            var entry = mapEntry(taskId);
+            if (!entry) return transcript.apply(this, arguments);
+            // A rejection is what the dialog already words as "could not be read", and it still shows
+            // the prompt beneath that.
+            if (!entry.ccxSession) return Promise.reject(new Error('this run left no transcript'));
+            return askHost({ type: 'ccx:agentTranscript', session: entry.ccxSession }).then(function (reply) {
+                return Array.isArray(reply.messages) ? reply.messages : [];
+            });
+        };
+        session.stopSubagent = function (taskId) {
+            var entry = mapEntry(taskId);
+            if (!entry) return stop.apply(this, arguments);
+            if (!entry.ccxLive) return Promise.reject(new Error('the run is not running'));
+            return askHost({ type: 'ccx:stopAgent', session: entry.ccxSession }).then(function () {});
+        };
+    }
+
+    function askHost(message) {
+        return new Promise(function (resolve, reject) {
+            var seq = ++mapSeq;
+            message.seq = seq;
+            mapReplies[seq] = {
+                resolve: resolve,
+                reject: reject,
+                timer: setTimeout(function () {
+                    delete mapReplies[seq];
+                    reject(new Error('the extension host did not answer'));
+                }, 30000),
+            };
+            send(message);
+        });
+    }
+
+    function onAgentReply(d) {
+        var pending = mapReplies[d.seq];
+        if (!pending) return;
+        delete mapReplies[d.seq];
+        clearTimeout(pending.timer);
+        if (d.ok) pending.resolve(d);
+        else pending.reject(new Error(d.error || 'the request failed'));
     }
 
     // --- Provider health in the account panel --------------------------------------------------
