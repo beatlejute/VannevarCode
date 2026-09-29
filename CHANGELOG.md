@@ -5,6 +5,26 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.284
+
+Verified against Claude Code **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**,
+**2.1.274**.
+
+Claude Code 2.1.284 is the first release since 2.1.274 to cost signatures, and it cost two, neither of
+them to a rename. The walk that rebuilds a reopened transcript took a second parameter, which kept
+*History before compaction* from finding it, and the Model section gained a stock *Ultracode* row,
+which changed the list that orders that section. Both are now matched by their shape, and every release
+already on the list still takes the patch.
+
+- A patch refused over the second file no longer leaves the first one written. The patcher wrote
+  `extension.js` before it had looked at `webview/index.js`, so a signature that moved only in the
+  webview left Claude Code carrying half its hooks, with no result line to say so. Every file is now
+  patched in memory first, and nothing is written unless all of them take the patch. It did not bite
+  on 2.1.284, where the signature that moved first is in `extension.js`.
+- Claude Code 2.1.284 has message timestamps of its own, behind `claudeCode.showMessageTimestamps` and
+  off by default. Turned on, every message carries two times, the stock one and this extension's, and a
+  change of day two date lines.
+
 ## 2.1.283
 
 Verified against Claude Code **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.

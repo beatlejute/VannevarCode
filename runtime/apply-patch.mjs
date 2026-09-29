@@ -131,10 +131,15 @@ const PATCHES = [
         // below Account & Usage in whatever order it happened to register. "Switch provider…" opens
         // the section; "Provider status…" sits beside the stock account panel, which is the entry it
         // reads as a companion to.
+        //
+        // A literal until 2.1.284, which put a stock entry of its own into the list ("ultracode", after
+        // "effort-level"). So the list is matched by the three ids the page's entries are placed against,
+        // and whatever stock ids sit between them are carried over in the order the release gave them.
         file: 'webview/index.js',
-        find: '["model","effort-level","toggle-thinking","switch-models-on-flag","account-usage"]',
-        replace:
-            '["ccx-provider","model","effort-level","toggle-thinking","ccx-autocompact","ccx-full-history","switch-models-on-flag","ccx-health","account-usage"]/*__ccx*/',
+        find: /\["model",((?:"[\w-]+",)*)"toggle-thinking",((?:"[\w-]+",)*)"account-usage"\]/,
+        replace: (_found, beforeThinking, beforeAccount) =>
+            `["ccx-provider","model",${beforeThinking}"toggle-thinking","ccx-autocompact","ccx-full-history",` +
+            `${beforeAccount}"ccx-health","account-usage"]/*__ccx*/`,
         where: 'replace',
     },
     // --- Search sessions by content, and pinned sessions (five hooks in one component) -----------
@@ -305,10 +310,11 @@ const PATCHES = [
         // and a compact_boundary's parentUuid is null, so that is where the page's history starts.
         // The hook runs between the index and the relink, while every parentUuid is still the one on
         // disk, and gives each boundary back its real parent. The relink loop that follows is the
-        // anchor, so the hook cannot drift in front of the index it needs.
+        // anchor, so the hook cannot drift in front of the index it needs. Only the first parameter is
+        // captured: 2.1.284 gave the walk a second, optional one that reports the leaf it chose.
         file: 'extension.js',
         hits: 2,
-        find: /(async function [\w$]+\(([\w$]+)\)\{let ([\w$]+)=new Map;for\(let ([\w$]+) of \2\)\3\.set\(\4\.uuid,\4\);)(let [\w$]+=0;for\(let ([\w$]+) of \3\.values\(\)\)\{if\(\6\.type!=="system"\|\|\6\.subtype!=="compact_boundary"\)continue;)/,
+        find: /(async function [\w$]+\(([\w$]+)(?:,[\w$]+)*\)\{let ([\w$]+)=new Map;for\(let ([\w$]+) of \2\)\3\.set\(\4\.uuid,\4\);)(let [\w$]+=0;for\(let ([\w$]+) of \3\.values\(\)\)\{if\(\6\.type!=="system"\|\|\6\.subtype!=="compact_boundary"\)continue;)/,
         replace: (_found, index, _lines, byUuid, _line, relink) =>
             `${index}(()=>{try{${HOST_LOAD}require(__p).stitchCompactions(${byUuid})}catch(__e){}})();${relink}`,
         where: 'replace',
@@ -524,6 +530,10 @@ function apply(dir) {
         byFile.get(p.file).push(p);
     }
 
+    // Every file is patched in memory before any of them is written. A signature that moved in the second
+    // file must not leave the first one carrying its hooks: that is a Claude Code with half a patch, and
+    // not the untouched one a refused run promises.
+    const written = [];
     for (const [rel, patches] of byFile) {
         const file = path.join(dir, rel);
         if (!existsSync(file)) throw Error(`missing ${file}`);
@@ -550,9 +560,13 @@ function apply(dir) {
             const find = expected > 1 ? everyMatch(p.find) : p.find;
             src = src.replace(find, (...match) => expand(p, match));
         }
+        written.push({ rel, file, src, hooks: patches.length });
+    }
+
+    for (const { rel, file, src, hooks } of written) {
         writeFileSync(file, src, 'utf8');
         checkSyntax(file);
-        console.log(`patched ${rel} (${patches.length} hook(s))`);
+        console.log(`patched ${rel} (${hooks} hook(s))`);
     }
     checkExpectations(dir);
 }
