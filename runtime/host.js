@@ -316,10 +316,9 @@ function addHidden(sessionId, uuids) {
     for (const u of uuids) if (typeof u === 'string') set.add(u);
     map[sessionId] = [...set];
     writeJson(HIDDEN_FILE, map);
-    // The search/timestamp caches hold the session's text as it was before the retract; drop them so
-    // the next read rebuilds without the hidden lines.
+    // The search cache holds the session's text as it was before the retract; drop it so the next
+    // read rebuilds without the hidden lines.
     S.transcriptTextCache && S.transcriptTextCache.delete(sessionId);
-    S.transcriptTimeCache && S.transcriptTimeCache.delete(sessionId);
 }
 
 // --- Pinned sessions --------------------------------------------------------------------------
@@ -529,9 +528,8 @@ function stripForeignMessageIds(sessionId) {
         console.error('ccx: could not strip foreign message ids', e);
         return 0;
     }
-    // Both caches key on mtime+size and would otherwise keep serving the pre-strip bytes
+    // The search cache keys on mtime+size and would otherwise keep serving the pre-strip bytes
     S.transcriptTextCache && S.transcriptTextCache.delete(sessionId);
-    S.transcriptTimeCache && S.transcriptTimeCache.delete(sessionId);
     dlog('foreign message ids stripped', { session: sessionId, lines: stripped });
     console.log(`ccx: dropped ${stripped} foreign message id(s) from ${sessionId} before an Anthropic spawn`);
     return stripped;
@@ -840,49 +838,6 @@ function stitchCompactions(byUuid) {
         stitched++;
     }
     return stitched;
-}
-
-// --- When each message was actually sent, keyed by message uuid ------------------------------
-//
-// The webview cannot answer this about its own transcript. Its message class declares
-// `constructor(type, content, {uuid, betaMessageId, timestamp = Date.now(), …})` — the timestamp is
-// an OPTIONAL field defaulting to now, and history replayed to seed a resume is rebuilt without one.
-// So every past message reports the moment the transcript was reconstructed, which is why they all
-// showed the same near-current time no matter how old the conversation was. Live messages are the
-// only ones whose in-page timestamp means anything, and only until the next reload.
-//
-// The .jsonl line each message came from does carry the real one, next to the same uuid the page
-// holds. Same mtime+size cache as the content search, and the same cap — parsing is per line, so a
-// long transcript is worth not re-reading on every repaint.
-function transcriptTimestamps(sessionId) {
-    const file = transcriptPathFor(sessionId);
-    if (!file) return null;
-    const cache = (S.transcriptTimeCache ||= new Map());
-    try {
-        const { mtimeMs, size } = fs.statSync(file);
-        const hit = cache.get(sessionId);
-        if (hit && hit.mtimeMs === mtimeMs && hit.size === size) return hit.map;
-        const map = {};
-        for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
-            if (!line) continue;
-            let row;
-            try {
-                row = JSON.parse(line);
-            } catch {
-                continue; // a partially written trailing line while the CLI is mid-append
-            }
-            if (!row || typeof row.uuid !== 'string' || !row.timestamp) continue;
-            const ms = Date.parse(row.timestamp);
-            // Milliseconds rather than the ISO string: a few thousand of these travel in one message,
-            // and the page only ever feeds them to `new Date(...)` anyway.
-            if (!isNaN(ms)) map[row.uuid] = ms;
-        }
-        if (cache.size >= MAX_CACHED_TRANSCRIPTS) cache.delete(cache.keys().next().value);
-        cache.set(sessionId, { mtimeMs, size, map });
-        return map;
-    } catch {
-        return null;
-    }
 }
 
 function envFor(baseEnv, resumeSessionId, opts) {
@@ -1912,9 +1867,6 @@ function attachWebview(webview) {
                     suggestions: result ? result.suggestions : null,
                 });
             });
-        } else if (m.type === 'ccx:timestamps') {
-            const id = m.sessionId || sessionId;
-            post(webview, { type: 'ccx:timestampsResult', sessionId: id, times: transcriptTimestamps(id) || {} });
         } else if (m.type === 'ccx:debug') {
             dlog('ccx:debug indicator', m);
         } else if (m.type === 'ccx:pinSession') {
