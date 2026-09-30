@@ -66,7 +66,7 @@ Install **Vannevar Code** from the Marketplace (or Open VSX in Cursor, Windsurf 
 the `.vsix` from [Releases](https://github.com/beatlejute/VannevarCode/releases) and
 
 ```bash
-code --install-extension vannevarcode-2.1.284.vsix
+code --install-extension vannevarcode-2.1.285.vsix
 ```
 
 Nothing else to run: on the first window it copies its runtime into `~/.claude/vannevar`, applies the
@@ -145,7 +145,7 @@ as it was, working and unpatched, and the notification offers *Check for Updates
 an ordinary extension update.
 
 The version number is the Claude Code release the signatures were verified against, so an install that
-says 2.1.284 was checked against Claude Code 2.1.284. One release usually fits several builds, and
+says 2.1.285 was checked against Claude Code 2.1.285. One release usually fits several builds, and
 `verifiedAgainst` in the manifest carries the whole list:
 
 A release that fixes something between two Claude Code builds has no number of its own to take, so it
@@ -154,6 +154,7 @@ is what every part of the code reads.
 
 | Vannevar Code | Fits Claude Code |
 |---|---|
+| 2.1.285 | 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.284 | 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.283 | 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.282 | 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
@@ -190,6 +191,9 @@ the command menu.
   appended as a separate label.
 - **Pinning inside session groups** cannot cross the group boundary: a pinned session rises to the top
   of its own section.
+- **A managed `allowedProviders` list wins.** From Claude Code 2.1.285 an organization can list the
+  providers a machine may use; a profile with `ANTHROPIC_BASE_URL` counts as `customEndpoint` and is
+  refused at startup unless the managed settings pin that same address.
 
 ## Why "Vannevar"
 

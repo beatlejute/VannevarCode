@@ -236,7 +236,8 @@ try {
         assert.match(rewired.text, /^ccx-result: patched$/m, 'a bundle wired to another runtime reported up-to-date');
         const rewritten = readFileSync(path.join(foreign, 'extension.js'), 'utf8');
         assert.ok(rewritten.includes('".claude","vannevar","host.js"'), 'the hooks do not point at this runtime');
-        assert.ok(!rewritten.includes('"elsewhere"'), 'the foreign hook survived — it was patched on top, not replaced');
+        // The whole path, not the word: from 2.1.285 the bundle says "elsewhere" on its own, twice
+        assert.ok(!rewritten.includes('".claude","elsewhere","host.js"'), 'the foreign hook survived — it was patched on top, not replaced');
         console.log('OK — hooks that load another runtime are replaced, not mistaken for this one');
 
         // With no backup beside it there is nothing clean to patch from, and taking the backup from the

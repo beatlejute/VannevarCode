@@ -1575,6 +1575,13 @@
         var transcript = session.getSubagentTranscript;
         var stop = session.stopSubagent;
         if (typeof transcript !== 'function' || typeof stop !== 'function') return;
+        // 2.1.285 made the dialog read a transcript in pages: the stock method takes a cursor and
+        // resolves to { frames, from } instead of the bare message array, and the dialog destructures
+        // that — handed an array, it finds no frames and stays on "Loading…". Which shape this release
+        // wants is read off the stock method, which spells it out literally. Ours ignores the cursor
+        // and leaves `from` out: the dialog then sets whatever arrives against what it already shows
+        // and keeps only what is new, so the whole transcript each time is still a correct answer.
+        var framed = /\bframes\s*:/.test(Function.prototype.toString.call(transcript));
         session.__ccxAgentMap = true;
         session.getSubagentTranscript = function (taskId) {
             var entry = mapEntry(taskId);
@@ -1583,7 +1590,8 @@
             // the prompt beneath that.
             if (!entry.ccxSession) return Promise.reject(new Error('this run left no transcript'));
             return askHost({ type: 'ccx:agentTranscript', session: entry.ccxSession }).then(function (reply) {
-                return Array.isArray(reply.messages) ? reply.messages : [];
+                var messages = Array.isArray(reply.messages) ? reply.messages : [];
+                return framed ? { frames: messages } : messages;
             });
         };
         session.stopSubagent = function (taskId) {

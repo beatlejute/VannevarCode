@@ -389,6 +389,32 @@ await assert.rejects(session.stopSubagent('ccx:toolu_old'), /not running/, 'a fi
 assert.equal(posted.length, sent, 'and nothing is asked of the host for it');
 assert.equal(stockCalls.length, 1, 'none of this reached the CLI');
 
+// From 2.1.285 the dialog reads a transcript in pages: the stock method takes a cursor and resolves
+// to { frames, from }, and the dialog destructures it. A bare array there leaves it on "Loading…".
+const paged = {
+    messages,
+    busy: { value: true },
+    sessionId: { value: 'tab00000-1111-2222-3333-444444444444' },
+    subagentTasks: { value: new Map() },
+    agentMapAgents,
+    getSubagentTranscript(id, after) {
+        return Promise.resolve({ frames: ['stock'], ...(after !== undefined && { from: after.count }) });
+    },
+    stopSubagent() {
+        return Promise.resolve();
+    },
+};
+pageContext.window.__ccx.onRegistry(null, null, paged);
+fromHost({ type: 'ccx:agentRuns', runs: [liveRun] });
+assert.deepStrictEqual(await paged.getSubagentTranscript('a1b2c3'), { frames: ['stock'] }, "the app's own agents still get the app's answer");
+const framed = paged.getSubagentTranscript('ccx:toolu_live', { count: 1, uuid: 'u1' });
+const framedAsk = posted.at(-1);
+assert.equal(framedAsk.type, 'ccx:agentTranscript', 'ours still asks the host');
+fromHost({ type: 'ccx:agentReply', seq: framedAsk.seq, ok: true, messages: [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'a1' }] });
+const { frames, from } = await framed;
+assert.deepStrictEqual(frames.map((m) => m.uuid), ['u1', 'a1'], 'and answers in the shape this release reads');
+assert.equal(from, undefined, 'claiming no cursor, so the dialog keeps only the frames it has not drawn yet');
+
 // A session without an agent map (an older Claude Code) is left exactly as it was.
 const bare = { messages, sessionId: { value: 'x' } };
 pageContext.window.__ccx.onRegistry(null, null, bare);
