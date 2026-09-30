@@ -5,8 +5,22 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## Unreleased
+## 2.1.285
 
+Verified against Claude Code **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**,
+**2.1.276**, **2.1.274**.
+
+Claude Code 2.1.285 cost no signature: of the two anchors written structurally for exactly this, only
+the session environment's renamed, and every injection point matched the shape it already matched. What
+it did change is the one thing the agent map below takes from Claude Code without a signature: the
+dialog behind a row now reads a transcript in pages, and *Open transcript* on a delegated run answers in
+whichever shape the running release asks for.
+
+- A machine whose managed settings list `allowedProviders` — new in Claude Code 2.1.285, and read from
+  managed settings only — refuses a tab on any provider the list leaves out, at startup and again at
+  the next request. Every profile that sets `ANTHROPIC_BASE_URL`, which is every template here, counts
+  as `customEndpoint`, and that entry admits only the address the same managed source pins in its own
+  `env`. That is the policy doing its job; nothing here goes around it.
 - Message timestamps are gone from this extension. Claude Code 2.1.284 draws its own — a time on every
   message and a date line where the day changes — behind **Claude Code: Show Message Timestamps**
   (`claudeCode.showMessageTimestamps`, off by default), and two sets of the same labels on one message
@@ -19,8 +33,8 @@ does.
   transcript* shows the run's whole conversation, and *Stop agent* ends it — the run's MCP server stops
   it and tells the calling agent the user did. `run_agent` takes an optional `description` for the label;
   without one the first line of the prompt stands in. The card's model segment follows the call's own
-  `model`, or the tab's model when the call named none, and its tool-call list stays empty: both are
-  drawn by Claude Code from the tab, and changing them would take a signature.
+  `model`, or the tab's model when the call named none, and its tool-call list stays empty: Claude Code
+  draws both from the tab.
 
 ## 2.1.284
 
