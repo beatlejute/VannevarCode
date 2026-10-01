@@ -256,7 +256,17 @@ class El {
         if (m) return this.tagName === m[1] && m[2] in this.attrs;
         m = /^([a-z]+)\[([\w-]+)="([^"]*)"\]$/.exec(sel);
         if (m) return this.tagName === m[1] && this.attrs[m[2]] === m[3];
+        m = /^\[([\w-]+)="([^"]*)"\]$/.exec(sel);
+        if (m) return this.attrs[m[1]] === m[2];
         return false;
+    }
+    scrollIntoView() {
+        this.scrolled = true;
+    }
+    // What the page reads a message off: the app's own fiber on the rendered node.
+    withMessage(message) {
+        this['__reactFiber$ccx'] = { memoizedProps: { message }, return: null };
+        return this;
     }
     querySelector(sel) {
         return this.walk([]).find((n) => n !== this && n.matches(sel)) || null;
@@ -361,14 +371,18 @@ const observerPass = () => {
 // written, a notebook, an image and a document.
 const wrap = (b) => ({ content: b });
 let uuid = 0;
-const msg = (type, blocks) => ({ type, uuid: 'm' + ++uuid, content: blocks.map(wrap) });
-const messages = [
-    msg('user', [
+// `timestamp` is there because the page's own isTranscriptMessage() demands one before it will call a
+// fiber's prop a message — which is what the jump reads.
+const msg = (type, blocks) => ({ type, uuid: 'm' + ++uuid, timestamp: ++uuid, content: blocks.map(wrap) });
+const firstMessage = msg('user', [
         {
             type: 'text',
             text: 'See https://example.com/a first, then https://example.com/a again. The docs are at https://example.com/b.',
         },
-    ]),
+    ],
+);
+const messages = [
+    firstMessage,
     msg('assistant', [{ type: 'tool_use', id: 't1', name: 'WebFetch', input: { url: 'https://example.com/a' } }]),
     {
         type: 'assistant',
@@ -531,6 +545,30 @@ assert.equal(
     'and a stale refusal is dropped rather than toasted',
 );
 
+// 4b. The jump: the arrow goes to the message the resource came from, marks it for long enough to be
+//     found, and closes the dialog behind it. The message is read off the node's fiber, the same walk
+//     the hidden-message marking makes.
+const drawn = new El('div');
+drawn.className = 'userMessageContainer_abc';
+pageDocument.body.appendChild(drawn);
+drawn.withMessage(firstMessage);
+pill.onclick();
+rowFor('example.com/b').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
+assert.equal(overlays().length, 0, 'the jump closes the dialog behind it');
+assert.ok(drawn.scrolled, 'and scrolls the transcript to the message');
+assert.equal(drawn.getAttribute('data-ccx-flash'), '', 'marking it, so it can be told from the rest');
+assert.ok(
+    !posted.some((m) => m.type === 'ccx:openResource' && String(m.value).includes('example.com/b')),
+    'the jump opens nothing — the row\'s own click does that',
+);
+
+// A long session renders only the turns near the viewport, so a resource from far up has no node at
+// all: the jump says so rather than landing on some other message and calling it the one.
+pill.onclick();
+rowFor('https://example.com/r1').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
+const jumpToast = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').pop();
+assert.match(jumpToast.textContent, /not in the part of the transcript/, 'a message with no node is refused, not guessed');
+
 // 5. A repaint replaces the dialog rather than stacking, and Escape and a backdrop click close it.
 pill.onclick();
 assert.equal(overlays().length, 1);
@@ -587,6 +625,8 @@ assert.ok(
 );
 assert.ok(/type: 'ccx:openResource'/.test(webview), 'the page must ask the host to open a row');
 assert.ok(/function placeResourcePill/.test(webview), 'placement is re-made on every pass, like the countdown\'s');
+assert.ok(/data-testid="assistant-message"/.test(webview), 'the jump must find messages the way the hidden marking does');
+assert.ok(/data-ccx-flash/.test(webview), 'and mark what it landed on with an attribute, not a class React rewrites');
 assert.ok(/menuButton_/.test(webview), 'and a row with neither pill still has somewhere but the end to go');
 assert.ok(/m\.type === 'ccx:openResource'/.test(host), 'and the host must answer it');
 assert.ok(/function openResource\(/.test(host), 'with the open itself in one readable place');
