@@ -147,6 +147,11 @@ rmSync(home, { recursive: true, force: true });
 
 // --- Part 2: the page — a checkbox under Thinking, and a /compact on the 55th minute -------------
 
+const matchesSel = (node, sel) => {
+    const sub = /^\[class\*="([^"]+)"\]$/.exec(sel);
+    return sub ? String(node.className).includes(sub[1]) : node.className === sel.replace(/^\./, '');
+};
+
 class El {
     constructor(tag) {
         this.tagName = tag;
@@ -199,15 +204,17 @@ class El {
     // Class lookups only, by the same substring rule the page uses on the app's hashed names
     // (`[class*="modelPill_"]`) — anything else keeps returning null, as it did before.
     querySelector(sel) {
-        const sub = /^\[class\*="([^"]+)"\]$/.exec(sel);
-        for (const c of this.children) {
-            if (sub ? String(c.className).includes(sub[1]) : c.className === sel.replace(/^\./, '')) return c;
-            const deep = c.querySelector(sel);
-            if (deep) return deep;
-        }
-        return null;
+        const all = this.querySelectorAll(sel);
+        return all.length ? all[0] : null;
     }
-    querySelectorAll() { return []; }
+    querySelectorAll(sel) {
+        const found = [];
+        for (const c of this.children) {
+            if (matchesSel(c, sel)) found.push(c);
+            found.push(...c.querySelectorAll(sel));
+        }
+        return found;
+    }
 }
 
 const pageDocument = {
@@ -216,7 +223,7 @@ const pageDocument = {
     createElement: (t) => new El(t),
     createElementNS: (ns, t) => new El(t),
     querySelector: (sel) => pageDocument.body.querySelector(sel),
-    querySelectorAll: () => [],
+    querySelectorAll: (sel) => pageDocument.body.querySelectorAll(sel),
     addEventListener() {},
     removeEventListener() {},
     createTreeWalker: () => ({ nextNode: () => null }),
@@ -376,6 +383,14 @@ assert.equal(cachePill.children[0].tagName, 'svg', 'the app\'s own clock is draw
 assert.match(cachePill.textContent, /^60m$/, 'the number reads exactly as the app\'s own countdown does');
 assert.match(cachePill.title, /not measured/, 'the tooltip says the number is documentation, not a measurement');
 assert.match(cachePill.title, /deepseek/, 'and names the profile the number came from');
+
+// A duplicate is what the composer's own redraws leave behind: a pass that found its pill already
+// detached draws a second one. Every pass drops all but one, so the row converges however it drifted.
+const stray = new El('span');
+stray.className = 'ccx-cache-pill';
+footer.appendChild(stray);
+fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 60, profile: 'deepseek', anchorAt: Date.now() });
+assert.equal(pageDocument.body.querySelectorAll('.ccx-cache-pill').length, 1, 'a second countdown is dropped, not kept');
 
 // A measured tier already has the app's own countdown, and two of them for one cache would disagree.
 fromHost({ type: 'ccx:cache', ttl: '1h', anchorAt: Date.now() });

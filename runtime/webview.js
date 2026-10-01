@@ -2116,7 +2116,13 @@
     function decorateCachePill() {
         var left = cacheLeftMinutes();
         try {
-            var pill = document.querySelector('.ccx-cache-pill');
+            // One countdown, whoever drew the other. React redraws this row freely, and a pass that
+            // found the pill already detached — the composer replaces its children wholesale — would
+            // draw a second one and leave both on screen. Everything carrying the handle is dropped
+            // except the node this pass keeps, which makes the state converge however it drifted.
+            var all = document.querySelectorAll ? document.querySelectorAll('.ccx-cache-pill') : [];
+            var pill = all.length ? all[0] : null;
+            for (var k = 1; k < all.length; k++) all[k].remove();
             if (left == null) {
                 if (pill) pill.remove();
                 if (cacheInterval) {
