@@ -1965,17 +1965,44 @@
 
     // --- The declared lifetime, drawn where the app's own indicator would be --------------------
     //
-    // The app draws a countdown for the Anthropic tiers and nothing at all for a backend whose answer
-    // carries no cache_creation split. This fills that silence: the declared lifetime counts down
-    // beside the model pill in the composer, marked "≈" and never shown without its source in the
-    // tooltip, because the number is documentation rather than something anyone measured. Only the
-    // declared kind is drawn — a measured 1h tier already has the app's own indicator, and two
-    // countdowns for one cache would disagree with each other.
+    // The app draws a countdown for the tiers it can measure and nothing at all for a backend whose
+    // answer carries no cache_creation split. This fills that silence in the app's own idiom rather
+    // than as a badge of ours: the same footer row, the same classes, and the same place the stock
+    // countdown takes when it exists — immediately after the context-usage chip.
     //
-    // The composer is React's and re-renders freely, so the pill is re-inserted by the same debounced
-    // pass that decorates everything else, and a build whose footer or model pill cannot be found
-    // draws nothing rather than a pill adrift in the layout.
+    // Not one of those names is written down here. They carry a per-build hash
+    // (`inputFooterV2_gGYT1w`), so each class is read off the live DOM, or — for the countdown's own
+    // `indicator_…`, which a provider like this one never renders — out of the stylesheet the page
+    // has already loaded. A build where neither can be found draws nothing rather than a pill adrift
+    // in the composer, and the composer is React's: the pill is re-inserted by the same debounced
+    // pass that decorates everything else.
+    //
+    // Only the declared kind is drawn: a measured 1h tier already has the app's own countdown, and
+    // two of them for one cache would disagree with each other.
     var cacheInterval = null;
+
+    // `footerButton_gGYT1w` for a build whose hash is `gGYT1w` — the prefix is the contract, the
+    // suffix is the build's own business.
+    function stockClass(prefix, scope) {
+        var live = (scope || document).querySelector('[class*="' + prefix + '"]');
+        if (live) {
+            var own = String(live.className || '').split(/\s+/);
+            for (var i = 0; i < own.length; i++) if (own[i].indexOf(prefix + '_') === 0) return own[i];
+        }
+        try {
+            var sheets = document.styleSheets || [];
+            for (var s = 0; s < sheets.length; s++) {
+                var rules = sheets[s].cssRules || [];
+                for (var r = 0; r < rules.length; r++) {
+                    var m = new RegExp('\\.(' + prefix + '_[A-Za-z0-9_-]+)').exec(rules[r].selectorText || '');
+                    if (m) return m[1];
+                }
+            }
+        } catch (e) {
+            /* a stylesheet that cannot be read is a class we do without */
+        }
+        return '';
+    }
 
     function cacheLeftMinutes() {
         if (!cacheInfo || cacheInfo.ttl !== 'declared') return null;
@@ -1999,9 +2026,20 @@
                 var footer = document.querySelector('[class*="inputFooterV2_"]');
                 if (!footer) return;
                 pill = document.createElement('span');
-                pill.className = 'ccx-cache-pill';
-                var model = footer.querySelector('[class*="modelPill_"]');
-                if (model && model.parentElement) model.parentElement.insertBefore(pill, model.nextSibling);
+                // The stock countdown's own classes, lifted the same way the app lifts them: a footer
+                // button's, and the indicator's for the number itself. `ccx-cache-pill` is only a
+                // handle for the next pass to find it by — it carries no styling of ours, so the pill
+                // reads as part of the row instead of as an addition to it.
+                pill.className = [
+                    'ccx-cache-pill',
+                    stockClass('footerButton', footer),
+                    stockClass('footerButtonPrimary', footer),
+                    stockClass('indicator'),
+                ]
+                    .filter(Boolean)
+                    .join(' ');
+                var usage = footer.querySelector('[class*="usageButtonV2_"]');
+                if (usage && usage.parentElement) usage.parentElement.insertBefore(pill, usage.nextSibling);
                 else footer.appendChild(pill);
             }
             pill.textContent = '≈' + left + 'm';
@@ -3343,7 +3381,6 @@
         '.ccx-side-link{margin-left:auto;align-self:center;cursor:pointer;font-family:var(--vscode-font-family)}',
         '.ccx-side-link:hover{opacity:1}',
         '.ccx-model-tag{margin-left:6px;opacity:.55;font-size:10px;font-family:var(--vscode-editor-font-family, monospace)}',
-        '.ccx-cache-pill{margin-left:6px;opacity:.55;font-size:10px;font-variant-numeric:tabular-nums;cursor:default}',
         // The provider rows sit inside a React-owned panel, so every colour here is a VS Code theme
         // variable with a literal fallback: the section has to read as part of the panel in whatever
         // theme is loaded, and no stock class is borrowed except the two copied off the panel itself.
