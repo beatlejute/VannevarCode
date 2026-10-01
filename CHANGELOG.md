@@ -22,6 +22,15 @@ and the stylesheet, since every name carries a per-build hash), and reading exac
 does. The qualification lives in its tooltip instead: the profile the number came from, and the fact
 that it is documentation rather than a measurement.
 
+A run whose session ends no longer leaves a row that says "working" for the rest of the day. The MCP
+server closes the manifest of every run it still has open when its client closes the pipe — the ordinary
+end of a server, a window reload included — where it used to kill the children and exit with the
+manifests still saying `running`. The agent map is drawn from those manifests, so a run left that way is
+indistinguishable from a live one: the row sits in the dialog, and **Stop agent** on it writes a request
+into a file no process will ever poll — the host has nothing to go on but the manifest, and the manifest
+says running. Closing them is what makes that button honest again on a run that has already ended, and
+what stops a dead run from being counted among the working ones.
+
 The agent map says when each subagent was called. A row's meta line was a duration and a token count —
 `5m 1s · 77.9k tokens` — which two runs of the same length share, and the time the run started now
 leads it (`09:05 · 5m 1s · 77.9k tokens`), in the machine's own zone, 24-hour. A run from another day
@@ -35,14 +44,21 @@ composer footer beside the stock **agents** pill, carrying a set count — links
 pages a `WebFetch` call went to, links a `WebSearch` returned, files tool calls read or wrote, and
 images and documents attached to a prompt — and the dialog behind it groups them into sections in
 first-seen order, with a resource mentioned many times collapsing into one row that shows how many
-times (`×3`). The count is of distinct resources, which is the only number worth carrying: a URL
+times (`×3`) and when it was first said — the clock for a message from today, the date in front of it
+for an older one, and the year once that is not the current one, the same rule the agent map's rows
+follow. The count is of distinct resources, which is the only number worth carrying: a URL
 written twice and fetched once is one resource, and the same URL reached from a message and from a
 tool call is one row, in the section where it first appeared, with both origins in its tooltip. Every
 URL is compared by scheme and host lowercased, so two spellings of one page do not become two rows.
 What came from the user is set apart from what the model brought in: those rows carry a **you** tag and
-lead their section, because a URL from a prompt and a URL from a reply look exactly alike. A tool
-result is not the user speaking, though it arrives on their side of the conversation — only the turns
-they actually typed, and the images and documents they attached, are marked.
+lead their section, because a URL from a prompt and a URL from a reply look exactly alike. Whose it is
+is decided by the *first* mention — the model echoing a link the user pasted is still the user's link,
+while a link the model wrote and the user quoted back later is not. A tool result is not the user
+speaking, though it arrives on their side of the conversation, and neither is a subagent's turn: only
+the turns they actually typed, and the images and documents they attached, are marked. A compaction
+summary is skipped whole — it is the conversation again in one message of the user's, so every link in
+it is already counted where it came from, and counting it a second time would both double them and
+claim them all for the user.
 
 An attached image is drawn as itself: the row leads with the picture, wearing the composer chip's own
 thumbnail class, and its pixel size lands beside the name once the image has decoded — the same pair
@@ -52,10 +68,25 @@ entirely from the transcript the tab already holds — nothing is asked of the h
 The repository is part of the session's resources too: the branches it created or moved to, the commits
 it wrote and the worktrees it added, read out of git's own grammar — `checkout -b`, `switch -c`,
 `branch`, `worktree add` — and out of what git prints back (`Switched to branch 'x'`, and the
-`[main 4f2a1c3] subject` line a commit answers with). A bare `git checkout x` is deliberately not read
-from the command line, since that call may be restoring a file, and a `git log` full of hashes
-contributes nothing: the list is what the session *did*, not what it looked at. Neither a branch nor a
-commit has anything to open, so those rows are not drawn as clickable — their jump is the arrow.
+`[main 4f2a1c3] subject` line a commit answers with). A commit made quietly — `git commit -q`, or one
+written through a heredoc — prints no such line, so its hash is taken from what the same command line
+did next: the `old..new` a push reports, and the one-line log read back beside it, which is also where
+its subject comes from. A worktree is named by its path, which git puts in the first argument that is
+neither an option nor an option's value — the last token of the line is a branch when a commit-ish
+follows the path, and `2>` when the command redirected its output. A bare `git checkout x` is
+deliberately not read from the command line, since that call may be restoring a file. Neither a branch nor a commit has anything to open, so those rows
+are not drawn as clickable — their jump is the arrow.
+
+A commit the session only looked at is a resource as well, and the two are told apart on the row: a
+**made** tag for what was written or added here, a **seen** tag for what a listing merely showed —
+`git log`, `git worktree list`. The seen ones sit under a fold of their own inside Commits and
+Worktrees, shut by default, because the section is about work done here and a `git log` of twenty
+commits would otherwise bury it; a branch has no such split, every branch in the list being somewhere
+the session went. Which is which is not a guess but the question the command itself
+answers: a commit made with `-q` is still the session's own, because the push or the log beside it is
+on the same command line, while a hash from a bare `git log -20` is marked as read. A commit that was
+read first and written later is marked by what the session did with it — reading a hash does not stop
+it being yours once you push it.
 
 Sections fold, and **Files** arrive folded: a working session has more of them than of anything else,
 and the list is opened for what was said and what was committed first. What was folded stays folded
@@ -63,10 +94,13 @@ through the repaints a live session causes.
 
 A row also goes back to where it came from: an arrow on it closes the dialog, scrolls the transcript
 to the message the resource first appeared in and marks that message for a moment, so a link pasted
-three turns up can be read in its context rather than only in the list. The message is found off the
-rendered node's own fiber — the walk the hidden-message marking already makes — and a session long
-enough that the app has not drawn that far back says so, rather than landing on the nearest message
-and calling it the one.
+three turns up can be read in its context rather than only in the list. The message is found by the
+app's own `data-bookmark-uuid` attribute where it is there, by the node's fiber where it is not, and by
+the value the row holds as a last resort — a URL pasted into a prompt is in the bubble verbatim. A
+message the page holds without drawing a bubble of its own — a tool result is one — is reached by the
+turn that contains it, and the row says it landed near rather than on it. A resource from further back
+than the app renders at all lands at the top of what it has, and there the switch that lifts that trim
+— **History before compaction** — is named, since scrolling cannot reach what the app never drew.
 
 Every row opens what it names: an http(s) link through the OS, an absolute path in the
 editor, and an attached image or document by being written to a file first, since a pasted screenshot
@@ -235,12 +269,3 @@ date by VS Code.
   extension update.
 - A Claude Code update that lands together with a Vannevar Code update now refreshes the runtime from
   the newer extension folder before patching, so it takes one reload instead of two.
-A run whose session ends no longer leaves a row that says "working" for the rest of the day. The MCP
-server closes the manifest of every run it still has open when its client closes the pipe вЂ” the ordinary
-end of a server, a window reload included вЂ” where it used to kill the children and exit with the
-manifests still saying `running`. The agent map is drawn from those manifests, so a run left that way is
-indistinguishable from a live one: the row sits in the dialog, and **Stop agent** on it writes a request
-into a file no process will ever poll вЂ” the host has nothing to go on but the manifest, and the manifest
-says running. Closing them is what makes that button honest again on a run that has already ended, and
-what stops a dead run from being counted among the working ones.
-
