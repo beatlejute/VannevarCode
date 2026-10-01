@@ -967,6 +967,26 @@ icon instead, and an `<img>` of a PDF is a broken image. The payload is kept out
 what the thumbnail and the click both need, and it is the only copy there is. The composer's *draft* chips are deliberately not a source — a draft is not
 part of the session, and counting it would make the number flicker while the user attaches.
 
+Three of the sections are the repository rather than the transcript, and they are the only ones read out
+of a *command*. That is normally the thing not to do — the paths inside a shell line are guesswork, and
+the file section takes `file_path`/`notebook_path`/`path` and nothing else for exactly that reason. What
+makes these different is that they come from git's grammar rather than from the shell's: `git switch -c
+x` names a branch, `git worktree add … <path>` ends in the path, and a commit's hash and subject exist
+only in what git prints back (`[main 4f2a1c3] subject`), which is why the output is read as well as the
+command. Two deliberate omissions keep it from filling with noise: a bare `git checkout x` is not read
+from the command, since that call may be restoring a file — a branch moved to is taken from `Switched to
+branch 'x'` instead — and a `git log` full of hashes contributes nothing, because the list is of what the
+session did, not of what it looked at. A branch and a commit carry no `open` target, so their rows are
+drawn without one rather than failing at the host.
+
+Sections fold, and Files come folded — a working session has more of them than of anything else. The
+rows are built either way and the fold is one stylesheet rule on the wrapper
+(`[data-ccx-open="0"] .ccx-res-body{display:none}`), because the dialog is repainted on every state push
+and rebuilding it would otherwise throw away what had just been unfolded; the chosen folds live in a
+page-level object for the same reason. The heads are bound in a `forEach` and not in a counting loop:
+one `var` shared between them and every head would fold the last section drawn, which is how the first
+version of this behaved.
+
 The row's other affordance stays on the page: an arrow that closes the dialog and scrolls the
 transcript to the message the resource came from. The node is found the way `applyHidden()` finds the
 one it is to hide — `[data-testid="assistant-message"]` and `[class*="userMessageContainer_"]`, with
