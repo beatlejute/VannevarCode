@@ -29,6 +29,18 @@ Before deleting any branch, check that `main` already contains it (`git branch -
 `git branch -d`, never `-D`). A release branch is kept even when it is *not* merged — that is the whole
 point of it.
 
+## Worktrees
+
+There are none here, and none gets made. `git worktree add`, Kilo Code's Agent Manager parallel mode and
+an editor's "open in a worktree" are all the same thing: a second checkout of this repository under
+`.kilo/worktrees/` or `.claude/worktrees/`, with a detached HEAD, no branch to delete and no place in the
+scheme above. Decline the offer. If one exists anyway — `git worktree list` shows it — remove it
+(`git worktree remove <path>`) and then `git worktree prune`, because the administrative half in
+`.git/worktrees/` outlives the directory it described.
+
+`.kilo/worktrees` is a regular file, not a directory, so that the attempt fails instead of quietly
+succeeding. That file is local to this machine; the rule is not.
+
 ## Versions
 
 `version` in `package.json` **is the Claude Code version the signatures were verified against**, as it
