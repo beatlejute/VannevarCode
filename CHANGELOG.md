@@ -111,21 +111,23 @@ attachment past a dozen megabytes is refused instead of being moved. A row namin
 tool names one with its `path` — is revealed in the explorer rather than fed to the editor as a file.
 
 A session can now be given a plugin channel — the Telegram bridge, launched in the terminal with
-`--channels plugin:telegram@claude-plugins-official` — from a row in the command menu's *Settings*
-section, beside *Sign in to ChatGPT…*. The row starts the channel in the session that is already
-running, the way Remote Control starts its own connection: through the session's `enableChannel`
-control request, naming the MCP server the plugin declares (`telegram` here) rather than a launch flag,
-which the CLI never sees from this spawn — the SDK rebuilds the transport's options object without the
-`channels` field, though its argument builder reads it. Nothing is started on its own; the row is the
-only door, and a second click on a channel that is already up does nothing. The row says where it got
-to while it gets there and afterwards: `starting…`, then `enabled` once the CLI has taken the request —
-not `connected`, since whether the bridge behind it is live is not in that answer — or `failed` with the
-provider's own words in the tooltip, which is where an organization's policy
-(`channelsEnabled`, `allowedChannelPlugins`) and an uninstalled plugin both show up. There is no way
-back within a session: the CLI has no control request that turns a channel off, so a new session is
-what ends one. The anchor this rides on is the one signature in the patcher declared optional — a
-release that does not have the method the hook hangs off takes the rest of the patch and says so in a
-`NOTE`, and the row reports itself unavailable rather than doing nothing.
+`--channels plugin:telegram@claude-plugins-official`, is the one that exists today — from a **Channels…**
+row in the command menu's *Settings* section, beside *Sign in to ChatGPT…*. The row opens the list of
+MCP servers the installed plugins declare, one row each, and starting one of them opens the channel in
+the session that is already running, the way Remote Control opens its own connection: through the
+session's `enableChannel(server)` control request, never a launch flag, which the CLI cannot see from
+this spawn — the SDK rebuilds the transport's options object without the `channels` field, though its
+argument builder reads it. Nothing here names a channel: install a plugin that declares one and it is
+in the list on the next state push, so a second channel costs no code. Nothing is started on its own,
+and a click on a channel that is already up does nothing. Each row says where it got to — `starting…`,
+then `enabled` once the CLI has taken the request, not `connected`, since whether the bridge behind it
+is live is not in that answer — or `failed` with the CLI's own words in the tooltip, which is where an
+organization's policy (`channelsEnabled`, `allowedChannelPlugins`) and a plugin that was never
+installed both show up. Channels are independent of each other: one can be running while another is
+refused. There is no way back within a session, because the CLI has no control request that turns a
+channel off, so a new session is what ends one. The anchor this rides on is the one signature in the
+patcher declared optional — a release that does not have the method the hook hangs off takes the rest of
+the patch and says so in a `NOTE`, and the list reports itself unavailable rather than doing nothing.
 
 ## 2.1.286
 

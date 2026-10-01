@@ -172,18 +172,17 @@
                 startChatgptLogin
             );
             // Beside it, and for the same reason: the other row that wires this session to something
-            // outside the editor. Start-only — the CLI has no control request that turns a channel off
-            // again, so a new session is the way back, and the row says so when it is already running.
+            // outside the editor. What it opens names the servers the installed plugins declare, so
+            // installing a channel plugin is what adds a channel — nothing here is named in the code.
             registry.registerAction(
                 {
-                    id: 'ccx-channel',
-                    label: 'Telegram channel',
-                    description:
-                        'Start the Telegram channel (plugin:telegram@claude-plugins-official) in this session',
+                    id: 'ccx-channels',
+                    label: 'Channels…',
+                    description: 'Start a plugin channel (Telegram, Slack, …) in this session',
                     trailingComponent: channelTag(),
                 },
                 'Settings',
-                startChannel
+                openChannels
             );
             registry.registerAction(
                 {
@@ -201,39 +200,132 @@
         }
     }
 
-    // The plugin channel, started from the row rather than by a launch flag — the same shape as Remote
+    // --- Plugin channels -----------------------------------------------------------------------
+    //
+    // A channel is started from the menu rather than by a launch flag — the same shape as Remote
     // Control, whose connection is opened by a control request on a session that is already running.
-    // One row, because there is one channel: a second one would make this a list.
-    function startChannel() {
-        var ch = state.channel;
-        if (ch && ch.status === 'connecting') return;
-        if (ch && ch.status === 'enabled') {
-            toast('The Telegram channel is already running in this session.');
-            return;
-        }
-        if (ch && ch.status === 'unsupported') {
-            toast(ch.error || 'This Claude Code build has no channel support.');
-            return;
-        }
-        if (!activeChannelId) return toast('No session yet — the channel starts with the session.');
-        send({ type: 'ccx:channelStart', channelId: activeChannelId });
+    // Which channels exist is not the page's business: the host lists the servers the installed plugins
+    // declare, and each row here names one of them. Telegram is only ever an example.
+    function channelServers() {
+        return (state.channel && state.channel.servers) || [];
     }
 
     // What the row says on its right. "enabled" rather than "connected": the host's answer means the
     // CLI took the control request, and nothing here can see whether the bridge behind it is up.
     function channelTag() {
         if (!jsx || !state.channel) return undefined;
-        var ch = state.channel;
-        var text = ch.status === 'connecting'
-            ? 'starting…'
-            : ch.status === 'enabled'
-              ? 'enabled'
-              : ch.status === 'error'
+        var rows = channelServers();
+        var on = 0;
+        var failed = 0;
+        var starting = 0;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].status === 'enabled') on++;
+            else if (rows[i].status === 'error' || rows[i].status === 'unsupported') failed++;
+            else if (rows[i].status === 'connecting') starting++;
+        }
+        var text = state.channel.supported === false && !on
+            ? 'unavailable'
+            : starting
+              ? 'starting…'
+              : failed && !on
                 ? 'failed'
-                : ch.status === 'unsupported'
-                  ? 'unavailable'
+                : on
+                  ? on + ' enabled'
                   : undefined;
-        return text ? jsx('span', { className: 'ccx-prov-tag', children: text, title: ch.error || undefined }) : undefined;
+        return text ? jsx('span', { className: 'ccx-prov-tag', children: text }) : undefined;
+    }
+
+    function openChannels() {
+        closePicker();
+        overlay = document.createElement('div');
+        overlay.className = 'ccx-overlay';
+        overlay.onclick = function (e) {
+            if (e.target === overlay) closePicker();
+        };
+        overlayKind = 'channels';
+
+        var box = document.createElement('div');
+        box.className = 'ccx-box';
+
+        var title = document.createElement('div');
+        title.className = 'ccx-title';
+        title.textContent = 'Channels';
+        box.appendChild(title);
+
+        var hint = document.createElement('div');
+        hint.className = 'ccx-hint';
+        hint.textContent = state.sessionId
+            ? 'Servers the installed plugins declare — a channel is started in this session, and stays on it'
+            : 'No active session yet — a channel starts with the session';
+        box.appendChild(hint);
+
+        var rows = channelServers();
+        var list = document.createElement('div');
+        list.className = 'ccx-prov-list';
+        if (!rows.length) {
+            var empty = document.createElement('div');
+            empty.className = 'ccx-hint';
+            empty.textContent = 'No plugin on this machine declares an MCP server, so there is no channel to start.';
+            list.appendChild(empty);
+        }
+        for (var i = 0; i < rows.length; i++) list.appendChild(channelRow(rows[i]));
+        box.appendChild(list);
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        var onKey = function (e) {
+            if (e.key === 'Escape') {
+                closePicker();
+                window.removeEventListener('keydown', onKey, true);
+            }
+        };
+        window.addEventListener('keydown', onKey, true);
+    }
+
+    function channelRow(r) {
+        var row = document.createElement('div');
+        row.className = 'ccx-prov-row';
+        // The same three colours the provider list uses, for the same three meanings: answered, refused,
+        // and still working on it. Nothing else here is shared with that list.
+        row.setAttribute('data-ccx-prov', r.status === 'enabled' ? 'ok' : r.status === 'connecting' ? 'silent' : r.status === 'idle' ? '' : 'failed');
+        row.title = [r.plugin ? r.server + ' · ' + r.plugin : r.server, channelStatusText(r), r.error]
+            .filter(Boolean)
+            .join('\n');
+        row.onclick = function () {
+            var ch = state.channel;
+            if (r.status === 'connecting' || r.status === 'enabled') return;
+            if (r.status === 'unsupported') return toast(r.error || 'This Claude Code build has no channel support.');
+            if (!activeChannelId) return toast('No session yet — the channel starts with the session.');
+            send({ type: 'ccx:channelStart', channelId: activeChannelId, server: r.server });
+        };
+
+        var head = document.createElement('div');
+        head.className = 'ccx-prov-head';
+        var mark = document.createElement('span');
+        mark.className = 'ccx-prov-icon ccx-prov-icon-blank';
+        var name = document.createElement('span');
+        name.className = 'ccx-prov-name';
+        name.textContent = r.server;
+        var status = document.createElement('span');
+        status.className = 'ccx-prov-age';
+        status.textContent = channelStatusText(r);
+        head.appendChild(mark);
+        head.appendChild(name);
+        head.appendChild(status);
+        row.appendChild(head);
+        return row;
+    }
+
+    function channelStatusText(r) {
+        if (!state.channel || state.channel.supported === false) return 'unavailable';
+        return r.status === 'connecting'
+            ? 'starting…'
+            : r.status === 'enabled'
+              ? 'enabled'
+              : r.status === 'error'
+                ? 'failed'
+                : 'click to start';
     }
 
     // What the sign-in row says on its right: the state of the tokens on disk, as the host reads them.
@@ -496,6 +588,7 @@
             syncAction();
             syncChip();
             if (overlayKind === 'health') openHealth();
+            if (overlayKind === 'channels') openChannels();
             if (overlayKind === 'resources') openResources();
             decorateModelPicker();
             decorateSessionList();
