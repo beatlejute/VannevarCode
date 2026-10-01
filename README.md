@@ -46,8 +46,8 @@ another on DeepSeek, a third on your ChatGPT subscription.
   `cache.ttlMinutes` runs out; the second shows everything a `/compact` folded away when a session is
   reopened (a view only — the model's context is still the summary). Where the built-in countdown has
   nothing to count — it is drawn only for the tiers the Anthropic API reports — the declared lifetime
-  counts down in the composer footer in the same place and the same classes, marked `≈` because it is
-  an estimate from documentation rather than a measurement.
+  counts down in the composer footer in the same place, the same clock and the same classes, since the
+  number comes from documentation rather than from a measurement.
 - **Switching back to Anthropic keeps working.** An id minted by another provider is rejected by
   Anthropic with a `400`, forever, because it is re-read from the transcript on every relaunch. Spawns
   going to Anthropic have those ids dropped first; ids Anthropic itself issued are left alone.

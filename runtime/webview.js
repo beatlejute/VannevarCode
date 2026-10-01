@@ -2010,6 +2010,89 @@
         return left > 0 ? Math.max(1, Math.round(left / 60000)) : 0;
     }
 
+    // Where the app's own countdown lives, in the order of how exactly that is known: before one, if
+    // this session has one; otherwise where the app's own order puts it — the left end of the row,
+    // ahead of the model pill; failing that, after the menu button. The choice is re-made on every
+    // pass rather than taken once, because the composer renders its chips only when their state calls
+    // for them, and a pill placed at the first opportunity would spend the session at whichever end
+    // the row happened to have just then.
+    function placeCachePill(pill) {
+        var footer = document.querySelector('[class*="inputFooterV2_"]');
+        if (!footer) return;
+        // Our own pill wears the stock countdown's class — that is what puts it in the row's look —
+        // so the search for one has to skip the pill itself. Anchoring to itself is how the first
+        // version of this stayed exactly where it was first appended, at the end of the row.
+        var stock = null;
+        var found = footer.querySelectorAll ? footer.querySelectorAll('[class*="indicator_"]') : [];
+        for (var i = 0; i < found.length; i++)
+            if (found[i] !== pill) {
+                stock = found[i];
+                break;
+            }
+        if (stock && stock.parentElement) {
+            if (pill.nextSibling !== stock) stock.parentElement.insertBefore(pill, stock);
+            return noteCacheSlot('before-stock', footer);
+        }
+        // The app's own order in the composer puts the countdown before the agents pill and the model
+        // pill — the left end of the row, past the menu button. The model pill is the one of the two
+        // that is always there, which makes it the anchor; the menu button is the fallback for a build
+        // whose model pill lives in a row of its own.
+        var model = footer.querySelector('[class*="modelPill_"]');
+        if (model && model.parentElement) {
+            if (pill.nextSibling !== model) model.parentElement.insertBefore(pill, model);
+            return noteCacheSlot('before-model', footer);
+        }
+        var menu = footer.querySelector('[class*="menuButton_"]');
+        if (menu && menu.parentElement && menu.nextSibling !== pill) {
+            menu.parentElement.insertBefore(pill, menu.nextSibling);
+            return noteCacheSlot('after-menu', footer);
+        }
+        if (pill.parentElement !== footer) footer.appendChild(pill);
+        noteCacheSlot('footer-end', footer);
+    }
+
+    // Which slot was taken, and what the row actually held at the time. The class names are per-build
+    // and the composer's own markup is the only thing that says where a countdown belongs, so the
+    // answer to "it is in the wrong place" is the row the page is looking at, not the pattern it was
+    // looking for. Said once per stage, so a redrawing composer does not fill the log.
+    var cacheSlotNote = null;
+
+    function noteCacheSlot(stage, footer) {
+        if (cacheSlotNote === stage) return;
+        cacheSlotNote = stage;
+        try {
+            var kids = [];
+            for (var i = 0; i < footer.children.length && i < 10; i++) {
+                var child = footer.children[i];
+                kids.push(child.tagName + '.' + String(child.className || '').split(' ')[0]);
+            }
+            send({ type: 'ccx:cachePill', stage: stage, kids: kids.join(' ') });
+        } catch (e) {
+            /* a note that cannot be sent is not a missing countdown */
+        }
+    }
+
+    // The app's own clock, glyph for glyph: the same 20×20 path its countdown draws, `currentColor`
+    // so the row's own text colour reaches it. The data is copied rather than reached for, because
+    // the component lives inside the app's module and a rebuild can move it anywhere — a path is
+    // data, and data is the one thing a repack cannot rename.
+    var CACHE_CLOCK =
+        'M10 2.5C14.1421 2.5 17.5 5.85786 17.5 10C17.5 14.1421 14.1421 17.5 10 17.5C5.85786 17.5 2.5 14.1421 2.5 10C2.5 5.85786 5.85786 2.5 10 2.5ZM10 3.5C6.41015 3.5 3.5 6.41015 3.5 10C3.5 13.5899 6.41015 16.5 10 16.5C13.5899 16.5 16.5 13.5899 16.5 10C16.5 6.41015 13.5899 3.5 10 3.5ZM10 5C10.2761 5 10.5 5.22386 10.5 5.5V9.66895L13.6973 11.04L13.7852 11.0898C13.9763 11.2224 14.0552 11.4751 13.96 11.6973C13.8647 11.9193 13.6272 12.0372 13.3994 11.9902L13.3027 11.96L9.80273 10.46C9.61896 10.3811 9.5 10.2 9.5 10V5.5C9.5 5.22386 9.72386 5 10 5Z';
+
+    function cacheClock() {
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '20');
+        svg.setAttribute('height', '20');
+        svg.setAttribute('viewBox', '0 0 20 20');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', CACHE_CLOCK);
+        path.setAttribute('fill', 'currentColor');
+        svg.appendChild(path);
+        return svg;
+    }
+
     function decorateCachePill() {
         var left = cacheLeftMinutes();
         try {
@@ -2038,14 +2121,30 @@
                 ]
                     .filter(Boolean)
                     .join(' ');
-                var usage = footer.querySelector('[class*="usageButtonV2_"]');
-                if (usage && usage.parentElement) usage.parentElement.insertBefore(pill, usage.nextSibling);
-                else footer.appendChild(pill);
+                // The rest of the stock markup: a status role, the clock, and the number in a span of
+                // its own — the app puts `data-footer-fixed-width` there so a countdown that loses a
+                // digit does not shift the row, and the same holds for one that never had a tier.
+                pill.setAttribute('role', 'status');
+                pill.setAttribute('aria-live', 'off');
+                pill.setAttribute('data-cache-window', 'declared');
+                try {
+                    pill.appendChild(cacheClock());
+                } catch (e) {
+                    /* an icon that cannot be built is a countdown without a clock, not a missing one */
+                }
+                var number = document.createElement('span');
+                number.setAttribute('data-footer-fixed-width', '');
+                pill.__ccxNumber = pill.appendChild(number);
+                footer.appendChild(pill);
             }
-            pill.textContent = '≈' + left + 'm';
+            placeCachePill(pill);
+            // The number reads exactly like the app's own, and the qualification lives where it costs
+            // nothing to read: the tooltip. A visible "≈" would be one more thing in the row that the
+            // stock countdown does not have, which is the whole complaint a uniform row answers.
+            (pill.__ccxNumber || pill).textContent = left + 'm';
             pill.title =
-                'Prompt cache: ≈' + cacheInfo.ttlMinutes + ' min declared for "' + (cacheInfo.profile || 'this profile') + '"' +
-                (left ? ', about ' + left + ' min left' : ' — the declared window has passed') +
+                'Prompt cache: about ' + cacheInfo.ttlMinutes + ' min declared for "' + (cacheInfo.profile || 'this profile') + '"' +
+                (left ? ', roughly ' + left + ' min left' : ' — the declared window has passed') +
                 '. Declared in the profile from the provider\'s documentation, not measured: a hit proves the prefix was alive, not how long it lasts.';
         } catch (e) {
             /* a footer that cannot take the pill is a missing countdown, not a broken composer */

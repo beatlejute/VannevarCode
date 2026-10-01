@@ -214,6 +214,7 @@ const pageDocument = {
     body: new El('body'),
     head: new El('head'),
     createElement: (t) => new El(t),
+    createElementNS: (ns, t) => new El(t),
     querySelector: (sel) => pageDocument.body.querySelector(sel),
     querySelectorAll: () => [],
     addEventListener() {},
@@ -228,14 +229,15 @@ const timeouts = [];
 // something to find and the assertion can check where it landed.
 const modelPill = new El('span');
 modelPill.className = 'modelPill_gGYT1w';
-const usageChip = new El('span');
-usageChip.className = 'usageButtonV2_gGYT1w';
-const pillHost = new El('div');
-pillHost.appendChild(modelPill);
+const menuButton = new El('button');
+menuButton.className = 'menuButton_gGYT1w';
+const sendButton = new El('button');
+sendButton.className = 'sendButton_gGYT1w';
 const footer = new El('div');
 footer.className = 'inputFooterV2_gGYT1w';
-footer.appendChild(pillHost);
-footer.appendChild(usageChip);
+footer.appendChild(menuButton);
+footer.appendChild(modelPill);
+footer.appendChild(sendButton);
 pageDocument.body.appendChild(footer);
 const pageWindow = {
     document: pageDocument,
@@ -367,10 +369,11 @@ assert.ok(cachePill, 'a declared lifetime is drawn in the composer footer');
 assert.equal(cachePill.parentElement, footer, 'in the app\'s own footer row, not a badge of ours');
 assert.equal(
     footer.children.indexOf(cachePill),
-    footer.children.indexOf(usageChip) + 1,
-    'immediately after the usage chip, which is where the app draws its own countdown',
+    footer.children.indexOf(modelPill) - 1,
+    'immediately before the model pill, which is where the app draws its own countdown',
 );
-assert.match(cachePill.textContent, /^≈60m$/, 'the countdown reads as an estimate of the declared window');
+assert.equal(cachePill.children[0].tagName, 'svg', 'the app\'s own clock is drawn, not a glyph of ours');
+assert.match(cachePill.textContent, /^60m$/, 'the number reads exactly as the app\'s own countdown does');
 assert.match(cachePill.title, /not measured/, 'the tooltip says the number is documentation, not a measurement');
 assert.match(cachePill.title, /deepseek/, 'and names the profile the number came from');
 
@@ -380,7 +383,7 @@ assert.equal(pageDocument.body.querySelector('.ccx-cache-pill'), null, 'the meas
 fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 5, anchorAt: Date.now() });
 const shortPill = pageDocument.body.querySelector('.ccx-cache-pill');
 assert.ok(shortPill, 'a short declared lifetime is still worth counting down — the floor governs compaction, not the reading');
-assert.match(shortPill.textContent, /^≈5m$/, 'and the countdown reads off its own number');
+assert.match(shortPill.textContent, /^5m$/, 'and the countdown reads off its own number');
 
 console.log('OK — the page adds a switch of the app\'s own, compacts before the cache lapses, and counts a declared lifetime down');
 
