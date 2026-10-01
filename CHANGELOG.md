@@ -47,7 +47,16 @@ they actually typed, and the images and documents they attached, are marked.
 An attached image is drawn as itself: the row leads with the picture, wearing the composer chip's own
 thumbnail class, and its pixel size lands beside the name once the image has decoded — the same pair
 the chip shows. A document gets no thumbnail, having none in the composer either. The list is read
-entirely from the transcript the tab already holds — nothing is asked of the host to draw it. Every row opens what it names: an http(s) link through the OS, an absolute path in the
+entirely from the transcript the tab already holds — nothing is asked of the host to draw it.
+
+A row also goes back to where it came from: an arrow on it closes the dialog, scrolls the transcript
+to the message the resource first appeared in and marks that message for a moment, so a link pasted
+three turns up can be read in its context rather than only in the list. The message is found off the
+rendered node's own fiber — the walk the hidden-message marking already makes — and a session long
+enough that the app has not drawn that far back says so, rather than landing on the nearest message
+and calling it the one.
+
+Every row opens what it names: an http(s) link through the OS, an absolute path in the
 editor, and an attached image or document by being written to a file first, since a pasted screenshot
 exists in the transcript and nowhere else — the same attachment opened twice reuses its file. What
 cannot be opened is refused with the reason shown rather than guessed at: a relative path has no

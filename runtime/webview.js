@@ -2297,7 +2297,7 @@
         if (resourceMemo.stamp === stamp) return resourceMemo.rows;
 
         var rows = new Map();
-        function note(kind, key, label, value, full, source, you) {
+        function note(kind, key, label, value, full, source, you, uuid) {
             if (!key) return;
             var row = rows.get(key);
             if (!row) {
@@ -2310,6 +2310,10 @@
                     count: 0,
                     from: [],
                     you: false,
+                    // Where it first appeared, for the row's jump. The first sighting and not the last:
+                    // "where did this come from" is the question, and the rest are the same thing said
+                    // again.
+                    uuid: uuid || null,
                 };
                 rows.set(key, row);
             }
@@ -2321,13 +2325,13 @@
             if (you) row.you = true;
             if (source && row.from.indexOf(source) < 0) row.from.push(source);
         }
-        function noteUrls(text, kind, source, you) {
+        function noteUrls(text, kind, source, you, uuid) {
             if (typeof text !== 'string' || text.indexOf('http') < 0) return;
             RESOURCE_URL.lastIndex = 0;
             var m;
             while ((m = RESOURCE_URL.exec(text))) {
                 var url = trimUrl(m[0]);
-                if (url) note(kind, urlKey(url), url, url, url, source, you);
+                if (url) note(kind, urlKey(url), url, url, url, source, you, uuid);
             }
         }
 
@@ -2349,8 +2353,9 @@
             if (!m) continue;
             var you = userVoice(m);
             var mine = you ? 'in your message' : 'in a reply';
+            var uuid = typeof m.uuid === 'string' ? m.uuid : null;
             if (typeof m.content === 'string') {
-                noteUrls(m.content, 'link', mine, you);
+                noteUrls(m.content, 'link', mine, you, uuid);
                 continue;
             }
             if (!Array.isArray(m.content)) continue;
@@ -2358,14 +2363,14 @@
                 var raw = blockOf(m.content[j]);
                 if (!raw) continue;
                 if (raw.type === 'text') {
-                    noteUrls(raw.text, 'link', mine, you);
+                    noteUrls(raw.text, 'link', mine, you, uuid);
                     continue;
                 }
                 if (raw.type === 'image' || raw.type === 'document') {
                     var media = mediaEntry(raw.type, raw);
                     // An attachment is always the user's: the app has no other way to put one in a
                     // transcript, and a pasted screenshot is the clearest "this came from me" there is.
-                    note('media', media.key, media.label, media.label, media.label, 'attached by you', true);
+                    note('media', media.key, media.label, media.label, media.label, 'attached by you', true, uuid);
                     var mediaRow = rows.get(media.key);
                     if (mediaRow && !mediaRow.payload) mediaRow.payload = media.payload;
                     continue;
@@ -2373,15 +2378,15 @@
                 if (raw.type !== 'tool_use') continue;
                 var input = raw.input || {};
                 if (raw.name === 'WebFetch' && typeof input.url === 'string' && input.url.trim())
-                    note('tool', urlKey(input.url), trimUrl(input.url), input.url, input.url, 'fetched by WebFetch');
+                    note('tool', urlKey(input.url), trimUrl(input.url), input.url, input.url, 'fetched by WebFetch', false, uuid);
                 else if (raw.name === 'WebSearch') {
                     // A search result is on the call's own wrapper — the app attaches it there — so its
                     // links are read the way the agent map reads a delegated run's, not off a field.
                     var hit = callResult(m.content[j]);
-                    if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results');
+                    if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results', false, uuid);
                 }
                 var p = filePathOf(input);
-                if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'));
+                if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'), false, uuid);
             }
         }
 
@@ -2480,6 +2485,58 @@
         if (pill.parentElement !== footer) footer.appendChild(pill);
     }
 
+    // The DOM node for a message — the same walk applyHidden makes to mark one hidden: the two
+    // containers the transcript draws a turn in, and the message off each node's fiber. The app draws
+    // only the turns near the viewport, so a resource from far up a long session has no node at all,
+    // and the jump says so rather than scrolling somewhere else and calling it the message.
+    function messageNode(uuid) {
+        if (!uuid) return null;
+        var nodes = [];
+        try {
+            var assistant = document.querySelectorAll('[data-testid="assistant-message"]');
+            var user = document.querySelectorAll('[class*="userMessageContainer_"]');
+            var i;
+            if (assistant) for (i = 0; i < assistant.length; i++) nodes.push(assistant[i]);
+            if (user) for (i = 0; i < user.length; i++) nodes.push(user[i]);
+        } catch (e) {
+            return null;
+        }
+        for (var k = 0; k < nodes.length; k++) {
+            var msg = messagePropOf(nodes[k]);
+            if (msg && msg.uuid === uuid) return nodes[k];
+        }
+        return null;
+    }
+
+    // A highlight that fades on its own, so what the jump found is identifiable without leaving a mark
+    // on a node React owns and redraws. An attribute rather than a class for the reason
+    // `data-ccx-hidden` is one: the app rewrites className, and the stylesheet rule is written for it.
+    function flashMessage(node) {
+        try {
+            node.setAttribute('data-ccx-flash', '');
+            setTimeout(function () {
+                node.removeAttribute('data-ccx-flash');
+            }, 1600);
+        } catch (e) {
+            /* a node that cannot be marked was still scrolled to */
+        }
+    }
+
+    function jumpToResource(row) {
+        closePicker();
+        var node = messageNode(row.uuid);
+        if (!node) {
+            toast('That message is not in the part of the transcript the app has drawn — scroll back to it, then jump again.');
+            return;
+        }
+        try {
+            if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        } catch (e) {
+            /* an engine that refuses the options object still lands on the message */
+        }
+        flashMessage(node);
+    }
+
     function resourceRow(row) {
         var el = document.createElement('div');
         el.className = 'ccx-row ccx-res-row ccx-res-open';
@@ -2546,6 +2603,18 @@
             el.appendChild(youTag);
         }
         if (dims) el.appendChild(dims);
+
+        // The row's second affordance: the value opens the resource, the arrow goes to where it came
+        // from. Only one of them can be the row's own click, so this one stops the event.
+        var jump = document.createElement('span');
+        jump.className = 'ccx-res-jump';
+        jump.textContent = '↵';
+        jump.title = row.uuid ? 'Jump to the message this came from' : 'No message to jump to';
+        jump.onclick = function (e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            jumpToResource(row);
+        };
+        el.appendChild(jump);
 
         if (row.count > 1) {
             var badge = document.createElement('span');
@@ -3991,6 +4060,12 @@
         '.ccx-res-row .ccx-res-thumb{width:28px;height:28px}',
         '.ccx-res-dims{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums}',
         '.ccx-res-you{flex:0 0 auto;padding:0 4px;border-radius:6px;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.8;color:var(--vscode-badge-foreground, var(--vscode-foreground));background:var(--vscode-badge-background)}',
+        '.ccx-res-jump{flex:0 0 auto;padding:0 4px;border-radius:3px;font-size:11px;opacity:.45;cursor:pointer}',
+        '.ccx-res-jump:hover{opacity:1;background:var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2))}',
+        // What the jump found, for as long as it takes to look: the app's own find-match colour, fading
+        // out on its own so nothing has to be undone and no node keeps a mark of ours.
+        '[data-ccx-flash]{animation:ccx-res-flash 1.6s ease-out}',
+        '@keyframes ccx-res-flash{0%{background-color:var(--vscode-editor-findMatchHighlightBackground, rgba(255,204,0,.33))}100%{background-color:transparent}}',
         '.ccx-res-count{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums}',
         '.ccx-res-more{padding:2px 10px 6px;opacity:.45;font-size:10.5px}',
         '.ccx-res-empty{padding:10px;opacity:.55;font-size:12px}',

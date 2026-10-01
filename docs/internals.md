@@ -967,6 +967,17 @@ icon instead, and an `<img>` of a PDF is a broken image. The payload is kept out
 what the thumbnail and the click both need, and it is the only copy there is. The composer's *draft* chips are deliberately not a source — a draft is not
 part of the session, and counting it would make the number flicker while the user attaches.
 
+The row's other affordance stays on the page: an arrow that closes the dialog and scrolls the
+transcript to the message the resource came from. The node is found the way `applyHidden()` finds the
+one it is to hide — `[data-testid="assistant-message"]` and `[class*="userMessageContainer_"]`, with
+the message off each node's fiber through `messagePropOf()` — which is the same problem (a message, and
+the node that draws it) solved once in this file already. The uuid is the *first* sighting's, since
+"where did this come from" is the question and the later ones are the same thing said again. Two
+consequences are worth knowing: the transcript is virtualised, so a resource from far enough back has
+no node at all and the jump says so rather than scrolling to the nearest message; and the mark it
+leaves is an attribute whose animation fades, not a class, because `className` on those nodes belongs
+to React and is rewritten under us.
+
 Opening a row is the only thing that crosses to the host, being the one thing the page cannot do: a
 webview may navigate, but only the app frame. `ccx:openResource` carries a kind and a value, and the
 host answers `ccx:openResourceResult` echoing the `seq`, the pattern `ccx:searchContent` already uses.
