@@ -122,5 +122,19 @@ assert.equal(
 // No binding, no profile: the environment is passed through untouched, by identity.
 assert.strictEqual(envFor(ambient, 'sess-unknown'), ambient, 'unbound session must pass the environment through');
 
+// A stored default provider is what a new tab with no binding and no per-tab pick runs on — the
+// fallback below settings.json's own match. It is applied exactly like a binding, which means the
+// ambient Anthropic credentials are stripped from it too.
+writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'deepseek' }));
+const def = envFor(ambient, 'sess-never-bound');
+assert.equal(def.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic', 'default provider base URL not applied');
+assert.equal(def.ANTHROPIC_AUTH_TOKEN, 'sk-deepseek', 'default provider token not applied');
+assert.ok(!('ANTHROPIC_API_KEY' in def), 'default provider inherited an ambient Anthropic key');
+// A session binding still outranks the default.
+assert.equal(envFor(ambient, 'sess-second').ANTHROPIC_AUTH_TOKEN, 'sk-ant-second', 'a session binding must outrank the default provider');
+// A default that names a profile nobody has any more is dropped, and the environment passes through.
+writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'gone' }));
+assert.strictEqual(envFor(ambient, 'sess-other'), ambient, 'a stale default must not be applied');
+
 rmSync(home, { recursive: true, force: true });
 console.log('\nOK — credentials do not cross a provider change');

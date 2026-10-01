@@ -13,6 +13,7 @@ const PROFILES_DIR = path.join(HOME, '.claude', 'profiles');
 const SETTINGS_FILE = path.join(HOME, '.claude', 'settings.json');
 const ICONS_DIR = path.join(DIR, 'icons');
 const BINDINGS_FILE = path.join(DIR, 'bindings.json');
+const DEFAULT_PROFILE_FILE = path.join(DIR, 'default-profile.json');
 const HIDDEN_FILE = path.join(DIR, 'hidden-messages.json');
 const PINNED_FILE = path.join(DIR, 'pinned.json');
 const HEALTH_FILE = path.join(DIR, 'agent-health.json');
@@ -85,6 +86,7 @@ const S = (globalThis.__ccxState ||= {
     panels: new Map(),
     settingsWatcher: null,
     bindingsWatcher: null,
+    defaultWatcher: null,
     profilesWatcher: null,
     extensionsWatcher: null,
     repatching: false,
@@ -355,9 +357,23 @@ function profileFromSettings() {
     return null;
 }
 
+// The default provider is the profile a new tab runs on when nothing else — a per-tab pick or a
+// session binding — has said otherwise. It lives in Vannevar's own directory rather than settings.json,
+// which this extension never writes. A name that no longer matches a profile is dropped, so deleting a
+// profile file also clears the default that pointed at it.
+function loadDefaultProfile() {
+    const raw = readJson(DEFAULT_PROFILE_FILE);
+    const name = raw && typeof raw.name === 'string' ? raw.name : null;
+    return name && listProfiles().includes(name) ? name : null;
+}
+
+function saveDefaultProfile(name) {
+    writeJson(DEFAULT_PROFILE_FILE, name && listProfiles().includes(name) ? { name } : {});
+}
+
 function effectiveProfile(sessionId, webview) {
     if (webview && S.profileByWebview.has(webview)) return S.profileByWebview.get(webview);
-    return getBinding(sessionId) || profileFromSettings();
+    return getBinding(sessionId) || loadDefaultProfile() || profileFromSettings();
 }
 
 function managedKeys() {
@@ -956,7 +972,7 @@ function envFor(baseEnv, resumeSessionId, opts) {
         opts.resume = undefined;
         resumeSessionId = undefined;
     }
-    const profile = S.pendingProfile || getBinding(resumeSessionId);
+    const profile = S.pendingProfile || getBinding(resumeSessionId) || loadDefaultProfile();
     // Ahead of the early return, because a tab with no profile at all is the plainest way back to
     // Anthropic — and the one that would otherwise keep failing with nothing in the log to explain it.
     if (resumeSessionId && targetsAnthropic(profile, baseEnv)) stripForeignMessageIds(resumeSessionId);
@@ -1304,6 +1320,8 @@ function stateFor(sessionId, webview) {
         // models exactly as before; it is only not repeated to the page.
         sessionId: (webview && webview.__ccxSessionWeak ? null : sessionId) || null,
         active,
+        // The profile new tabs fall back to, for the picker's default marker
+        defaultProfile: loadDefaultProfile(),
         // The history list resolves each row's provider from here
         bindings: loadBindings(),
         attachmentPrompts: attachmentPrompts(),
@@ -1512,7 +1530,9 @@ function post(webview, message) {
 // profile that matches settings.json now — for an untouched install that is the Anthropic subscription and
 // the stock mark. Where settings.json points somewhere no profile describes, we genuinely do not know.
 function fallbackIcon(icons) {
-    const name = profileFromSettings();
+    // A session with no binding of its own ran on the default provider now that one is set, so the row
+    // shows that mark; without one it falls back to the profile settings.json points at, as before.
+    const name = loadDefaultProfile() || profileFromSettings();
     if (name) return icons[name] ? { name, uri: icons[name] } : null;
     if (currentEnv().ANTHROPIC_BASE_URL) return null;
     const uri = iconDataUri(defaultIcon());
@@ -1776,6 +1796,7 @@ function ensureWatchers() {
     }
     if (!S.settingsWatcher) S.settingsWatcher = watchFile(SETTINGS_FILE, broadcast);
     if (!S.bindingsWatcher) S.bindingsWatcher = watchFile(BINDINGS_FILE, broadcast);
+    if (!S.defaultWatcher) S.defaultWatcher = watchFile(DEFAULT_PROFILE_FILE, broadcast);
     if (!S.profilesWatcher) S.profilesWatcher = watchDir(PROFILES_DIR, broadcast);
     // Written by a different process — the MCP server, from whichever run happens to probe next — so
     // the panel only ever learns a provider went down by watching the file it lands in.
@@ -1881,7 +1902,13 @@ function attachWebview(webview) {
             if (m.resume) webview.__ccxSessionId = m.resume;
             S.pendingProfile = S.profileByWebview.get(webview) || getBinding(m.resume) || null;
             dlog('launch_claude', { channelId: m.channelId, resume: m.resume || null, profile: S.pendingProfile });
+            // A default provider routes through the same local adapter as a picked one, so its proxy has
+            // to be up before the first request; envFor will resolve to it the same way.
             if (S.pendingProfile) ensureProxy(S.pendingProfile);
+            else {
+                const def = loadDefaultProfile();
+                if (def) ensureProxy(def);
+            }
             return;
         }
         // Launch is not the only moment the adapter has to be up. It is a detached process, so it can
@@ -1991,6 +2018,12 @@ function attachWebview(webview) {
             setHistoryBeforeCompaction(m.enabled);
             dlog('history before compaction', { enabled: Boolean(m.enabled) });
             // One switch for every tab: each of them draws it in its own menu.
+            broadcast();
+        } else if (m.type === 'ccx:setDefault') {
+            const name = m.name || null;
+            saveDefaultProfile(name);
+            if (name) warnSettingsOverride(name);
+            // Every tab's picker draws the same default marker, so all of them have to be told.
             broadcast();
         } else if (m.type === 'ccx:openProfile') {
             openProfileFile(m.name);
