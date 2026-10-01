@@ -7,5 +7,6 @@
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gpt-5.2-mini",
         "ANTHROPIC_DEFAULT_FABLE_MODEL": "gpt-5.2",
         "API_TIMEOUT_MS": "3000000"
-    }
+    },
+    "cache": { "ttlMinutes": 60, "source": "documented" }
 }

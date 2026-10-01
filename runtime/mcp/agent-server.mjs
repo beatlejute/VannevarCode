@@ -136,6 +136,21 @@ function profilePricing(name) {
     return p && typeof p.pricing === 'object' && p.pricing ? p.pricing : null;
 }
 
+// How long the upstream keeps this profile's prompt prefix alive. Optional, Vannevar-only, and
+// *declared* rather than measured: no provider returns a lifetime in a response, so the number is
+// the operator's reading of that provider's documentation — OpenAI's five-to-ten minutes that are
+// always gone within the hour, Google's one-hour default, whatever DeepSeek means by "hours to days".
+// It is what a non-Anthropic session has instead of the cache_creation split the Anthropic API
+// reports, and the only thing it is used for is compacting before the prefix lapses.
+//   "cache": { "ttlMinutes": 60, "source": "documented" }
+function profileCache(name) {
+    const p = readProfile(name);
+    const c = p && p.cache;
+    const ttl = c && Number(c.ttlMinutes);
+    if (!Number.isFinite(ttl) || ttl <= 0) return null;
+    return { ttlMinutes: ttl, source: c.source === 'documented' ? 'documented' : 'declared' };
+}
+
 // Every key any profile declares. A key nobody declares is a key nobody deletes, which is how a
 // leftover from the parent session would ride along to another provider.
 function managedKeys() {
@@ -1045,7 +1060,11 @@ function describeProfile(name, now = Date.now(), health = readJson(HEALTH_FILE) 
         .map(([k, v]) => `${k}=${v}`)
         .join(', ');
     const status = describeHealth(name, now, health);
-    return `${name} — ${endpoint}${mapped ? ` — ${mapped}` : ''}${status ? `\n    ${status}` : ''}`;
+    const cache = profileCache(name);
+    // The word beside it is the whole point: a declared lifetime is an estimate from documentation,
+    // and printing it as a bare number would make it read like something this server had measured.
+    const declared = cache ? `prefix cache ~${cache.ttlMinutes}m (${cache.source})` : '';
+    return `${name} — ${endpoint}${mapped ? ` — ${mapped}` : ''}${status ? `\n    ${status}` : ''}${declared ? `\n    ${declared}` : ''}`;
 }
 
 // ----------------------------------------------------------------------------------- delegation
@@ -1377,7 +1396,7 @@ const TOOLS = [
     {
         name: 'list_profiles',
         description:
-            'List the provider profiles a delegated agent can run under: name, endpoint, the model each family alias maps to, and how the provider answered the last time it was called — including when a spent quota resets. Call this before run_agent when unsure which profile names exist, or when one has been refusing.',
+            'List the provider profiles a delegated agent can run under: name, endpoint, the model each family alias maps to, the prefix cache lifetime it declares, and how the provider answered the last time it was called — including when a spent quota resets. Call this before run_agent when unsure which profile names exist, or when one has been refusing.',
         inputSchema: {
             type: 'object',
             properties: {
