@@ -2,7 +2,8 @@
 // of them, so it never appeared there. Three pieces put it there, and each is checked here:
 //
 //   1. the MCP server records what the map needs — whose session started the run, a short label,
-//      foreground or background — and ends a run when the map asks it to;
+//      foreground or background — ends a run when the map asks it to, and closes its own when the
+//      session that started it goes away;
 //   2. host.js adds what only the run's transcript knows (the model that answered, the context, the
 //      tool count), hands the transcript over for "Open transcript", and turns "Stop agent" into a
 //      request the server picks up;
@@ -34,7 +35,7 @@ process.env.VANNEVAR_PROFILES_DIR = profiles;
 process.env.VANNEVAR_RUNTIME_DIR = runtime;
 process.env.CLAUDE_CODE_SESSION_ID = '99999999-1111-2222-3333-444444444444';
 
-const { prepare, execute, TOOLS } = await import('../runtime/mcp/agent-server.mjs');
+const { prepare, execute, abandonRuns, TOOLS } = await import('../runtime/mcp/agent-server.mjs');
 
 const require = createRequire(import.meta.url);
 const Module = require('node:module');
@@ -93,6 +94,32 @@ assert.equal(task.stopped, true, 'a background task is marked stopped, as stop_a
 assert.equal(manifestOf(ctx.liveSession).state, 'stopped', 'and the manifest says so, which is what the map then shows');
 assert.ok(!existsSync(join(runsDir, `${ctx.liveSession}.stop`)), 'the request is consumed, so a resumed run is not stopped by it');
 assert.equal(requestAgentStop(ctx.liveSession).ok, false, 'a run that has ended cannot be asked again');
+
+// --- 1b. a run the session walked away from -----------------------------------------------------
+//
+// A window reload closes the tab's CLI, the pipe under this server goes with it, and the children
+// are killed — the ordinary end of a server, not an edge. The manifest has to be closed with them:
+// it is all the map has, and a manifest left `running` is a row that reads "working" for the rest of
+// its two-hour life, with a "Stop agent" that writes a request into a file nothing will ever read.
+
+const walkaway = await prepare({ profile: 'claude', prompt: 'outlive the session', description: 'Abandoned', background: true });
+walkaway.bin = process.execPath;
+walkaway.args = ['-e', 'setTimeout(() => {}, 60000)'];
+const walkawayTask = { stopped: false, child: null };
+const walkawaySettled = execute(walkaway, walkawayTask).then(
+    () => null,
+    (e) => e,
+);
+assert.equal(manifestOf(walkaway.liveSession).state, 'running', 'the run is going while the session is');
+
+abandonRuns();
+assert.equal(manifestOf(walkaway.liveSession).state, 'stopped', 'a run the session left behind is closed, not left running');
+assert.equal(requestAgentStop(walkaway.liveSession).ok, false, 'so the map cannot go on asking it to stop');
+
+const walked = await Promise.race([walkawaySettled, new Promise((r) => setTimeout(() => r('timeout'), 15000))]);
+assert.notEqual(walked, 'timeout', 'the killed child still brings the run back');
+assert.match(String(walked && walked.message), /the session that asked for it ended/, 'and the end it reports is the one that happened');
+assert.equal(manifestOf(walkaway.liveSession).state, 'stopped', 'which does not write a failure over the manifest');
 
 // --- 2. what the host adds from the transcript --------------------------------------------------
 

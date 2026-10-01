@@ -1287,3 +1287,26 @@ The same turn sent straight to the API, one function call in the current step: n
 `claude.exe` is a bun standalone executable (319,026,336 bytes): `/$bunfs/root/` and `B:/~BUN/root/` markers, the `---- Bun! ----` trailer at offset 319,015,421, followed by ~10 KB of Authenticode signature. The CLI's JS bundle sits there **in the clear**: a contiguous UTF-8 region at `283,720,669..310,250,408` (25.30 MB) starting with `// @bun @bytecode @bun-cjs (function(exports, require, module, …)`. Two much smaller bundles of the same shape follow it at `310,250,441` and `310,252,643` — the loaders for `image-processor.node` and `audio-capture.node`.
 
 Offsets move on every release; locating the region by scanning forward from the `// @bun @bytecode @bun-cjs` marker while the bytes stay valid UTF-8 text is what actually survives an update.
+### A run's manifest is the map's only source, so it has to be closed by whoever opened it
+
+`~/.claude/vannevar/agent-runs/<session>.json` is written by the MCP server before it spawns the CLI and
+is the only thing that tells the extension host a run exists: `session`, `owner` (the CLI's session id,
+which is how a tab claims a run no call of its own explains), `description`, `background`, `profile`,
+`model`, `state`, `startedAt`, `finishedAt`. The host reads the directory, adds what only the transcript
+knows and forwards the lot to the page, which turns each into an entry of the agent map. `state` is
+`running` until the run ends, and the entry's status вЂ” the word on the card, whether the row is counted
+as working, whether **Stop agent** is drawn at all вЂ” comes from it.
+
+That makes the manifest the whole of what the page knows, and a manifest left `running` is not a stale
+detail but a live-looking run: the row sits in the dialog with a working clock, and **Stop agent** on it
+reaches `requestAgentStop`, which checks the manifest, finds `running`, writes `<session>.stop` beside it
+and answers `ok`. Nothing else happens, because the only thing that ever reads a stop request is the
+server that owns the child, and that server is gone.
+
+The server is gone because it exits when its client closes the pipe вЂ” a window reload, a session that
+ended вЂ” and the exit path used to kill the children and stop there. `abandonRuns` now closes every
+manifest the process still has open (`stopped`, with the ids remembered so `execute` does not write a
+failure over it when the killed child breaks its own answer) before `main` exits. What it cannot cover
+is a server killed outright, where no code runs at all: for that there is only the sweep, which drops
+manifests older than two hours on the next run a server opens.
+

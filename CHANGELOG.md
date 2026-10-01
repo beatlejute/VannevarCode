@@ -235,3 +235,12 @@ date by VS Code.
   extension update.
 - A Claude Code update that lands together with a Vannevar Code update now refreshes the runtime from
   the newer extension folder before patching, so it takes one reload instead of two.
+A run whose session ends no longer leaves a row that says "working" for the rest of the day. The MCP
+server closes the manifest of every run it still has open when its client closes the pipe вЂ” the ordinary
+end of a server, a window reload included вЂ” where it used to kill the children and exit with the
+manifests still saying `running`. The agent map is drawn from those manifests, so a run left that way is
+indistinguishable from a live one: the row sits in the dialog, and **Stop agent** on it writes a request
+into a file no process will ever poll вЂ” the host has nothing to go on but the manifest, and the manifest
+says running. Closing them is what makes that button honest again on a run that has already ended, and
+what stops a dead run from being counted among the working ones.
+
