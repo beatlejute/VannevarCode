@@ -171,6 +171,20 @@
                 'Settings',
                 startChatgptLogin
             );
+            // Beside it, and for the same reason: the other row that wires this session to something
+            // outside the editor. Start-only — the CLI has no control request that turns a channel off
+            // again, so a new session is the way back, and the row says so when it is already running.
+            registry.registerAction(
+                {
+                    id: 'ccx-channel',
+                    label: 'Telegram channel',
+                    description:
+                        'Start the Telegram channel (plugin:telegram@claude-plugins-official) in this session',
+                    trailingComponent: channelTag(),
+                },
+                'Settings',
+                startChannel
+            );
             registry.registerAction(
                 {
                     id: 'ccx-full-history',
@@ -185,6 +199,41 @@
         } catch (e) {
             console.warn('ccx: registerAction failed', e);
         }
+    }
+
+    // The plugin channel, started from the row rather than by a launch flag — the same shape as Remote
+    // Control, whose connection is opened by a control request on a session that is already running.
+    // One row, because there is one channel: a second one would make this a list.
+    function startChannel() {
+        var ch = state.channel;
+        if (ch && ch.status === 'connecting') return;
+        if (ch && ch.status === 'enabled') {
+            toast('The Telegram channel is already running in this session.');
+            return;
+        }
+        if (ch && ch.status === 'unsupported') {
+            toast(ch.error || 'This Claude Code build has no channel support.');
+            return;
+        }
+        if (!activeChannelId) return toast('No session yet — the channel starts with the session.');
+        send({ type: 'ccx:channelStart', channelId: activeChannelId });
+    }
+
+    // What the row says on its right. "enabled" rather than "connected": the host's answer means the
+    // CLI took the control request, and nothing here can see whether the bridge behind it is up.
+    function channelTag() {
+        if (!jsx || !state.channel) return undefined;
+        var ch = state.channel;
+        var text = ch.status === 'connecting'
+            ? 'starting…'
+            : ch.status === 'enabled'
+              ? 'enabled'
+              : ch.status === 'error'
+                ? 'failed'
+                : ch.status === 'unsupported'
+                  ? 'unavailable'
+                  : undefined;
+        return text ? jsx('span', { className: 'ccx-prov-tag', children: text, title: ch.error || undefined }) : undefined;
     }
 
     // What the sign-in row says on its right: the state of the tokens on disk, as the host reads them.
@@ -421,6 +470,7 @@
                 // sends and this list does not name is dropped on the next push.
                 historyBeforeCompaction: d.historyBeforeCompaction === true,
                 chatgpt: d.chatgpt || null,
+                channel: d.channel || null,
             };
             rememberHistoryBeforeCompaction(state.historyBeforeCompaction);
             adoptAttachmentPrompts(d.attachmentPrompts);
