@@ -9,3 +9,6 @@ assets/
 # ...except the extension's own icon, which is drawn by scripts/make-icon.mjs and has to ship
 *.png
 !images/icon.png
+
+#ai
+.kilo/

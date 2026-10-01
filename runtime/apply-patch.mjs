@@ -377,6 +377,51 @@ const PATCHES = [
             ),
         where: 'replace',
     },
+    // --- Working without a Claude.ai or Console account ------------------------------------------
+    //
+    // Claude Code's webview refuses to draw the session view until it believes an Anthropic account is
+    // signed in, which blocks a Vannevar profile (DeepSeek, OpenAI, Gemini, …) exactly when it is the
+    // only provider the user has. The gate is one memo — isAuthenticated — and the two patches below
+    // let a page-level flag stand in for the account: the sign-in screen gains a button that opts out,
+    // and the memo honours it once the page has opted out.
+    {
+        // The third login button's own note is the anchor: it is user-facing text rather than a
+        // minified name, so it survives the renames that move every enclosing local. The button is
+        // appended as a sibling in the same children array — no fragment — so the jsx factory and the
+        // CSS-module object come out of the match. Its click persists the choice in localStorage and
+        // reloads, which is what makes the restored flag (see runtime/webview.js) reach the memo before
+        // the app renders; no state plumbing through the login component is needed.
+        file: 'webview/index.js',
+        find: /([\w$]+)\("p",\{className:([\w$]+)\.noteBeneathButton,children:"Instructions on how to use API keys or third-party providers\."\}\)/,
+        replace: (found, jsx, cls) =>
+            found +
+            `,${jsx}("button",{className:${cls}.fullWidthButton,onClick:()=>{` +
+            `try{localStorage.setItem("ccx:skipAnthropicLogin","1")}catch(__e){}` +
+            `globalThis.__ccxNoAuth=!0,location.reload()},children:"Use without Anthropic login"}),` +
+            `${jsx}("p",{className:${cls}.noteBeneathButton,` +
+            `children:"Work with your configured API profiles - no Claude.ai or Console account needed."})`,
+        where: 'replace',
+    },
+    {
+        // The gate itself. The flag is read in front of the account check, so an opted-out page never
+        // has to have a token, an authStatus or a session view; the stock expression is kept as the
+        // fallback behind the ||, so a page that never opted out is byte-for-byte the old behaviour.
+        file: 'webview/index.js',
+        find: /([\w$]+)=([\w$]+)\(\(\)=>!this\.forceLogin\.value&&this\.hasSessionView\.value\)/,
+        replace: (_found, name, memo) =>
+            `${name}=${memo}(()=>!!globalThis.__ccxNoAuth||!this.forceLogin.value&&this.hasSessionView.value)`,
+        where: 'replace',
+    },
+    {
+        // Last, the reflex: a failed request reports authentication_failed and the app calls showLogin()
+        // to put the sign-in screen back up over a session that is perfectly usable on another provider.
+        // An opted-out page leaves that call inert, so the profile keeps working instead of being
+        // interrupted by a prompt it has already answered.
+        file: 'webview/index.js',
+        find: /showLogin\(\)\{this\.forceLogin\.value=!0\}/,
+        replace: 'showLogin(){globalThis.__ccxNoAuth||(this.forceLogin.value=!0)}',
+        where: 'replace',
+    },
 ];
 
 // Things the injected code drives without patching them. Losing one is not an error — Vannevar
