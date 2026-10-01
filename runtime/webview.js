@@ -1,6 +1,17 @@
 (function () {
     if (window.__ccx) return;
 
+    // A page-level opt-out of the Claude.ai / Console login gate. The patched sign-in screen writes this
+    // key and reloads the page; the guarded isAuthenticated memo reads the flag this restores, and this
+    // script runs before the app module does, so a reload comes up on the session view instead of the
+    // login screen. Kept here rather than in the app bundle because the host script is the one thing
+    // that always runs first.
+    try {
+        if (window.localStorage.getItem('ccx:skipAnthropicLogin') === '1') globalThis.__ccxNoAuth = true;
+    } catch (e) {
+        /* storage unavailable: the gate simply stays as stock */
+    }
+
     var api = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
     var rawPost = api ? api.postMessage.bind(api) : function () {};
 

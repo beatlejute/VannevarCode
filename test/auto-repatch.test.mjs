@@ -253,6 +253,35 @@ try {
         assert.match(refusedOrphan.text, /already patched and has no/, `unexpected failure:\n${refusedOrphan.text}`);
         assert.ok(!existsSync(path.join(orphan, 'extension.js.ccx-orig')), 'a patched file was saved as the backup');
         console.log('OK — a foreign patch with no backup stops the patcher instead of becoming the backup');
+
+        // --- working with no Claude.ai or Console account ---------------------------------------------
+        // A profile-only install has no Anthropic account, and the webview refuses to draw the session
+        // view until it believes one is signed in — which is exactly the install a Vannevar profile is
+        // the only provider for. The sign-in screen gains an opt-out button, the auth memo honours the
+        // flag it sets, and a failed request no longer forces the screen back up. All three have to
+        // survive the round trip through the real bundle rather than merely match by inspection.
+        const login = fixture('anthropic.claude-code-9.9.7-login', source);
+        const optedOut = run(PATCHER, [`--dir=${login}`, '--if-needed']);
+        assert.equal(optedOut.code, 0, `the login opt-out did not apply:\n${optedOut.text.slice(-1500)}`);
+        const patchedWebview = readFileSync(path.join(login, 'webview', 'index.js'), 'utf8');
+        assert.ok(patchedWebview.includes('Use without Anthropic login'), 'the login screen gained no opt-out button');
+        assert.ok(patchedWebview.includes('ccx:skipAnthropicLogin'), 'the opt-out does not persist the choice');
+        assert.match(
+            patchedWebview,
+            /isAuthenticated=[\w$]+\(\(\)=>!!globalThis\.__ccxNoAuth\|\|/,
+            'the auth gate ignores the opt-out flag',
+        );
+        assert.match(
+            patchedWebview,
+            /showLogin\(\)\{globalThis\.__ccxNoAuth\|\|/,
+            'a failed request still forces the login screen back up',
+        );
+        const runtimeWebview = readFileSync(path.join(ROOT, 'runtime', 'webview.js'), 'utf8');
+        assert.ok(
+            runtimeWebview.includes('ccx:skipAnthropicLogin'),
+            'the page does not restore the opt-out before the app module renders',
+        );
+        console.log('OK — the login screen offers an opt-out and the auth gate honours it');
     }
 
     // --- the stamp is where the patcher reads itself --------------------------------------------
