@@ -477,8 +477,9 @@
             // measurement — the page labels it where it is used and nowhere pretends to know more.
             if (d.ttl === '1h' && typeof d.anchorAt === 'number') cacheInfo = { ttl: '1h', anchorAt: d.anchorAt };
             else if (d.ttl === 'declared' && typeof d.anchorAt === 'number' && Number(d.ttlMinutes) > 0)
-                cacheInfo = { ttl: 'declared', ttlMinutes: Number(d.ttlMinutes), anchorAt: d.anchorAt };
+                cacheInfo = { ttl: 'declared', ttlMinutes: Number(d.ttlMinutes), profile: d.profile || '', anchorAt: d.anchorAt };
             else cacheInfo = null;
+            decorateCachePill();
             if (autocompactPref()) scheduleAutocompact();
             else cancelAutocompact();
         } else if (d.type === 'ccx:agentRuns') {
@@ -1450,6 +1451,20 @@
         return undefined;
     }
 
+    // The agent map's row meta is the run's duration and its tokens — `5m 1s · 77.9k tokens` — and two
+    // runs of the same length are told apart by when they happened, not by how long they took. The row
+    // the app draws asks for the call's own clock time through this (see the meta-line hook in
+    // runtime/apply-patch.mjs), and an entry with no start time gets nothing.
+    //
+    // Hours and minutes, zero-padded, in the machine's own zone. A locale-aware format would put an
+    // am/pm or a leading zero wherever the locale says, which is not what a column of times wants.
+    function callTime(startTime) {
+        var ms = Number(startTime);
+        if (!Number.isFinite(ms) || ms <= 0) return undefined;
+        var at = new Date(ms);
+        return ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
+    }
+
     function runEntry(run, taskId, toolUseId, parentToolUseId) {
         var status = mapStatus(run.state);
         var endTime = status === 'working' ? undefined : run.finishedAt || undefined;
@@ -1948,6 +1963,58 @@
         }
     }
 
+    // --- The declared lifetime, drawn where the app's own indicator would be --------------------
+    //
+    // The app draws a countdown for the Anthropic tiers and nothing at all for a backend whose answer
+    // carries no cache_creation split. This fills that silence: the declared lifetime counts down
+    // beside the model pill in the composer, marked "≈" and never shown without its source in the
+    // tooltip, because the number is documentation rather than something anyone measured. Only the
+    // declared kind is drawn — a measured 1h tier already has the app's own indicator, and two
+    // countdowns for one cache would disagree with each other.
+    //
+    // The composer is React's and re-renders freely, so the pill is re-inserted by the same debounced
+    // pass that decorates everything else, and a build whose footer or model pill cannot be found
+    // draws nothing rather than a pill adrift in the layout.
+    var cacheInterval = null;
+
+    function cacheLeftMinutes() {
+        if (!cacheInfo || cacheInfo.ttl !== 'declared') return null;
+        var left = cacheInfo.anchorAt + cacheInfo.ttlMinutes * 60000 - Date.now();
+        return left > 0 ? Math.max(1, Math.round(left / 60000)) : 0;
+    }
+
+    function decorateCachePill() {
+        var left = cacheLeftMinutes();
+        try {
+            var pill = document.querySelector('.ccx-cache-pill');
+            if (left == null) {
+                if (pill) pill.remove();
+                if (cacheInterval) {
+                    clearInterval(cacheInterval);
+                    cacheInterval = null;
+                }
+                return;
+            }
+            if (!pill) {
+                var footer = document.querySelector('[class*="inputFooterV2_"]');
+                if (!footer) return;
+                pill = document.createElement('span');
+                pill.className = 'ccx-cache-pill';
+                var model = footer.querySelector('[class*="modelPill_"]');
+                if (model && model.parentElement) model.parentElement.insertBefore(pill, model.nextSibling);
+                else footer.appendChild(pill);
+            }
+            pill.textContent = '≈' + left + 'm';
+            pill.title =
+                'Prompt cache: ≈' + cacheInfo.ttlMinutes + ' min declared for "' + (cacheInfo.profile || 'this profile') + '"' +
+                (left ? ', about ' + left + ' min left' : ' — the declared window has passed') +
+                '. Declared in the profile from the provider\'s documentation, not measured: a hit proves the prefix was alive, not how long it lasts.';
+        } catch (e) {
+            /* a footer that cannot take the pill is a missing countdown, not a broken composer */
+        }
+        if (!cacheInterval) cacheInterval = setInterval(decorateCachePill, 30000);
+    }
+
     // --- History before compaction --------------------------------------------------------------
     //
     // The switch lives on the host (full-history.json), because the host is what rebuilds a transcript
@@ -2135,6 +2202,7 @@
                 watchComposerSpellcheck();
                 syncAttachmentPrompt();
                 syncResumePrompt();
+                decorateCachePill();
             }, 60);
         }).observe(document.body, { childList: true, subtree: true });
         watchRunningFrames();
@@ -3254,6 +3322,7 @@
         retract: retractLastMessage,
         keepEveryMessage: keepEveryMessage,
         beforeCompaction: beforeCompaction,
+        callTime: callTime,
     };
 
     // styles
@@ -3274,6 +3343,7 @@
         '.ccx-side-link{margin-left:auto;align-self:center;cursor:pointer;font-family:var(--vscode-font-family)}',
         '.ccx-side-link:hover{opacity:1}',
         '.ccx-model-tag{margin-left:6px;opacity:.55;font-size:10px;font-family:var(--vscode-editor-font-family, monospace)}',
+        '.ccx-cache-pill{margin-left:6px;opacity:.55;font-size:10px;font-variant-numeric:tabular-nums;cursor:default}',
         // The provider rows sit inside a React-owned panel, so every colour here is a VS Code theme
         // variable with a literal fallback: the section has to read as part of the panel in whatever
         // theme is loaded, and no stock class is borrowed except the two copied off the panel itself.

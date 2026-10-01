@@ -8,7 +8,9 @@
 //      request the server picks up;
 //   3. the page writes the runs into the session's `agentMapAgents` Map — beside the app's own
 //      entries, put back when the app rewrites the Map, never written twice for nothing — and routes
-//      the card's two buttons for its own ids to the host instead of the CLI.
+//      the card's two buttons for its own ids to the host instead of the CLI;
+//   4. the row the app draws leads with the time the run was called, in front of the duration and the
+//      token count it already showed.
 //
 //   node test/agent-map.test.mjs
 
@@ -421,4 +423,24 @@ pageContext.window.__ccx.onRegistry(null, null, bare);
 fromHost({ type: 'ccx:agentRuns', runs: [liveRun] });
 assert.deepStrictEqual(Object.keys(bare), ['messages', 'sessionId'], 'nothing is added to a session that has no map');
 
-console.log('OK — delegated runs sit in the agent map beside the app’s own, and its buttons reach them');
+// --- 4. the time the run was called, in front of the duration and the tokens ----------------------
+
+// The app's own row meta — `5m 1s · 77.9k tokens` — says nothing about when the run happened, and two
+// runs of the same length read alike without it. The page formats the time; the patch splices it into
+// the stock array as the first element, where the stock filter already drops anything undefined.
+const called = new Date(2026, 9, 1, 9, 5, 30).getTime();
+assert.equal(pageWindow.__ccx.callTime(called), '09:05', 'the clock time is zero-padded, 24-hour, in the machine’s zone');
+assert.equal(pageWindow.__ccx.callTime(new Date(2026, 9, 1, 14, 0).getTime()), '14:00', 'a whole hour still shows its minutes');
+assert.equal(pageWindow.__ccx.callTime(undefined), undefined, 'a run with no start time contributes nothing to the line');
+assert.equal(pageWindow.__ccx.callTime(0), undefined);
+assert.equal(pageWindow.__ccx.callTime('yesterday'), undefined, 'and anything that is not a timestamp is ignored');
+
+const patcher = readFileSync(new URL('../runtime/apply-patch.mjs', import.meta.url), 'utf8');
+assert.ok(/callTime: callTime/.test(readFileSync(new URL('../runtime/webview.js', import.meta.url), 'utf8')), 'window.__ccx must expose it');
+assert.ok(/callTime\(\$\{agent\}\.startTime\)/.test(patcher), 'the stock row must ask for the time it was called with');
+assert.ok(
+    /return\[__ccxAt,/.test(patcher),
+    'and it must lead the array, so the line reads time · duration · tokens',
+);
+
+console.log('OK — delegated runs sit in the agent map beside the app’s own, its rows say when they were called, and its buttons reach them');

@@ -15,7 +15,9 @@ expires** counts down against there, where an Anthropic session counts down agai
 documentation or an operator's reading — and it travels to the page as a different kind of signal
 (`ttl: "declared"`), with a floor of 15 minutes so a short-lived cache is ignored rather than compacted
 between turns. `list_profiles` prints the declared lifetime beside each profile, and all three bundled
-templates declare 60 minutes.
+templates declare 60 minutes. The declared lifetime is also counted down where the app draws its own
+indicator for the tiers it can measure — beside the model pill in the composer, marked `≈` and carrying
+the profile it came from in its tooltip, so an estimate never reads as a measurement.
 
 ## 2.1.286
 
