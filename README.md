@@ -63,13 +63,13 @@ another on DeepSeek, a third on your ChatGPT subscription.
 - **The time a subagent was called** in Claude Code's agent map — every row (and the card it opens)
   leads with the hour it started, so `09:05 · 5m 1s · 77.9k tokens` instead of a duration two runs can
   share; a run from another day says which day (`18 Sep 14:32`).
-- **The Telegram channel**, started from the command menu — a **Telegram channel** row in *Settings*
-  starts Claude Code's Telegram plugin bridge (`plugin:telegram@claude-plugins-official`) in the session
-  that is already running, the way Remote Control starts its own connection: through the session's
-  `enableChannel` control request, so no restart and no `--channels` on the command line. The row carries
-  the outcome — `starting…`, `enabled`, `failed` with the CLI's own reason in the tooltip. The plugin has
-  to be installed (`claude plugin install telegram@claude-plugins-official`), and nothing is started
-  until the row is clicked.
+- **Plugin channels** ("Channels…" in *Settings*) — the Telegram bridge today, anything a plugin
+  declares tomorrow. The row lists the MCP servers the installed plugins declare and starts the one
+  clicked in the session that is already running, the way Remote Control opens its own connection:
+  through the session's `enableChannel` control request, so no restart and no `--channels` on the
+  command line. Each row carries its own outcome — `starting…`, `enabled`, `failed` with the CLI's own
+  reason in the tooltip — and nothing is started until it is clicked. Install a channel plugin first
+  (`claude plugin install telegram@claude-plugins-official`).
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
@@ -222,10 +222,10 @@ the command menu.
 - **A managed `allowedProviders` list wins.** From Claude Code 2.1.285 an organization can list the
   providers a machine may use; a profile with `ANTHROPIC_BASE_URL` counts as `customEndpoint` and is
   refused at startup unless the managed settings pin that same address.
-- **A channel cannot be stopped from the row.** Claude Code has no control request that turns a plugin
-  channel off again, so once the Telegram channel is running in a session it runs for that session;
-  starting a new one is the way back. The plugin must be installed, and an organization that has not
-  enabled channels (`channelsEnabled`) will refuse the request — the row shows its reason.
+- **A channel cannot be stopped from the list.** Claude Code has no control request that turns a plugin
+  channel off again, so once one is running in a session it runs for that session; starting a new one is
+  the way back. The plugin must be installed, and an organization that has not enabled channels
+  (`channelsEnabled`) will refuse the request — the row shows its reason.
 
 ## Why "Vannevar"
 

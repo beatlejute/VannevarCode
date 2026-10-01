@@ -95,11 +95,11 @@ const S = (globalThis.__ccxState ||= {
     activeSessionByPanel: new Map(),
     profileByWebview: new Map(),
     pendingProfile: null,
-    // Plugin channels, keyed by the extension's channel id: the record the menu row draws from, the
-    // session manager that owns it, and a click that arrived before the channel said it was up.
+    // Plugin channels, keyed by the extension's channel id: one record per tab (which servers it has
+    // started, and a click that arrived before the channel said it was up) and the session manager
+    // that owns it.
     channels: new Map(),
     channelManagers: new Map(),
-    channelPendingStart: new Map(),
     channelHookSeen: false,
     badges: new Map(),
     iconUris: new Map(),
@@ -1425,7 +1425,7 @@ function startChatgptLogin() {
         });
 }
 
-// --- Plugin channels: the Telegram bridge, started from the menu -------------------------------------
+// --- Plugin channels: any plugin's channel, started from the menu -------------------------------------
 //
 // Claude Code's plugin channels are launched with `--channels plugin:telegram@claude-plugins-official`,
 // and that flag is out of reach from here: the SDK rebuilds the transport's options from a literal that
@@ -1435,11 +1435,57 @@ function startChatgptLogin() {
 // shape followed instead: the session's query object takes `enableChannel(serverName)`, the CLI looks up
 // that server's plugin, and the answer is what the row reports.
 //
-// The server name, not the plugin spec: `channel_enable` names an MCP server the plugin declares
-// (`telegram` for `plugin:telegram@claude-plugins-official`), and it is the CLI that insists the server
-// is marketplace-sourced. One constant, because there is one row; a second channel would make this a
-// list and the row a submenu.
-const CHANNEL_SERVER = 'telegram';
+// Nothing here knows about Telegram. `channel_enable` takes the name of an MCP server a plugin
+// declares, and the CLI is what insists the server is marketplace-sourced — so the candidates are
+// whatever the installed plugins declare, read off disk, and a channel is enabled by naming one of
+// them. Whether a server actually pushes channel notifications is not in any manifest: the MCP server
+// declares that capability in its own handshake, which is why the list can only offer the servers and
+// the CLI has the last word ("server did not declare claude/channel capability").
+const PLUGINS_FILE = path.join(HOME, '.claude', 'plugins', 'installed_plugins.json');
+
+function readMcpServers(dir) {
+    // The two places a plugin may declare its servers: `.mcp.json` beside the plugin, and the manifest
+    // itself. `mcpServers` there is a map of name → command in the first and can be either a map or a
+    // list of names in the second, so both shapes are taken.
+    const names = [];
+    const mcp = readJson(path.join(dir, '.mcp.json'));
+    if (mcp && mcp.mcpServers && !Array.isArray(mcp.mcpServers)) names.push(...Object.keys(mcp.mcpServers));
+    const manifest = readJson(path.join(dir, '.claude-plugin', 'plugin.json')) || readJson(path.join(dir, 'plugin.json'));
+    const declared = manifest && manifest.mcpServers;
+    if (Array.isArray(declared)) names.push(...declared.map((s) => (typeof s === 'string' ? s : s && s.name)));
+    else if (declared && typeof declared === 'object') names.push(...Object.keys(declared));
+    return names.filter((n) => typeof n === 'string' && n);
+}
+
+// The channels this machine could start: one entry per server declared by an installed plugin. Read
+// per state push — a handful of small files — but memoised on the manifest's own mtime, so a session
+// that pushes state a hundred times reads them once.
+function channelCandidates() {
+    let stamp = 0;
+    try {
+        stamp = fs.statSync(PLUGINS_FILE).mtimeMs;
+    } catch {
+        return [];
+    }
+    if (S.channelCandidates && S.channelCandidates.stamp === stamp) return S.channelCandidates.list;
+    const list = [];
+    const seen = new Set();
+    const installed = readJson(PLUGINS_FILE);
+    const plugins = (installed && installed.plugins) || {};
+    for (const [spec, entries] of Object.entries(plugins)) {
+        for (const entry of (Array.isArray(entries) ? entries : [entries]).filter(Boolean)) {
+            if (typeof entry.installPath !== 'string') continue;
+            for (const server of readMcpServers(entry.installPath)) {
+                if (seen.has(server)) continue;
+                seen.add(server);
+                list.push({ server, plugin: spec });
+            }
+        }
+    }
+    list.sort((a, b) => a.server.localeCompare(b.server));
+    S.channelCandidates = { stamp, list };
+    return list;
+}
 
 function channelOf(webview) {
     const id = webview && webview.__ccxChannelId;
@@ -1447,17 +1493,42 @@ function channelOf(webview) {
     return (S.channels ||= new Map()).get(id) || null;
 }
 
-// What the page's row draws from. Deliberately not the whole record: the page has no use for the
+// One status per server rather than one per tab: a session can run several channels at once, and each
+// is started on its own. The record keeps what the click decided, the manager is kept apart from it.
+function channelServer(rec, server) {
+    rec.servers ||= {};
+    rec.servers[server] ||= { status: 'idle', error: null };
+    return rec.servers[server];
+}
+
+function channelStateOf(channelId, server) {
+    const rec = (S.channels ||= new Map()).get(channelId);
+    return rec ? channelServer(rec, server) : null;
+}
+
+// What the page's list draws from. Deliberately not the whole record: the page has no use for the
 // manager, and nothing that lives in this file belongs on the wire by accident.
 function channelPayload(webview) {
     const rec = channelOf(webview);
     if (!rec) return null;
-    return { status: rec.status, server: rec.server, error: rec.error, supported: rec.supported };
+    const candidates = channelCandidates();
+    return {
+        supported: rec.supported,
+        // Only what is installed: a name the CLI would refuse is not worth a row. A channel that was
+        // started and has since been uninstalled stays visible, because its session still runs it.
+        servers: candidates
+            .map(({ server, plugin }) => ({ server, plugin, ...channelServer(rec, server) }))
+            .concat(
+                Object.entries(rec.servers || {})
+                    .filter(([server, s]) => s.status !== 'idle' && !candidates.some((c) => c.server === server))
+                    .map(([server, s]) => ({ server, plugin: null, ...s })),
+            ),
+    };
 }
 
 function setChannel(channelId, patch) {
     const channels = (S.channels ||= new Map());
-    const rec = channels.get(channelId) || { status: 'idle', server: null, error: null, supported: false };
+    const rec = channels.get(channelId) || { supported: false, servers: {}, pending: [] };
     Object.assign(rec, patch);
     channels.set(channelId, rec);
     return rec;
@@ -1472,21 +1543,20 @@ function onChannelReady(manager, channelId) {
         S.channelHookSeen = true;
         (S.channelManagers ||= new Map()).set(channelId, manager);
         // Whether this build can do it at all is decided here and not at the click: a release whose SDK
-        // predates `enableChannel` gets a row that says so, instead of a click that goes nowhere.
+        // predates `enableChannel` gets a menu that says so, instead of a click that goes nowhere.
         const record = manager.channels.get(channelId);
         const query = record && record.query;
-        const supported = Boolean(query && typeof query.enableChannel === 'function');
-        const previous = (S.channels ||= new Map()).get(channelId);
-        setChannel(channelId, {
-            supported,
-            // A channel that was started stays started across a re-init of the same id; anything else
-            // falls back to what this build can do.
-            status: previous && previous.status === 'enabled' ? 'enabled' : supported ? 'idle' : 'unsupported',
-        });
-        dlog('channel ready', { channelId, supported });
-        if (supported && (S.channelPendingStart ||= new Map()).get(channelId)) {
-            S.channelPendingStart.delete(channelId);
-            startChannel(channelId);
+        const rec = setChannel(channelId, { supported: Boolean(query && typeof query.enableChannel === 'function') });
+        dlog('channel ready', { channelId, supported: rec.supported });
+        const pending = (rec.pending || []).splice(0);
+        if (rec.supported && pending.length) {
+            for (const server of pending) {
+                // A click remembered before the channel was up left its row saying "starting…" with no
+                // request behind it, and startChannel refuses what is already starting; the start below
+                // is the first one that actually goes out.
+                Object.assign(channelServer(rec, server), { status: 'idle', error: null });
+                startChannel(channelId, server);
+            }
             return;
         }
     } catch (e) {
@@ -1496,9 +1566,11 @@ function onChannelReady(manager, channelId) {
     broadcast();
 }
 
-function startChannel(channelId) {
+function startChannel(channelId, server) {
     const rec = (S.channels ||= new Map()).get(channelId);
-    if (!rec || rec.status === 'connecting' || rec.status === 'enabled') return;
+    if (!rec || typeof server !== 'string' || !server) return;
+    const state = channelServer(rec, server);
+    if (state.status === 'connecting' || state.status === 'enabled') return;
     let query = null;
     try {
         const manager = (S.channelManagers ||= new Map()).get(channelId);
@@ -1506,28 +1578,38 @@ function startChannel(channelId) {
         query = record && record.query;
     } catch {}
     if (!rec.supported || !query || typeof query.enableChannel !== 'function') {
-        setChannel(channelId, {
-            status: 'unsupported',
-            error: 'this build of Claude Code has no channel support',
-        });
+        // Launched and not yet initialized: the click is remembered, and onChannelReady runs it. With no
+        // hook in the build at all there is nothing to wait for, and the row says so.
+        if (!rec.supported && S.channelHookSeen && !(S.channelManagers ||= new Map()).has(channelId)) {
+            (rec.pending ||= []).push(server);
+            Object.assign(state, { status: 'connecting', error: null });
+        } else {
+            Object.assign(state, { status: 'unsupported', error: 'this build of Claude Code has no channel support' });
+        }
         broadcast();
         return;
     }
-    setChannel(channelId, { status: 'connecting', server: CHANNEL_SERVER, error: null });
+    Object.assign(state, { status: 'connecting', error: null });
     broadcast();
     // Called as a method on the query, never detached: the control request is sent through `this`.
-    // Resolving means the CLI accepted the request, which is why the row says "enabled" and not
+    // Resolving means the CLI accepted the request, which is why the list says "enabled" and not
     // "connected" — whether the bridge behind it is up is not in this promise.
-    Promise.resolve(query.enableChannel(CHANNEL_SERVER))
+    Promise.resolve(query.enableChannel(server))
         .then(() => {
-            setChannel(channelId, { status: 'enabled' });
-            dlog('channel enabled', { channelId, server: CHANNEL_SERVER });
+            // Looked up again rather than closed over: the answer can arrive after a relaunch has
+            // dropped this record, and the state it would write is one nobody is drawing any more.
+            const s = channelStateOf(channelId, server);
+            if (!s) return;
+            Object.assign(s, { status: 'enabled', error: null });
+            dlog('channel enabled', { channelId, server });
             broadcast();
         })
         .catch((e) => {
+            const s = channelStateOf(channelId, server);
             const message = (e && e.message) || String(e);
-            setChannel(channelId, { status: 'error', error: message });
-            dlog('channel enable failed', { channelId, error: message });
+            if (!s) return;
+            Object.assign(s, { status: 'error', error: message });
+            dlog('channel enable failed', { channelId, server, error: message });
             broadcast();
         });
 }
@@ -2175,7 +2257,6 @@ function attachWebview(webview) {
                 if (previous && previous !== m.channelId && ![...S.webviews].some((w) => w !== webview && w.__ccxChannelId === previous)) {
                     (S.channels ||= new Map()).delete(previous);
                     (S.channelManagers ||= new Map()).delete(previous);
-                    (S.channelPendingStart ||= new Map()).delete(previous);
                 }
             }
             S.pendingProfile = S.profileByWebview.get(webview) || getBinding(m.resume) || null;
@@ -2316,22 +2397,22 @@ function attachWebview(webview) {
         } else if (m.type === 'ccx:chatgptLogin') {
             startChatgptLogin();
         } else if (m.type === 'ccx:channelStart') {
-            // The row is the only way in, and it can be clicked in three states that are not the same
-            // thing: a build where the hook never ran at all, a session whose channel has been launched
-            // but has not reported in yet, and a channel that is ready. Each gets its own answer.
+            // The list is the only way in, and a click can land in three situations that are not the
+            // same thing: a build where the hook never ran, a channel that is launched but has not
+            // reported in yet, and one that is ready. startChannel answers each of them.
             const channelId = (typeof m.channelId === 'string' && m.channelId) || webview.__ccxChannelId;
-            if (channelId) {
+            const server = typeof m.server === 'string' ? m.server : '';
+            if (channelId && server) {
                 if (!S.channelHookSeen) {
-                    setChannel(channelId, {
+                    // The hook never ran: a build below the verified range, or a stale bundle. Said out
+                    // loud rather than left spinning behind a click that can never land.
+                    setChannel(channelId, { supported: false });
+                    Object.assign(channelStateOf(channelId, server), {
                         status: 'unsupported',
                         error: 'channel support is not patched into this build',
                     });
-                } else if (!(S.channelManagers ||= new Map()).has(channelId)) {
-                    // Launched and not yet initialized: the click is remembered, and onChannelReady runs it.
-                    (S.channelPendingStart ||= new Map()).set(channelId, true);
-                    setChannel(channelId, { status: 'connecting', server: CHANNEL_SERVER, error: null });
                 } else {
-                    startChannel(channelId);
+                    startChannel(channelId, server);
                 }
                 post(webview, { type: 'ccx:state', ...stateFor(sessionId, webview) });
             }

@@ -211,6 +211,14 @@ plain MCP server — then applies the organization's policy: `channelsEnabled` i
 in the catalog. Present in the CLI binary of 2.1.280 through 2.1.286, and `enableChannel` in the SDK of
 every one of them; 2.1.281, which never landed here in a verified release, has both too.
 
+That name is not a constant here. Which servers a machine has is `installed_plugins.json` and each
+plugin's own `.mcp.json` (or its manifest's `mcpServers`, a map in one shape and a list of names in the
+other), read off disk and memoised on the manifest's mtime — so the menu offers whatever is installed
+and a second channel plugin costs no code. What a manifest cannot say is whether a server really pushes
+channel notifications: the MCP server declares that (`claude/channel`) in its own handshake, which is
+why the CLI answers "server did not declare claude/channel capability" for one that does not, and why
+the list offers candidates rather than a verified set.
+
 What the host is missing is the session manager, and the only place it and a channel id are in reach
 together is the manager's own
 
@@ -229,18 +237,25 @@ extension's channel id was read in exactly one place in `host.js` — a `dlog` �
 relaunch is a new channel with a new id, so the previous record is dropped with it unless another tab
 still points at it.
 
-Two things about the answer the row shows. `enableChannel` resolving means the CLI **took** the control
-request, not that the bridge behind it is live, so the row says `enabled` and never `connected` — the
-same claim the stock Remote Control pill makes only once it has a session URL. And there is no way back:
-no `channel_disable` exists in any of these releases, `closeChannel` ends the whole session, so the row
-is start-only and says so.
+Two things about the answer a row shows. `enableChannel` resolving means the CLI **took** the control
+request, not that the bridge behind it is live, so a row says `enabled` and never `connected` — the same
+claim the stock Remote Control pill makes only once it has a session URL. And there is no way back: no
+`channel_disable` exists in any of these releases, `closeChannel` ends the whole session, so the rows are
+start-only and say so.
+
+The status is kept per server, not per tab, because one session can run several channels and each is
+started on its own: the record under the channel id holds `{supported, servers: {<server>: {status,
+error}}, pending}`. The `pending` list is the one piece of timing here — a click can arrive between the
+launch and the manager being handed over, and it is remembered, its row reset from the "starting…" it
+was left in, and run by `onChannelReady`. A click on a build where the hook never ran is answered on the
+spot instead, since there is nothing to wait for.
 
 This anchor is the one signature in `apply-patch.mjs` declared `optional: true`. It has to be: 2.1.274,
 2.1.276 and 2.1.278 are on `verifiedAgainst` and were not installed on the machine this was written on,
 so a miss there cannot be distinguished from a release that never had the method — and refusing the whole
 patch over a feature a bundle never had would be worse than the feature being off. A miss is still not
 silent: `EXPECTATIONS` carries the same regex and prints
-`NOTE: extension.js no longer has channelInitialized()` when nothing matched, and the menu row reports
+`NOTE: extension.js no longer has channelInitialized()` when nothing matched, and the menu reports
 itself unavailable rather than doing nothing. `test/auto-repatch.test.mjs` pins both ends — the hook
 present in a patched real bundle, and a fixture with the method renamed taking the patch with the note
 and no hook.
