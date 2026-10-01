@@ -62,7 +62,7 @@ another on DeepSeek, a third on your ChatGPT subscription.
   with its transcript and a working *Stop agent*.
 - **The time a subagent was called** in Claude Code's agent map — every row (and the card it opens)
   leads with the hour it started, so `09:05 · 5m 1s · 77.9k tokens` instead of a duration two runs can
-  share.
+  share; a run from another day says which day (`18 Sep 14:32`).
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).

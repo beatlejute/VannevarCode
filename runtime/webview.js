@@ -1458,11 +1458,24 @@
     //
     // Hours and minutes, zero-padded, in the machine's own zone. A locale-aware format would put an
     // am/pm or a leading zero wherever the locale says, which is not what a column of times wants.
+    //
+    // The map is rebuilt when an old session is reopened, so a row can be from a day other than today,
+    // and a bare clock time there reads as this morning's — the day is printed in front of it, and the
+    // year only when it is not the current one, which is as much as a row can hold. Month names are
+    // spelled out rather than taken from the locale, for the same reason the clock is: a column of
+    // times sorts and lines up by being the same width every time.
+    var MAP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
     function callTime(startTime) {
         var ms = Number(startTime);
         if (!Number.isFinite(ms) || ms <= 0) return undefined;
         var at = new Date(ms);
-        return ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
+        var clock = ('0' + at.getHours()).slice(-2) + ':' + ('0' + at.getMinutes()).slice(-2);
+        var now = new Date();
+        if (at.getDate() === now.getDate() && at.getMonth() === now.getMonth() && at.getFullYear() === now.getFullYear())
+            return clock;
+        var day = at.getDate() + ' ' + MAP_MONTHS[at.getMonth()] + (at.getFullYear() === now.getFullYear() ? '' : ' ' + at.getFullYear());
+        return day + ' ' + clock;
     }
 
     function runEntry(run, taskId, toolUseId, parentToolUseId) {
