@@ -422,6 +422,32 @@ const PATCHES = [
         replace: 'showLogin(){globalThis.__ccxNoAuth||(this.forceLogin.value=!0)}',
         where: 'replace',
     },
+    // --- The agent map's row: when the subagent was called ---------------------------------------
+    {
+        // A row's meta line is built by one small function — the run's duration, its token count, joined
+        // with " · " and filtered of the halves it has nothing for — so the line reads `5m 1s · 77.9k
+        // tokens` and never says when the run was called. Two runs of the same length are told apart by
+        // that, so the call's own clock time is spliced in as the first element of the array and the
+        // stock filter drops it back out where the entry has no start time.
+        //
+        // The time itself is the page's (`__ccx.callTime`, runtime/webview.js) rather than a date
+        // expression assembled here, for the same reason the sort and the archived filter are: the
+        // format lives in one readable place, and the row keeps working in a build that renamed every
+        // local in the file.
+        //
+        // The signature is structural. The function is the only one in the bundle that reads
+        // `usage?.totalTokens` as its second `let`, and the duration local in front of it comes out of
+        // the match rather than being named — the same helper call the stock code makes — so a renamed
+        // formatter or a renamed parameter rides along. One match in 2.1.280 through 2.1.286.
+        file: 'webview/index.js',
+        find: /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{let ([\w$]+)=([\w$]+)\(\2,\3\),([\w$]+)=\2\.usage\?\.totalTokens;return\[/,
+        replace: (_found, fn, agent, now, duration, durationOf, tokens) =>
+            `function ${fn}(${agent},${now}){let ${duration}=${durationOf}(${agent},${now}),` +
+            `${tokens}=${agent}.usage?.totalTokens,` +
+            `__ccxAt=globalThis.__ccx&&globalThis.__ccx.callTime?globalThis.__ccx.callTime(${agent}.startTime):void 0;` +
+            `return[__ccxAt,`,
+        where: 'replace',
+    },
 ];
 
 // Things the injected code drives without patching them. Losing one is not an error — Vannevar

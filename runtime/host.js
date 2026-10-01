@@ -1913,7 +1913,13 @@ function interceptOutgoing(webview) {
                             webview.__ccxDeclaredCache = ttlMinutes;
                             dlog('declared cache ttl', { ttlMinutes, profile: name });
                         }
-                        post(webview, { type: 'ccx:cache', ttl: 'declared', ttlMinutes, anchorAt: Date.now() });
+                        post(webview, {
+                            type: 'ccx:cache',
+                            ttl: 'declared',
+                            ttlMinutes,
+                            profile: name,
+                            anchorAt: Date.now(),
+                        });
                     }
                 }
             }

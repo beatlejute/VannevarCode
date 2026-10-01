@@ -44,7 +44,9 @@ another on DeepSeek, a third on your ChatGPT subscription.
   *Thinking*, both off by default. The first runs `/compact` five minutes before a 1-hour cache tier
   lapses — or, on a provider that reports no tier at all, before the lifetime the profile declares in
   `cache.ttlMinutes` runs out; the second shows everything a `/compact` folded away when a session is
-  reopened (a view only — the model's context is still the summary).
+  reopened (a view only — the model's context is still the summary). Where the built-in countdown has
+  nothing to count — it is drawn only for the tiers the Anthropic API reports — the declared lifetime
+  counts down beside the model pill, marked `≈` because it is an estimate from documentation.
 - **Switching back to Anthropic keeps working.** An id minted by another provider is rejected by
   Anthropic with a `400`, forever, because it is re-read from the transcript on every relaunch. Spawns
   going to Anthropic have those ids dropped first; ids Anthropic itself issued are left alone.

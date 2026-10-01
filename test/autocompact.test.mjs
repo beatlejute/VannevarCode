@@ -184,7 +184,29 @@ class El {
     contains(n) { return n === this || this.children.some((c) => c.contains(n)); }
     addEventListener() {}
     removeEventListener() {}
-    querySelector() { return null; }
+    get nextSibling() {
+        const sibs = this.parentElement ? this.parentElement.children : [];
+        return sibs[sibs.indexOf(this) + 1] || null;
+    }
+    insertBefore(node, ref) {
+        if (node.parentElement) node.remove();
+        node.parentElement = this;
+        const i = ref ? this.children.indexOf(ref) : -1;
+        if (i === -1) this.children.push(node);
+        else this.children.splice(i, 0, node);
+        return node;
+    }
+    // Class lookups only, by the same substring rule the page uses on the app's hashed names
+    // (`[class*="modelPill_"]`) — anything else keeps returning null, as it did before.
+    querySelector(sel) {
+        const sub = /^\[class\*="([^"]+)"\]$/.exec(sel);
+        for (const c of this.children) {
+            if (sub ? String(c.className).includes(sub[1]) : c.className === sel.replace(/^\./, '')) return c;
+            const deep = c.querySelector(sel);
+            if (deep) return deep;
+        }
+        return null;
+    }
     querySelectorAll() { return []; }
 }
 
@@ -192,7 +214,7 @@ const pageDocument = {
     body: new El('body'),
     head: new El('head'),
     createElement: (t) => new El(t),
-    querySelector: () => null,
+    querySelector: (sel) => pageDocument.body.querySelector(sel),
     querySelectorAll: () => [],
     addEventListener() {},
     removeEventListener() {},
@@ -201,6 +223,17 @@ const pageDocument = {
 const posted = [];
 const sent = [];
 const timeouts = [];
+// The composer's footer as the app builds it: a row, and inside it the model pill the countdown is
+// inserted beside. Shaped after the real markup (`inputFooterV2_…` / `modelPill_…`), so the page has
+// something to find and the assertion can check where it landed.
+const modelPill = new El('span');
+modelPill.className = 'modelPill_gGYT1w';
+const pillHost = new El('div');
+pillHost.appendChild(modelPill);
+const footer = new El('div');
+footer.className = 'inputFooterV2_gGYT1w';
+footer.appendChild(pillHost);
+pageDocument.body.appendChild(footer);
 const pageWindow = {
     document: pageDocument,
     addEventListener: (type, fn) => { if (type === 'message') pageWindow.onMessage = fn; },
@@ -322,7 +355,26 @@ assert.equal(timeouts[0].delay, 0, 'already due → fires immediately');
 timeouts[0].fn();
 assert.deepEqual(sent, ['/compact'], 'a declared lifetime compacts exactly like the measured tier');
 
-console.log('OK — the page adds a switch of the app\'s own and compacts before the cache lapses');
+// The app draws a countdown only for the tiers it can measure, so a declared lifetime gets one of
+// ours — beside the model pill, marked "≈", and with its source in the tooltip: a bare number there
+// would read as something this code had measured.
+fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 60, profile: 'deepseek', anchorAt: Date.now() });
+const cachePill = pageDocument.body.querySelector('.ccx-cache-pill');
+assert.ok(cachePill, 'a declared lifetime is drawn beside the model pill');
+assert.equal(cachePill.parentElement, pillHost, 'the countdown sits in the composer\'s own row');
+assert.match(cachePill.textContent, /^≈60m$/, 'the countdown reads as an estimate of the declared window');
+assert.match(cachePill.title, /not measured/, 'the tooltip says the number is documentation, not a measurement');
+assert.match(cachePill.title, /deepseek/, 'and names the profile the number came from');
+
+// A measured tier already has the app's own countdown, and two of them for one cache would disagree.
+fromHost({ type: 'ccx:cache', ttl: '1h', anchorAt: Date.now() });
+assert.equal(pageDocument.body.querySelector('.ccx-cache-pill'), null, 'the measured tier keeps the app\'s indicator alone');
+fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 5, anchorAt: Date.now() });
+const shortPill = pageDocument.body.querySelector('.ccx-cache-pill');
+assert.ok(shortPill, 'a short declared lifetime is still worth counting down — the floor governs compaction, not the reading');
+assert.match(shortPill.textContent, /^≈5m$/, 'and the countdown reads off its own number');
+
+console.log('OK — the page adds a switch of the app\'s own, compacts before the cache lapses, and counts a declared lifetime down');
 
 // --- Part 3: the menu sort order names the new id ----------------------------------------------
 
