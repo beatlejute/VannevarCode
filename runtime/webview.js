@@ -2290,6 +2290,19 @@
         };
     }
 
+    // When a message was written: `createdAt` is the CLI's own stamp for the turn, `timestamp` whatever
+    // the shape it arrived in carries — an ISO string on one rebuilt from disk, a number on one that
+    // streamed in. Neither is guaranteed, and a row with no time shows none.
+    function messageTime(m) {
+        var raw = m.createdAt || m.timestamp;
+        if (typeof raw === 'string') {
+            var parsed = Date.parse(raw);
+            return isNaN(parsed) ? 0 : parsed;
+        }
+        var ms = Number(raw);
+        return isFinite(ms) && ms > 0 ? ms : 0;
+    }
+
     // The transcript is the whole signal, so the stamp has to move for anything that can add a
     // resource: a new message, a message rewritten, or a reply still growing its text.
     function resourceStamp(messages) {
@@ -2312,10 +2325,38 @@
     // back instead. A `git log` full of hashes contributes nothing for the same reason: the list is of
     // what this session did, not of what it looked at.
     var GIT_BRANCH_CREATE = /git\s+(?:checkout\s+-b|switch\s+-c|branch)\s+([^\s;&|'"]+)/g;
-    var GIT_WORKTREE_ADD = /git\s+worktree\s+add\s+([^\n;&|]+)/g;
+    var GIT_WORKTREE_ADD = /git\s+worktree\s+add\s+([^\n;&|<>]+)/g;
     var GIT_SWITCHED = /Switched to (?:a new )?branch '([^']+)'/g;
     var GIT_COMMITTED = /\[([^\s\]]+)(?:\s+\([^)]*\))?\s+([0-9a-f]{7,40})\]\s*(.*)$/gm;
     var GIT_WORKTREE_LIST = /^\s*(\S+)\s+([0-9a-f]{7,40})\s+\[([^\]]+)\]/gm;
+    // `git commit -q` prints nothing at all, and a commit written through a heredoc prints the same
+    // blank — both are ordinary ways to commit. What such a command line usually does next is read the
+    // commit back (`git log --oneline -1`) or push it, and both name the hash. So those two are read,
+    // but only when the same command actually wrote something: without that condition a `git log` of
+    // twenty lines would fill the section with every commit the session merely looked at.
+    var GIT_PUSH_LINE = /([0-9a-f]{7,40})\.\.([0-9a-f]{7,40})\s+(\S+)\s*->\s*(\S+)/;
+    var GIT_NEW_REF = /\*\s+\[new branch\]\s+(\S+)\s*->\s*(\S+)/g;
+    var GIT_ONELINE = /^\s*([0-9a-f]{7,40})\s+(\S.*)$/gm;
+    var GIT_WROTE = /git\s+(?:commit|push)\b/;
+
+    // `git worktree add [-f] [--detach] [-b <name>] <path> [<commit-ish>]` — the path is the first
+    // argument that is neither an option nor an option's value. Taking the last one instead is what put
+    // `2>` in this list from a command whose output was redirected, and a branch name from a command
+    // that named the commit-ish after the path.
+    function worktreePath(argsText) {
+        var tokens = String(argsText).trim().split(/\s+/);
+        for (var i = 0; i < tokens.length; i++) {
+            var t = tokens[i];
+            if (!t) continue;
+            if (/^\d*[<>]/.test(t)) break; // a redirection is where the arguments ended
+            if (t.charAt(0) === '-') {
+                if (t === '-b' || t === '-B' || t === '--reason') i++;
+                continue;
+            }
+            return t.replace(/^["']|["']$/g, '');
+        }
+        return '';
+    }
 
     function resourceScan() {
         var messages = sessionField('messages');
@@ -2324,8 +2365,12 @@
         if (resourceMemo.stamp === stamp) return resourceMemo.rows;
 
         var rows = new Map();
-        function note(kind, key, label, value, full, source, you, uuid) {
+        // Where a sighting came from, as one object: whose it was, which message held it, and when that
+        // message was written. Only the first sighting's details are kept, so this is what each note()
+        // carries rather than three arguments that have to stay in step.
+        function note(kind, key, label, value, full, source, ctx) {
             if (!key) return;
+            var at = ctx || {};
             var row = rows.get(key);
             if (!row) {
                 row = {
@@ -2336,73 +2381,103 @@
                     full: full || value,
                     count: 0,
                     from: [],
-                    you: false,
+                    // Whose it is, by *first* mention: the model echoing a link the user pasted is still
+                    // the user's link, while a link the model wrote and the user later quoted is not — and
+                    // only the first sighting can tell those two apart. Which side of the conversation a
+                    // resource came from is the one thing about it a reader cannot recover from the value
+                    // itself, so it is carried on the row rather than left to the tooltip.
+                    you: !!at.you,
                     open: RESOURCE_OPEN[kind] || null,
-                    // Where it first appeared, for the row's jump. The first sighting and not the last:
-                    // "where did this come from" is the question, and the rest are the same thing said
-                    // again.
-                    uuid: uuid || null,
+                    // Where it first appeared, for the row's jump and for the row's time. The first
+                    // sighting and not the last: "where did this come from" is the question, and the rest
+                    // are the same thing said again.
+                    uuid: at.uuid || null,
+                    at: at.at || 0,
                 };
                 rows.set(key, row);
             }
             row.count++;
-            // Yours stays yours: a link the user pasted is theirs however many times a tool then touched
-            // it. Which side of the conversation a resource came from is the one thing about it a reader
-            // cannot recover from the value itself — a URL from a reply and a URL from a prompt look
-            // exactly alike — so it is carried on the row rather than left to the tooltip.
-            if (you) row.you = true;
+            // A commit usually reaches the list twice and the first time with less: a push names the
+            // hash, the `git log` beside it names what the commit says. The row is read by its subject,
+            // so a label that is only the short hash gives way to one that is not.
+            if (label && label !== row.label && row.label === String(row.value).slice(0, 7)) row.label = label;
             if (source && row.from.indexOf(source) < 0) row.from.push(source);
         }
-        function noteUrls(text, kind, source, you, uuid) {
+        function noteUrls(text, kind, source, ctx) {
             if (typeof text !== 'string' || text.indexOf('http') < 0) return;
             RESOURCE_URL.lastIndex = 0;
             var m;
             while ((m = RESOURCE_URL.exec(text))) {
                 var url = trimUrl(m[0]);
-                if (url) note(kind, urlKey(url), url, url, url, source, you, uuid);
+                if (url) note(kind, urlKey(url), url, url, url, source, ctx);
             }
         }
 
-        function noteBranch(name, how, uuid) {
-            note('branch', 'branch:' + name, name, name, name, how, false, uuid);
+        function noteBranch(name, how, ctx) {
+            note('branch', 'branch:' + name, name, name, name, how, ctx);
         }
 
-        function noteGit(command, output, uuid) {
+        // Commits and worktrees come in two flavours and the difference is worth the tag: one the
+        // session made, and one it only read out of git. `made` is set on the first sighting and only
+        // ever raised, so a commit pushed as a bare hash and read back with its subject stays the
+        // session's own.
+        function noteOwn(kind, key, label, value, full, source, made, ctx) {
+            note(kind, key, label, value, full, source, ctx);
+            var row = rows.get(key);
+            if (!row) return;
+            if (typeof row.made !== 'boolean') row.made = !!made;
+            else if (made) row.made = true;
+        }
+
+        function noteGit(command, output, ctx) {
             var m;
             GIT_BRANCH_CREATE.lastIndex = 0;
             while ((m = GIT_BRANCH_CREATE.exec(command)))
-                if (m[1].charAt(0) !== '-') noteBranch(m[1], 'created', uuid);
+                if (m[1].charAt(0) !== '-') noteBranch(m[1], 'created', ctx);
             GIT_WORKTREE_ADD.lastIndex = 0;
             while ((m = GIT_WORKTREE_ADD.exec(command))) {
-                // `git worktree add [-b name] [-B name] [--detach] <path>`: the path is the last
-                // argument, which is the one thing about that line readable without parsing git's
-                // options — an option's own value is not last, and a path always is.
-                var parts = m[1].trim().split(/\s+/);
-                var target = parts[parts.length - 1] || '';
-                if (target && target.charAt(0) !== '-')
-                    note('worktree', 'worktree:' + fileKey(target), baseName(target), target, target, 'added as a worktree', false, uuid);
+                var target = worktreePath(m[1]);
+                if (target)
+                    noteOwn('worktree', 'worktree:' + fileKey(target), baseName(target), target, target, 'added as a worktree', true, ctx);
             }
-            if (typeof output !== 'string' || !output) return;
+            if (typeof output !== 'string' || !output || !/\bgit\b/.test(command)) return;
+            var wrote = GIT_WROTE.test(command);
             GIT_SWITCHED.lastIndex = 0;
-            while ((m = GIT_SWITCHED.exec(output))) noteBranch(m[1], 'switched to', uuid);
+            while ((m = GIT_SWITCHED.exec(output))) noteBranch(m[1], 'switched to', ctx);
             GIT_COMMITTED.lastIndex = 0;
             while ((m = GIT_COMMITTED.exec(output))) {
                 var subject = String(m[3] || '').trim().slice(0, 80);
-                note(
+                noteOwn(
                     'commit',
                     'commit:' + m[2],
                     subject || m[2].slice(0, 7),
                     m[2],
                     m[2] + ' on ' + m[1] + (subject ? ' — ' + subject : ''),
                     'committed on ' + m[1],
-                    false,
-                    uuid,
+                    true,
+                    ctx,
                 );
             }
             if (command.indexOf('worktree') > -1) {
                 GIT_WORKTREE_LIST.lastIndex = 0;
                 while ((m = GIT_WORKTREE_LIST.exec(output)))
-                    note('worktree', 'worktree:' + fileKey(m[1]), baseName(m[1]), m[1], m[1], 'listed as a worktree on ' + m[3], false, uuid);
+                    noteOwn('worktree', 'worktree:' + fileKey(m[1]), baseName(m[1]), m[1], m[1], 'listed as a worktree on ' + m[3], false, ctx);
+            }
+            // What a push says: the range it moved, and the ref it moved it on.
+            var push = GIT_PUSH_LINE.exec(output);
+            if (push) {
+                noteOwn('commit', 'commit:' + push[2], push[2].slice(0, 7), push[2], push[2] + ' on ' + push[3], 'pushed', true, ctx);
+                noteBranch(push[3].replace(/^refs\/heads\//, ''), 'pushed', ctx);
+            }
+            GIT_NEW_REF.lastIndex = 0;
+            while ((m = GIT_NEW_REF.exec(output))) noteBranch(m[2].replace(/^refs\/heads\//, ''), 'pushed as a new branch', ctx);
+            // The one-line log, read whether or not the same command wrote something: a commit the
+            // session looked up is a resource too, it is just not the session's own — which is what the
+            // `made` flag is for. `git log -20` therefore fills the section, honestly labelled.
+            GIT_ONELINE.lastIndex = 0;
+            while ((m = GIT_ONELINE.exec(output))) {
+                var line = String(m[2] || '').trim().slice(0, 80);
+                noteOwn('commit', 'commit:' + m[1], line || m[1].slice(0, 7), m[1], m[1] + (line ? ' — ' + line : ''), 'read out of git', wrote, ctx);
             }
         }
 
@@ -2411,6 +2486,10 @@
         // actually typed counts as theirs.
         function userVoice(m) {
             if (m.type !== 'user' || m.isSynthetic) return false;
+            // A turn tagged with the tool call that spawned it belongs to a subagent, not to the person.
+            // A subagent's prompt and its own tool results arrive on the user's side of the conversation
+            // exactly as the user's do, and a link inside one of them is the model's, not theirs.
+            if (m.parentToolUseId || m.sdkParentToolUseId) return false;
             if (!Array.isArray(m.content)) return true;
             for (var k = 0; k < m.content.length; k++) {
                 var b = blockOf(m.content[k]);
@@ -2422,11 +2501,21 @@
         for (var i = 0; i < messages.length; i++) {
             var m = messages[i];
             if (!m) continue;
+            // A compaction summary is the whole conversation again in one user-role message, so every
+            // link in it is already counted from where it came from — counting it again would double
+            // them all and mark every one as the user's, the summary being written on their side of the
+            // conversation. Skipped whole, not just unmarked: it is a copy, not a mention.
+            if (m.isCompactSummary === true || (m.uuid && compactSummaryUuids.has(m.uuid))) continue;
             var you = userVoice(m);
             var mine = you ? 'in your message' : 'in a reply';
             var uuid = typeof m.uuid === 'string' ? m.uuid : null;
+            // When the message was written, off the clock the CLI stamped the turn with rather than the
+            // one the page built the object at — a session reopened from disk is full of the latter.
+            var at = messageTime(m);
+            var ctxYou = { you: you, uuid: uuid, at: at };
+            var ctxTool = { you: false, uuid: uuid, at: at };
             if (typeof m.content === 'string') {
-                noteUrls(m.content, 'link', mine, you, uuid);
+                noteUrls(m.content, 'link', mine, ctxYou);
                 continue;
             }
             if (!Array.isArray(m.content)) continue;
@@ -2434,14 +2523,14 @@
                 var raw = blockOf(m.content[j]);
                 if (!raw) continue;
                 if (raw.type === 'text') {
-                    noteUrls(raw.text, 'link', mine, you, uuid);
+                    noteUrls(raw.text, 'link', mine, ctxYou);
                     continue;
                 }
                 if (raw.type === 'image' || raw.type === 'document') {
                     var media = mediaEntry(raw.type, raw);
                     // An attachment is always the user's: the app has no other way to put one in a
                     // transcript, and a pasted screenshot is the clearest "this came from me" there is.
-                    note('media', media.key, media.label, media.label, media.label, 'attached by you', true, uuid);
+                    note('media', media.key, media.label, media.label, media.label, 'attached by you', ctxYou);
                     var mediaRow = rows.get(media.key);
                     if (mediaRow && !mediaRow.payload) mediaRow.payload = media.payload;
                     continue;
@@ -2449,12 +2538,12 @@
                 if (raw.type !== 'tool_use') continue;
                 var input = raw.input || {};
                 if (raw.name === 'WebFetch' && typeof input.url === 'string' && input.url.trim())
-                    note('tool', urlKey(input.url), trimUrl(input.url), input.url, input.url, 'fetched by WebFetch', false, uuid);
+                    note('tool', urlKey(input.url), trimUrl(input.url), input.url, input.url, 'fetched by WebFetch', ctxTool);
                 else if (raw.name === 'WebSearch') {
                     // A search result is on the call's own wrapper — the app attaches it there — so its
                     // links are read the way the agent map reads a delegated run's, not off a field.
                     var hit = callResult(m.content[j]);
-                    if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results', false, uuid);
+                    if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results', ctxTool);
                 }
                 if (raw.name === 'Bash') {
                     // A shell command is not a file and is not parsed for one — the paths inside one are
@@ -2466,12 +2555,12 @@
                     noteGit(
                         typeof input.command === 'string' ? input.command : '',
                         out && !out.isError ? out.text : '',
-                        uuid,
+                        ctxTool,
                     );
                     continue;
                 }
                 var p = filePathOf(input);
-                if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'), false, uuid);
+                if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'), ctxTool);
             }
         }
 
@@ -2570,27 +2659,177 @@
         if (pill.parentElement !== footer) footer.appendChild(pill);
     }
 
-    // The DOM node for a message — the same walk applyHidden makes to mark one hidden: the two
-    // containers the transcript draws a turn in, and the message off each node's fiber. The app draws
-    // only the turns near the viewport, so a resource from far up a long session has no node at all,
-    // and the jump says so rather than scrolling somewhere else and calling it the message.
-    function messageNode(uuid) {
-        if (!uuid) return null;
+    // The nodes the transcript draws a turn in, the ones both this and applyHidden are about.
+    function drawnMessages(assistantFirst) {
         var nodes = [];
         try {
             var assistant = document.querySelectorAll('[data-testid="assistant-message"]');
             var user = document.querySelectorAll('[class*="userMessageContainer_"]');
             var i;
-            if (assistant) for (i = 0; i < assistant.length; i++) nodes.push(assistant[i]);
-            if (user) for (i = 0; i < user.length; i++) nodes.push(user[i]);
+            if (assistantFirst) {
+                if (assistant) for (i = 0; i < assistant.length; i++) nodes.push(assistant[i]);
+                if (user) for (i = 0; i < user.length; i++) nodes.push(user[i]);
+            } else {
+                if (user) for (i = 0; i < user.length; i++) nodes.push(user[i]);
+                if (assistant) for (i = 0; i < assistant.length; i++) nodes.push(assistant[i]);
+            }
         } catch (e) {
-            return null;
+            /* a transcript that cannot be walked has no message to land on */
         }
-        for (var k = 0; k < nodes.length; k++) {
-            var msg = messagePropOf(nodes[k]);
-            if (msg && msg.uuid === uuid) return nodes[k];
+        return nodes;
+    }
+
+    // An id in a selector: the attribute the app itself links to a message by. `CSS.escape` is there
+    // in the webview, and the fallback escapes the two characters that would end the string early.
+    function attrLiteral(value) {
+        var s = String(value);
+        return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : s.replace(/["\\]/g, '\\$&');
+    }
+
+    // The node for a message, in the order of how exactly it can be named.
+    //
+    // An assistant message names itself: `data-bookmark-uuid` is the attribute the app puts on it and
+    // the one the app's own code links to a message by. A user message has no such attribute, so it
+    // comes off the fiber — the walk applyHidden makes, and the same message object the hidden set is
+    // keyed by. If neither answers, the row's own value is used as a last resort: a URL pasted into a
+    // prompt is in the bubble verbatim, and so is the path a tool call names.
+    //
+    // The floor under all of it is the toast: the transcript draws only the turns near the viewport, so
+    // a resource from far up a long session has no node at all, and the jump says so rather than
+    // scrolling to whatever was nearest and calling it the one.
+    function messageNode(row) {
+        var uuid = row && row.uuid;
+        if (uuid) {
+            try {
+                var named = document.querySelector('[data-bookmark-uuid="' + attrLiteral(uuid) + '"]');
+                if (named) return named;
+            } catch (e) {
+                /* a selector the engine refuses is one handle less, not a broken jump */
+            }
+            // The fiber walk, with a shallower test than messagePropOf's: the jump only has to
+            // recognise the message, and isTranscriptMessage() is strict on purpose (it decides what
+            // applyHidden is allowed to mark) — requiring a `timestamp` there would take the jump away
+            // on any build that stops carrying one. The depth is the other half of that: a turn nests
+            // one level per block renderer, so a message holding a tool call sits further from its node
+            // than a plain one, and ten hops was measured on the plainest kind.
+            var nodes = drawnMessages(!row.you);
+            for (var i = 0; i < nodes.length; i++) {
+                var key = fiberKeyOf(nodes[i]);
+                var fiber = key ? nodes[i][key] : null;
+                for (var d = 0; fiber && d < 30; d++, fiber = fiber.return) {
+                    var props = fiber.memoizedProps;
+                    var found = props && props.message;
+                    if (found && typeof found === 'object' && found.uuid === uuid) return nodes[i];
+                }
+            }
+        }
+        // Then the value itself, as text — and for an attachment, which has no text to be found by, the
+        // picture: the row carries the payload, and the bubble it came from holds the same bytes.
+        var probe = row && typeof row.value === 'string' ? row.value.trim() : '';
+        var all = drawnMessages(!row.you);
+        var k;
+        if (row && row.kind === 'media' && row.payload) {
+            var prefix = 'data:' + row.payload.mediaType + ';base64,' + String(row.payload.data || '').slice(0, 64);
+            for (k = 0; k < all.length; k++) {
+                var images = all[k].getElementsByTagName ? all[k].getElementsByTagName('img') : [];
+                for (var n = 0; n < images.length; n++)
+                    if (String(images[n].src || '').indexOf(prefix) === 0) return all[k];
+            }
+        }
+        if (probe.length < 4) return null;
+        for (k = 0; k < all.length; k++) {
+            var text = all[k].textContent;
+            if (text && text.indexOf(probe) > -1) return all[k];
         }
         return null;
+    }
+
+    // Where a message sits in the session's own list, which is the order it is drawn in.
+    function messageIndex(messages, uuid) {
+        if (!uuid) return -1;
+        for (var i = 0; i < messages.length; i++) if (messages[i] && messages[i].uuid === uuid) return i;
+        return -1;
+    }
+
+    // The drawn nodes that can be tied back to a message, with that message's index. A turn draws as one
+    // node and holds many messages — a tool result is a message of its own and no bubble — so this is
+    // what says which part of the session the page is showing at all.
+    function drawnIndexed(messages) {
+        var out = [];
+        var nodes = drawnMessages(true);
+        for (var i = 0; i < nodes.length; i++) {
+            var uuid = null;
+            try {
+                uuid = nodes[i].getAttribute('data-bookmark-uuid');
+            } catch (e) {
+                uuid = null;
+            }
+            var key = fiberKeyOf(nodes[i]);
+            var fiber = key ? nodes[i][key] : null;
+            for (var d = 0; fiber && d < 30 && !uuid; d++, fiber = fiber.return) {
+                var props = fiber.memoizedProps;
+                var m = props && props.message;
+                if (m && typeof m === 'object' && typeof m.uuid === 'string') uuid = m.uuid;
+            }
+            var idx = messageIndex(messages, uuid);
+            if (idx >= 0) out.push({ node: nodes[i], index: idx });
+        }
+        return out;
+    }
+
+    // The nearest drawn turn at or above the message: a resource from inside a turn is reached by the
+    // turn, and one from before everything the page draws is reached by the top of it. The distance is
+    // returned as well, because the caller has to tell those two apart — one is a jump that landed
+    // close, the other is a jump that landed at the edge of what the app has.
+    function nearestDrawnNode(row) {
+        var messages = sessionField('messages');
+        if (!Array.isArray(messages)) return null;
+        var target = messageIndex(messages, row.uuid);
+        if (target < 0) return null;
+        var drawn = drawnIndexed(messages);
+        if (!drawn.length) return null;
+        var best = null;
+        for (var i = 0; i < drawn.length; i++)
+            if (drawn[i].index <= target && (!best || drawn[i].index > best.index)) best = drawn[i];
+        var chosen = best || drawn[0];
+        return { node: chosen.node, index: chosen.index, target: target };
+    }
+
+    // Why a jump found nothing, on the channel the agent frame uses: which handles were tried, how many
+    // message nodes the page has at all, how many of them carry the app's own uuid attribute, and where
+    // the message sits in the session. A page that renders differently from what this file expects is a
+    // difference only the real page can report, and guessing at it from a screenshot has cost rounds.
+    function reportJumpMiss(row) {
+        try {
+            var drawn = drawnMessages(true);
+            var named = 0;
+            try {
+                named = document.querySelectorAll('[data-bookmark-uuid]').length;
+            } catch (e) {
+                named = -1;
+            }
+            var messages = sessionField('messages');
+            var list = Array.isArray(messages) ? messages : [];
+            var indexed = drawnIndexed(list);
+            send({
+                type: 'ccx:debug',
+                reason: 'jumpMiss',
+                dump: {
+                    kind: row.kind,
+                    you: !!row.you,
+                    uuid: String(row.uuid || ''),
+                    value: String(row.value || '').slice(0, 60),
+                    drawn: drawn.length,
+                    named: named,
+                    index: messageIndex(list, row.uuid),
+                    messages: list.length,
+                    from: indexed.length ? indexed[0].index : -1,
+                    to: indexed.length ? indexed[indexed.length - 1].index : -1,
+                },
+            });
+        } catch (e) {
+            /* a report that cannot be sent is not a second failure */
+        }
     }
 
     // A highlight that fades on its own, so what the jump found is identifiable without leaving a mark
@@ -2607,19 +2846,40 @@
         }
     }
 
-    function jumpToResource(row) {
-        closePicker();
-        var node = messageNode(row.uuid);
-        if (!node) {
-            toast('That message is not in the part of the transcript the app has drawn — scroll back to it, then jump again.');
-            return;
-        }
+    function landOn(node) {
         try {
             if (typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'center', behavior: 'smooth' });
         } catch (e) {
             /* an engine that refuses the options object still lands on the message */
         }
         flashMessage(node);
+    }
+
+    function jumpToResource(row) {
+        closePicker();
+        var node = messageNode(row);
+        if (node) {
+            landOn(node);
+            return;
+        }
+        // Not drawn by name. Everything below says which of the two that was, because they want
+        // different things from the user: a message the page holds but gives no node of its own — a
+        // tool result is a message and no bubble — is reached by the turn that holds it, while a
+        // message from further back than the app renders at all is reached by nothing, and the switch
+        // that would put it on screen is worth naming. A jump that lands near is useful; a jump that
+        // pretends to be exact is not.
+        var near = nearestDrawnNode(row);
+        if (near) {
+            landOn(near.node);
+            toast(
+                near.target - near.index > 50
+                    ? 'That message is further back than the transcript the app draws — this is the oldest turn it has. "History before compaction", and a session reopened after it, reach the rest.'
+                    : 'The message itself is not drawn — this is the nearest turn the app has.',
+            );
+            return;
+        }
+        reportJumpMiss(row);
+        toast('That message is not in the part of the transcript the app has drawn — scroll back to it, then jump again.');
     }
 
     function resourceRow(row) {
@@ -2695,6 +2955,31 @@
             label.appendChild(subject);
         } else label.textContent = row.label;
         el.appendChild(label);
+        // A commit or a worktree says whose it is: made here, or only read out of git in a listing.
+        if (typeof row.made === 'boolean') {
+            var own = document.createElement('span');
+            own.className = 'ccx-res-own ccx-res-own-' + (row.made ? 'made' : 'seen');
+            own.textContent = row.made ? 'made' : 'seen';
+            own.title = row.made
+                ? 'This session made it'
+                : 'The session only read this one out of git — it is not work done here';
+            el.appendChild(own);
+        }
+        // When it was first said. The same clock the agent map's rows lead with, and the same rule: the
+        // time alone for today, the date in front of it for anything older, the year once that is not the
+        // current one — a list of resources spans days in a session that was left open.
+        var when = row.at ? callTime(row.at) : undefined;
+        if (when) {
+            var time = document.createElement('span');
+            time.className = 'ccx-res-time';
+            time.textContent = when;
+            try {
+                time.title = 'First mentioned at ' + new Date(row.at).toLocaleString();
+            } catch (e) {
+                /* a clock that cannot be formatted is a time without a tooltip */
+            }
+            el.appendChild(time);
+        }
         if (row.you) {
             var youTag = document.createElement('span');
             youTag.className = 'ccx-res-you';
@@ -2726,6 +3011,57 @@
         return el;
     }
 
+    // One fold's worth of rows, capped, with the count of what the cap left out. Used for a section's
+    // own rows and for the list of what was only read.
+    function appendResourceRows(container, rows) {
+        var shown = rows.slice(0, RESOURCE_CAP);
+        for (var i = 0; i < shown.length; i++) container.appendChild(resourceRow(shown[i]));
+        if (rows.length > shown.length) {
+            var more = document.createElement('div');
+            more.className = 'ccx-res-more';
+            more.textContent = '+' + (rows.length - shown.length) + ' more';
+            container.appendChild(more);
+        }
+        return container;
+    }
+
+    // The fold a commit or a worktree that was only read goes under. Same markup and same stylesheet as
+    // the section's own head, one level in, so the two fold the same way and look like what they are.
+    function readOnlyFold(kind, rows) {
+        var fold = document.createElement('div');
+        fold.className = 'ccx-res-sub';
+        var key = kind + ':seen';
+        fold.setAttribute('data-ccx-open', resourceFold[key] ? '1' : '0');
+
+        var head = document.createElement('div');
+        head.className = 'ccx-res-head ccx-res-subhead';
+        var caret = document.createElement('span');
+        caret.className = 'ccx-res-caret';
+        caret.textContent = '▸';
+        var label = document.createElement('span');
+        label.className = 'ccx-res-head-label';
+        label.textContent = 'only read';
+        var count = document.createElement('span');
+        count.className = 'ccx-res-head-count';
+        count.textContent = String(rows.length);
+        head.appendChild(caret);
+        head.appendChild(label);
+        head.appendChild(count);
+        head.title = 'Read out of git in this session — looked at, not made here';
+        head.onclick = function () {
+            var open = fold.getAttribute('data-ccx-open') === '1';
+            fold.setAttribute('data-ccx-open', open ? '0' : '1');
+            resourceFold[key] = !open;
+        };
+        fold.appendChild(head);
+
+        var body = document.createElement('div');
+        body.className = 'ccx-res-body';
+        appendResourceRows(body, rows);
+        fold.appendChild(body);
+        return fold;
+    }
+
     function openResources() {
         closePicker();
         var rows = resourceScan();
@@ -2751,7 +3087,7 @@
         var hint = document.createElement('div');
         hint.className = 'ccx-hint';
         hint.textContent =
-            'Read from this session\'s transcript — links in messages, pages the tools fetched, files they touched, the branches, commits and worktrees it made, attachments. "you" marks what came from your own messages, which come first in each section; a section head folds it';
+            'Read from this session\'s transcript — links in messages, pages the tools fetched, files they touched, the branches, commits and worktrees it made, attachments. "you" marks what you mentioned first, and those lead each section; a section head folds it';
         box.appendChild(hint);
 
         // forEach rather than a counting loop, because each section's head closes over its own wrapper:
@@ -2797,17 +3133,17 @@
 
             // The rows are built whether the section is folded or not: the fold is a stylesheet rule on
             // the wrapper, so nothing has to be rebuilt to unfold one — and the dialog is repainted on
-            // every state push, which would otherwise throw away what was unfolded.
+            // every state pass, which would otherwise throw away what was unfolded.
             var body = document.createElement('div');
             body.className = 'ccx-res-body';
-            var shown = mine.slice(0, RESOURCE_CAP);
-            for (var k = 0; k < shown.length; k++) body.appendChild(resourceRow(shown[k]));
-            if (mine.length > shown.length) {
-                var more = document.createElement('div');
-                more.className = 'ccx-res-more';
-                more.textContent = '+' + (mine.length - shown.length) + ' more';
-                body.appendChild(more);
-            }
+            // A commit or a worktree the session only read out of git goes under its own fold, shut by
+            // default: what the section is about is work done here, and a `git log` of twenty commits
+            // would otherwise bury it. Everything else has no such split.
+            var kept = [];
+            var readOnly = [];
+            for (var k = 0; k < mine.length; k++) (mine[k].made === false ? readOnly : kept).push(mine[k]);
+            appendResourceRows(body, kept);
+            if (readOnly.length) body.appendChild(readOnlyFold(section.kind, readOnly));
             wrap.appendChild(body);
             box.appendChild(wrap);
         });
@@ -4172,8 +4508,12 @@
         '.ccx-res-head{display:flex;align-items:center;gap:5px;padding:8px 10px 2px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.5;cursor:pointer;user-select:none}',
         '.ccx-res-head:hover{opacity:.85}',
         '.ccx-res-caret{flex:0 0 auto;width:8px;transition:transform .12s ease}',
-        '.ccx-res-section[data-ccx-open="1"] .ccx-res-caret{transform:rotate(90deg)}',
-        '.ccx-res-section[data-ccx-open="0"] .ccx-res-body{display:none}',
+        // Both the section and the fold inside it are a wrapper with a head and a body, so the two rules
+        // are written against that shape rather than against one of the two class names.
+        '[data-ccx-open="1"] > .ccx-res-head .ccx-res-caret{transform:rotate(90deg)}',
+        '[data-ccx-open="0"] > .ccx-res-body{display:none}',
+        '.ccx-res-subhead{opacity:.4;font-size:10px;letter-spacing:0}',
+        '.ccx-res-sub > .ccx-res-body{padding-left:8px}',
         '.ccx-res-head-count{margin-left:6px;opacity:.8}',
         // One row per resource, so the value is what the eye follows: monospace, ellipsised from the
         // right for a path and from the left is not possible in CSS — a long URL therefore gives up
@@ -4187,7 +4527,13 @@
         // whatever order the two stylesheets end up in; the radius and the cover fit stay the chip's.
         '.ccx-res-row .ccx-res-thumb{width:28px;height:28px}',
         '.ccx-res-dims{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums}',
+        '.ccx-res-time{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums;white-space:nowrap}',
         '.ccx-res-you{flex:0 0 auto;padding:0 4px;border-radius:6px;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.8;color:var(--vscode-badge-foreground, var(--vscode-foreground));background:var(--vscode-badge-background)}',
+        // Made versus seen. The two are told apart by brightness rather than by hue, because which
+        // commits a session wrote is a fact about it, not a warning.
+        '.ccx-res-own{flex:0 0 auto;padding:0 4px;border-radius:6px;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}',
+        '.ccx-res-own-made{opacity:.85;color:var(--vscode-charts-green, #3fb950);border:1px solid currentColor}',
+        '.ccx-res-own-seen{opacity:.4;border:1px dashed currentColor}',
         '.ccx-res-jump{flex:0 0 auto;padding:0 4px;border-radius:3px;font-size:11px;opacity:.45;cursor:pointer}',
         '.ccx-res-jump:hover{opacity:1;background:var(--vscode-toolbar-hoverBackground, rgba(128,128,128,.2))}',
         // What the jump found, for as long as it takes to look: the app's own find-match colour, fading

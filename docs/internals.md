@@ -884,6 +884,29 @@ signature in the dialog, and every signature is required, so both are left as th
 entry's own `model`, and a Claude model the subagent's messages report, ahead of the call's — an opening
 for the model segment that a delegated run does not use yet, so its line reads the same on every release.
 
+### A run's manifest is the map's only source, so it has to be closed by whoever opened it
+
+`~/.claude/vannevar/agent-runs/<session>.json` is written by the MCP server before it spawns the CLI and
+is the only thing that tells the extension host a run exists: `session`, `owner` (the CLI's session id,
+which is how a tab claims a run no call of its own explains), `description`, `background`, `profile`,
+`model`, `state`, `startedAt`, `finishedAt`. The host reads the directory, adds what only the transcript
+knows and forwards the lot to the page, which turns each into an entry of the agent map. `state` is
+`running` until the run ends, and the entry's status — the word on the card, whether the row is counted
+as working, whether **Stop agent** is drawn at all — comes from it.
+
+That makes the manifest the whole of what the page knows, and a manifest left `running` is not a stale
+detail but a live-looking run: the row sits in the dialog with a working clock, and **Stop agent** on it
+reaches `requestAgentStop`, which checks the manifest, finds `running`, writes `<session>.stop` beside it
+and answers `ok`. Nothing else happens, because the only thing that ever reads a stop request is the
+server that owns the child, and that server is gone.
+
+The server is gone because it exits when its client closes the pipe — a window reload, a session that
+ended — and the exit path used to kill the children and stop there. `abandonRuns` now closes every
+manifest the process still has open (`stopped`, with the ids remembered so `execute` does not write a
+failure over it when the killed child breaks its own answer) before `main` exits. What it cannot cover
+is a server killed outright, where no code runs at all: for that there is only the sweep, which drops
+manifests older than two hours on the next run a server opens.
+
 ### The row's meta line is a pure function of the entry, and one patch reaches all of it (2.1.286)
 
 `gF0(entry, now)` builds the `5m 1s · 77.9k tokens` line: the duration out of `Kz5` — the running clock
@@ -933,11 +956,26 @@ countdown documents, and the same bug when it is missed.
 Which side of the conversation a resource came from is the one thing a reader cannot recover from the
 value: a URL pasted into a prompt and a URL the model wrote look exactly alike. So the row carries it —
 a `you` tag, and the user's rows ahead of the model's inside each section, first-seen order kept
-within each half. The flag is set by `userVoice()`, which is a little less trivial than it looks: a
-message of type `user` is not always the user's, since a tool result arrives on the same side of the
-conversation, and the app's own injected turns carry `isSynthetic`. Only a `user` message that is
-neither synthetic nor carrying a `tool_result` block counts, and an attachment always does — the app
-has no other way to put one into a transcript.
+within each half. It is the *first* sighting that decides, not any of them: the model echoing a link
+the user pasted keeps it theirs, while a link the model wrote and the user quoted back later stays the
+model's, and only the first word on a resource can tell those two apart. The flag comes from
+`userVoice()`, which is a little less trivial than it looks: a message of type `user` is not always the
+user's, since a tool result arrives on the same side of the conversation, a subagent's prompt and its
+results do too (those carry `parentToolUseId`/`sdkParentToolUseId`), and the app's own injected turns
+carry `isSynthetic`. Only a `user` message that is none of those counts, and an attachment always does —
+the app has no other way to put one into a transcript.
+
+Each row also carries when its first mention was written, off the clock the CLI stamped the turn with
+(`createdAt`) rather than the one the page built the message object at (`timestamp`), which on a session
+reopened from disk is hours later. The format is not written again here: it is `callTime()`, the same
+function the agent map's rows lead with — clock for today, date in front, year when it is not this one —
+because two clocks in one extension that disagree about how a day is spelled is a bug waiting to be
+reported. A message with neither field is a row with no time, which is honest and rare.
+
+A compaction summary is not scanned at all, rather than scanned and unmarked. It is the whole
+conversation again in a single message of the user's (`isCompactSummary`, and the uuids the host hands
+over in `noteCompactSummaries()`), so every link in it was already counted where it first appeared:
+scanning it would double the counts and hand the user links the model wrote. A copy is not a mention.
 
 The count is a set count, which is what the stock one is: `N agents` is how many subagents there are,
 not how many task events arrived. So one `Map` holds all four kinds keyed by the resource itself — a URL
@@ -971,13 +1009,43 @@ Three of the sections are the repository rather than the transcript, and they ar
 of a *command*. That is normally the thing not to do — the paths inside a shell line are guesswork, and
 the file section takes `file_path`/`notebook_path`/`path` and nothing else for exactly that reason. What
 makes these different is that they come from git's grammar rather than from the shell's: `git switch -c
-x` names a branch, `git worktree add … <path>` ends in the path, and a commit's hash and subject exist
+x` names a branch, `git worktree add … <path>` names the path as its first non-option argument, and a commit's hash and subject exist
 only in what git prints back (`[main 4f2a1c3] subject`), which is why the output is read as well as the
 command. Two deliberate omissions keep it from filling with noise: a bare `git checkout x` is not read
 from the command, since that call may be restoring a file — a branch moved to is taken from `Switched to
 branch 'x'` instead — and a `git log` full of hashes contributes nothing, because the list is of what the
 session did, not of what it looked at. A branch and a commit carry no `open` target, so their rows are
 drawn without one rather than failing at the host.
+
+The first version of this read exactly one shape — `[main 4f2a1c3] subject` — and so lost every commit
+made with `git commit -q`, which prints nothing at all, and every commit written through a heredoc,
+which prints the same blank. Both are ordinary, and the fix is the second source: a push names the hash
+in its `old..new` range, and a one-line `git log` on the same command line names the subject. A commit
+usually arrives twice, once from the push as a bare hash and once from the log with its subject, so
+`note()` lets a label that is only the short hash give way to one that is not: the row is read by its
+subject, and the hash is what it is filed under.
+
+Reading the log without that guard means the section also holds what the session merely looked at — which
+is the right answer, as long as the row says so. So commits and worktrees carry a `made`/`seen` tag, set
+from the command rather than guessed: `git worktree add` and a `[branch hash]` line are the session's own.
+"First non-option argument" is a rule rather than a heuristic, and the first version of this used a
+heuristic instead — the last token of the line — which read the branch as a worktree on a command that
+put a commit-ish after the path, and read `2>` as one on a command that redirected its output. Both of
+those are ordinary lines; the token scan skips an option's own value (`-b`, `-B`, `--reason`) and stops
+at a redirection, which is where the arguments ended anyway.
+work, a `git log` or `git worktree list` is a listing, and a log line on a command that also contains
+`commit` or `push` is the session reading back its own. The flag only rises — `noteOwn()` sets it on the
+first sighting and lets a write raise a `seen` to a `made` — so a hash read out of a bare `git log -20`
+is marked as read, and stops being marked that way once the session pushes it: reading a commit does not
+make it less yours when you write it out.
+
+Inside Commits and Worktrees there is a second fold, `readOnlyFold()`, holding what was only read. A
+commit or a worktree can be made here or merely looked at, and the second kind arrives in bulk — one
+`git log` is twenty rows — so it goes under a head of its own, shut by default, while the section keeps
+saying what the session did. It is the same markup as a section head, one level in, and the stylesheet
+rules are therefore written against the shape (`[data-ccx-open="0"] > .ccx-res-body`) rather than against
+`.ccx-res-section`: two kinds of wrapper fold the same way, and a rule naming one of them would silently
+stop applying to the other the moment a third appears.
 
 Sections fold, and Files come folded — a working session has more of them than of anything else. The
 rows are built either way and the fold is one stylesheet rule on the wrapper
@@ -988,10 +1056,39 @@ one `var` shared between them and every head would fold the last section drawn, 
 version of this behaved.
 
 The row's other affordance stays on the page: an arrow that closes the dialog and scrolls the
-transcript to the message the resource came from. The node is found the way `applyHidden()` finds the
-one it is to hide — `[data-testid="assistant-message"]` and `[class*="userMessageContainer_"]`, with
-the message off each node's fiber through `messagePropOf()` — which is the same problem (a message, and
-the node that draws it) solved once in this file already. The uuid is the *first* sighting's, since
+transcript to the message the resource came from. The node is looked for in three ways, in the order of
+how exactly each can name it. The first was found in the 2.1.286 bundle rather than invented here: the
+assistant message div carries `data-bookmark-uuid`, and the app's own code selects by it, so it is a
+supported handle rather than one of ours. The second is the walk `applyHidden()` makes —
+`[data-testid="assistant-message"]` and `[class*="userMessageContainer_"]`, with the message off each
+node's fiber through `messagePropOf()` — which a user message needs, having no uuid attribute of its
+own. The third is the row's own value as text, and it is a fallback, not a search: a URL pasted into a
+prompt is in the bubble verbatim, and it is what makes a user message reachable when the fiber walk
+comes up empty.
+
+Two things about the first version of this cost a round: it used `messagePropOf()` for the walk, and
+that helper is strict on purpose — `isTranscriptMessage()` demands a `timestamp`, which is the right
+test for deciding what `applyHidden()` may mark hidden, and the wrong one for recognising a message to
+scroll to. The jump walks the fibers itself now, matching on `uuid` alone. And ten hops was the depth
+measured on a plain turn; a message holding a tool call nests one level per block renderer, so the walk
+goes thirty and stops at the first match. Neither is visible from a stub, which is why a jump that finds
+nothing now reports what the page actually held — how many message nodes are drawn, how many carry the
+app's own `data-bookmark-uuid`, and what the row was looking for — on the `ccx:debug` channel the agent
+frame already uses (host: `~/.claude/vannevar/debug.log`).
+
+That report from a real tab is what shaped the rest of it: 1070 messages in the session, 72 message
+nodes drawn, 20 of them carrying a uuid. The gap is not (only) the 600-message trim — a turn draws as
+one node while holding many messages, a tool result among them being a message and no bubble — so a
+resource can be in the session, drawn, and still have no node of its own. `drawnIndexed()` is what makes
+that visible: each drawn node tied back to its index in `session.messages`, which is the order the page
+draws in. With that, a miss has three answers rather than one. A message the page does not give a node
+of its own is landed on by the turn that holds it — the nearest drawn index at or above the target — and
+the row says it landed near rather than on it. A message from further back than the app draws at all
+lands at the top of what it has, and there the message names the switch that lifts the trim (**History
+before compaction**, the one answering the app's `keepEveryMessage()` with true) and says to reopen the
+session, the trim being decided when the transcript is built. Only a transcript with nothing drawable in
+it at all gets the plain "not drawn" answer — and that one is reported, with the index of the message
+and the range of indices the page is showing, so the next round starts from facts. The uuid is the *first* sighting's, since
 "where did this come from" is the question and the later ones are the same thing said again. Two
 consequences are worth knowing: the transcript is virtualised, so a resource from far enough back has
 no node at all and the jump says so rather than scrolling to the nearest message; and the mark it
@@ -1287,26 +1384,3 @@ The same turn sent straight to the API, one function call in the current step: n
 `claude.exe` is a bun standalone executable (319,026,336 bytes): `/$bunfs/root/` and `B:/~BUN/root/` markers, the `---- Bun! ----` trailer at offset 319,015,421, followed by ~10 KB of Authenticode signature. The CLI's JS bundle sits there **in the clear**: a contiguous UTF-8 region at `283,720,669..310,250,408` (25.30 MB) starting with `// @bun @bytecode @bun-cjs (function(exports, require, module, …)`. Two much smaller bundles of the same shape follow it at `310,250,441` and `310,252,643` — the loaders for `image-processor.node` and `audio-capture.node`.
 
 Offsets move on every release; locating the region by scanning forward from the `// @bun @bytecode @bun-cjs` marker while the bytes stay valid UTF-8 text is what actually survives an update.
-### A run's manifest is the map's only source, so it has to be closed by whoever opened it
-
-`~/.claude/vannevar/agent-runs/<session>.json` is written by the MCP server before it spawns the CLI and
-is the only thing that tells the extension host a run exists: `session`, `owner` (the CLI's session id,
-which is how a tab claims a run no call of its own explains), `description`, `background`, `profile`,
-`model`, `state`, `startedAt`, `finishedAt`. The host reads the directory, adds what only the transcript
-knows and forwards the lot to the page, which turns each into an entry of the agent map. `state` is
-`running` until the run ends, and the entry's status вЂ” the word on the card, whether the row is counted
-as working, whether **Stop agent** is drawn at all вЂ” comes from it.
-
-That makes the manifest the whole of what the page knows, and a manifest left `running` is not a stale
-detail but a live-looking run: the row sits in the dialog with a working clock, and **Stop agent** on it
-reaches `requestAgentStop`, which checks the manifest, finds `running`, writes `<session>.stop` beside it
-and answers `ok`. Nothing else happens, because the only thing that ever reads a stop request is the
-server that owns the child, and that server is gone.
-
-The server is gone because it exits when its client closes the pipe вЂ” a window reload, a session that
-ended вЂ” and the exit path used to kill the children and stop there. `abandonRuns` now closes every
-manifest the process still has open (`stopped`, with the ids remembered so `execute` does not write a
-failure over it when the killed child breaks its own answer) before `main` exits. What it cannot cover
-is a server killed outright, where no code runs at all: for that there is only the sweep, which drops
-manifests older than two hours on the next run a server opens.
-

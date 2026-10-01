@@ -263,6 +263,9 @@ class El {
     scrollIntoView() {
         this.scrolled = true;
     }
+    getElementsByTagName(tag) {
+        return this.walk([]).filter((n) => n !== this && n.tagName === tag);
+    }
     // What the page reads a message off: the app's own fiber on the rendered node.
     withMessage(message) {
         this['__reactFiber$ccx'] = { memoizedProps: { message }, return: null };
@@ -371,15 +374,43 @@ const observerPass = () => {
 // written, a notebook, an image and a document.
 const wrap = (b) => ({ content: b });
 let uuid = 0;
-// `timestamp` is there because the page's own isTranscriptMessage() demands one before it will call a
-// fiber's prop a message — which is what the jump reads.
-const msg = (type, blocks) => ({ type, uuid: 'm' + ++uuid, timestamp: ++uuid, content: blocks.map(wrap) });
-const firstMessage = msg('user', [
+// Every message carries a time, because every row shows one: the first message is from yesterday and the
+// rest from today, which is what the two spellings of a row's clock are for.
+const todayAt = (h, m) => {
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return d;
+};
+const yesterdayAt = (h, m) => {
+    const d = todayAt(h, m);
+    d.setDate(d.getDate() - 1);
+    return d;
+};
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const pad2 = (n) => ('0' + n).slice(-2);
+// The rule the page's own callTime() applies: the clock for today, the date in front of it otherwise, and
+// the year in front of that once it is not the current one.
+const stampOf = (d) =>
+    (d.toDateString() === new Date().toDateString()
+        ? ''
+        : `${d.getDate()} ${MONTHS[d.getMonth()]}${
+              d.getFullYear() !== new Date().getFullYear() ? ' ' + d.getFullYear() : ''
+          } `) + `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+const msg = (type, blocks, at) => ({
+    type,
+    uuid: 'm' + ++uuid,
+    timestamp: (at || todayAt(9, 5)).getTime(),
+    content: blocks.map(wrap),
+});
+const firstMessage = msg(
+    'user',
+    [
         {
             type: 'text',
             text: 'See https://example.com/a first, then https://example.com/a again. The docs are at https://example.com/b.',
         },
     ],
+    yesterdayAt(14, 32),
 );
 const messages = [
     firstMessage,
@@ -407,6 +438,20 @@ const messages = [
         { type: 'document', title: 'spec.pdf', source: { type: 'base64', media_type: 'application/pdf', data: 'BBBB' } },
     ]),
     msg('assistant', [{ type: 'text', text: 'Notes are in https://example.com/model-notes.' }]),
+    // The model's link, quoted back by the user afterwards: still the model's, because the first word
+    // on it was.
+    msg('user', [{ type: 'text', text: 'Those https://example.com/model-notes are what I meant.' }]),
+    // The compaction summary: the whole conversation again, in a message of the user's. Nothing in it is
+    // a mention of its own — the copy must not count a link twice or claim one for the user.
+    Object.assign(
+        msg('user', [{ type: 'text', text: 'Summary of everything: https://example.com/a and https://example.com/only-in-summary.' }]),
+        { isCompactSummary: true },
+    ),
+    // A subagent's own turn: it arrives on the user's side of the conversation, and the link in it is
+    // the model's, not the person's.
+    Object.assign(msg('user', [{ type: 'text', text: 'Look at https://example.com/subagent-note when you get there.' }]), {
+        parentToolUseId: 't1',
+    }),
     // A tool result arrives on the user's side of the conversation without being the user's — the
     // line after one is the tool talking, not the person.
     msg('user', [
@@ -424,7 +469,9 @@ const messages = [
                     type: 'tool_use',
                     id: 't8',
                     name: 'Bash',
-                    input: { command: 'git checkout -b feature/resources && git worktree add ../wt-resources' },
+                    // The shape a real one takes: an option with its own value before the path, a
+                    // commit-ish after it, and a redirect at the end of the line.
+                    input: { command: 'git checkout -b feature/resources && git worktree add -b wt-branch ../wt-resources main 2>&1' },
                 },
                 toolResult: {
                     value: {
@@ -450,6 +497,38 @@ const messages = [
                         content: [{ type: 'text', text: '[feature/resources 4f2a1c3] resources: a section per kind\n 1 file changed, 3 insertions(+)' }],
                     },
                 },
+            },
+        ],
+    },
+    // A quiet commit — `git commit -q`, or one written through a heredoc — prints nothing at all, and
+    // the hash exists only in what the same command line did next: pushed it, and read it back.
+    {
+        type: 'assistant',
+        uuid: 'm-git-quiet',
+        content: [
+            {
+                content: { type: 'tool_use', id: 't10', name: 'Bash', input: { command: 'git commit -q -m "quiet" && git push origin main && git log --oneline -1' } },
+                toolResult: {
+                    value: {
+                        content: [
+                            {
+                                type: 'text',
+                                text: 'To https://github.com/x/y.git\n   4f2a1c3..9d8e7f6  main -> main\n9d8e7f6 quiet commit',
+                            },
+                        ],
+                    },
+                },
+            },
+        ],
+    },
+    // A log nobody wrote beside is a lookup, not a resource: these hashes must not become rows.
+    {
+        type: 'assistant',
+        uuid: 'm-git-log',
+        content: [
+            {
+                content: { type: 'tool_use', id: 't11', name: 'Bash', input: { command: 'git log --oneline -5' } },
+                toolResult: { value: { content: [{ type: 'text', text: '1111111 seen only\n2222222 also seen only' }] } },
             },
         ],
     },
@@ -486,8 +565,9 @@ assert.ok(
 assert.equal(pill.children[0].className, 'ccx-res-pill-label', 'the count lives in a span, so the pill rule that stops wrapping applies to it');
 
 // 2. The count is of *distinct* resources: 4 links (one written twice), 2 from the search, 2 files
-//    (one touched twice), 1 notebook, 1 image, 1 document — 10 rows out of 13 mentions.
-assert.equal(pill.textContent, '13 resources', 'the pill counts distinct resources, not mentions');
+//    (one touched twice), 1 notebook, 1 subagent link, 1 branch, 1 commit, 1 worktree, 1 image, 1
+//    document — 18 rows.
+assert.equal(pill.textContent, '18 resources', 'the pill counts distinct resources, not mentions');
 assert.match(pill.title, /click for the list/);
 
 // 3. The dialog groups them, in a fixed order, one row per resource.
@@ -497,15 +577,28 @@ assert.ok(box().className.includes('ccx-resources-box'), 'and it is the resource
 assert.deepEqual(
     box()
         .querySelectorAll('.ccx-res-head-label')
+        // The fold of what was only read has a head of its own, inside a section; the sections are what
+        // this is about.
+        .filter((h) => String(h.parentElement.className).indexOf('ccx-res-subhead') < 0)
         .map((h) => h.textContent),
     ['Links in messages', 'URLs from tools', 'Files', 'Branches', 'Commits', 'Worktrees', 'Images & documents'],
     'sections come in a fixed order and empty ones are skipped',
 );
-assert.equal(rowsOf().length, 13, 'one row per distinct resource');
+assert.equal(rowsOf().length, 18, 'one row per distinct resource');
 
 const shared = rowFor('https://example.com/a');
 assert.ok(shared, 'the URL written twice and fetched once is one row');
-assert.equal(shared.querySelector('.ccx-res-count').textContent, '×3', 'with its count');
+assert.equal(shared.querySelector('.ccx-res-count').textContent, '×3', 'with its count — the compaction summary repeating it is a copy, not a mention');
+// The time it was first said, on the same rule the agent map uses: the clock for today, the date in
+// front of it for a message from another day.
+assert.equal(
+    shared.querySelector('.ccx-res-time').textContent,
+    stampOf(yesterdayAt(14, 32)),
+    'a row from yesterday carries its date, and its clock',
+);
+assert.match(shared.querySelector('.ccx-res-time').textContent, /^30 Sep |^1 Oct |^\d+ \w+/, 'in the machine’s own zone, not UTC');
+assert.equal(rowFor('spec.pdf').querySelector('.ccx-res-time').textContent, '09:05', 'a row from today carries its clock and no date');
+assert.equal(rowFor('only-in-summary'), undefined, 'and a link that exists only in a summary is not a resource of the session');
 assert.match(shared.title, /in your message/, 'and its provenance');
 assert.match(shared.title, /fetched by WebFetch/, 'from every source that named it');
 // First seen wins the section: it was written in a message before a tool was handed it.
@@ -529,6 +622,48 @@ assert.equal(commitRow.className.includes('ccx-res-open'), false, 'a commit has 
 const worktreeRow = rowFor('wt-resources');
 assert.ok(worktreeRow, 'a worktree the session added is a resource');
 assert.ok(worktreeRow.className.includes('ccx-res-open'), 'a worktree is a directory, so its row opens');
+const worktreeRows = sectionFor('Worktrees').querySelectorAll('.ccx-res-row');
+assert.equal(worktreeRows.length, 1, 'the path, not the branch and not the redirect');
+assert.ok(
+    !worktreeRows.some((r) => r.textContent.indexOf('2>') > -1 || r.textContent.indexOf('wt-branch') > -1),
+    'a redirect at the end of the line, or an option value, is not a path',
+);
+
+// A commit made quietly prints no `[branch hash] subject` line at all, so its hash is taken from what
+// the same command line did next — pushed it, and read it back — while a log nobody wrote beside
+// contributes nothing, or the section would fill with every commit the session merely looked at.
+const quiet = rowFor('9d8e7f6');
+assert.ok(quiet, 'a commit that was pushed in the same command line is a resource');
+assert.equal(quiet.querySelector('.ccx-res-count').textContent, '×2', 'named by the push and again by the log');
+assert.match(quiet.querySelector('.ccx-res-label').textContent, /quiet commit/, 'with the subject read back beside it');
+assert.ok(
+    rowsOf().find((r) => r.querySelector('.ccx-res-label').textContent === 'main'),
+    'the branch it was pushed on is one too',
+);
+// 3f. Made or merely read: a commit the session looked up is a resource too, and the tag is what tells
+//     the two apart — as it does for a worktree, which is either added here or listed from git.
+const seen = rowFor('1111111');
+assert.ok(seen, 'a commit the session read out of a log is a resource');
+assert.equal(seen.querySelector('.ccx-res-own').textContent, 'seen', 'marked as one it did not write');
+assert.equal(seen.querySelector('.ccx-res-own').className.includes('ccx-res-own-seen'), true);
+assert.equal(quiet.querySelector('.ccx-res-own').textContent, 'made', 'and the one it pushed is marked as its own');
+// What the session only read goes under a fold of its own, shut by default: the section is about work
+// done here, and a listing of commits it merely looked at would bury that.
+const readOnly = sectionFor('Commits').querySelector('.ccx-res-sub');
+assert.ok(readOnly, 'a commit read out of git is folded away');
+assert.equal(readOnly.getAttribute('data-ccx-open'), '0', 'and shut');
+assert.ok(readOnly.contains(rowsOf().find((r) => r.title.includes('1111111'))), 'the seen commit is inside it');
+assert.ok(!readOnly.contains(quiet), 'while the one the session pushed is not');
+assert.equal(
+    sectionFor('Branches').querySelector('.ccx-res-sub'),
+    null,
+    'a branch has no such split — every one of them is somewhere the session went',
+);
+readOnly.querySelector('.ccx-res-head').onclick();
+assert.equal(readOnly.getAttribute('data-ccx-open'), '1', 'and its head opens it');
+readOnly.querySelector('.ccx-res-head').onclick();
+assert.equal(worktreeRow.querySelector('.ccx-res-own').textContent, 'made', 'a worktree the session added is its own');
+assert.equal(branchRow.querySelector('.ccx-res-own'), null, 'a branch carries no such tag — it is here because the session moved to it');
 
 // 3d. Sections fold, and Files arrive folded: a working session has more of them than of anything
 //     else, and the list is opened for what was said and what was committed first.
@@ -548,7 +683,15 @@ assert.equal(sectionFor('Files').getAttribute('data-ccx-open'), '0', 'and keeps 
 assert.equal(shared.querySelector('.ccx-res-you').textContent, 'you', 'a link the user pasted is marked');
 assert.equal(rowFor('spec.pdf').querySelector('.ccx-res-you').textContent, 'you', 'so is an attachment');
 assert.equal(rowFor('https://example.com/r1').querySelector('.ccx-res-you'), null, 'a search result is not');
-assert.equal(rowFor('model-notes').querySelector('.ccx-res-you'), null, 'nor is a link in a reply');
+// Whose it is is decided by the first mention, not by any: the model's link, quoted back in a prompt
+// afterwards, is still the model's.
+assert.equal(rowFor('model-notes').querySelector('.ccx-res-you'), null, 'nor is a link in a reply, even if the user quotes it later');
+assert.equal(rowFor('model-notes').querySelector('.ccx-res-count').textContent, '×2', 'both mentions are still counted');
+assert.equal(
+    rowFor('subagent-note').querySelector('.ccx-res-you'),
+    null,
+    'nor one in a subagent\'s turn, which arrives on the user\'s side of the conversation all the same',
+);
 assert.equal(
     rowFor('after-tool').querySelector('.ccx-res-you'),
     null,
@@ -625,6 +768,10 @@ const drawn = new El('div');
 drawn.className = 'userMessageContainer_abc';
 pageDocument.body.appendChild(drawn);
 drawn.withMessage(firstMessage);
+// And no `timestamp`, which is what the strict isTranscriptMessage() the hidden marking uses demands:
+// the jump's own walk must not inherit that demand, or a build that drops the field takes the jump
+// away while hiding keeps working.
+delete firstMessage.timestamp;
 pill.onclick();
 rowFor('example.com/b').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
 assert.equal(overlays().length, 0, 'the jump closes the dialog behind it');
@@ -635,12 +782,78 @@ assert.ok(
     'the jump opens nothing — the row\'s own click does that',
 );
 
-// A long session renders only the turns near the viewport, so a resource from far up has no node at
-// all: the jump says so rather than landing on some other message and calling it the one.
+// A message the page holds without giving it a node of its own — a tool result is a message and no
+// bubble — is reached by the turn that holds it, and the row says so rather than passing it off as the
+// message itself.
+drawn.scrolled = false;
 pill.onclick();
 rowFor('https://example.com/r1').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
-const jumpToast = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').pop();
-assert.match(jumpToast.textContent, /not in the part of the transcript/, 'a message with no node is refused, not guessed');
+const nearToast = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').pop();
+assert.match(nearToast.textContent, /nearest turn/, 'a message with no node of its own lands on its turn, and says so');
+assert.ok(drawn.scrolled, 'which is still a jump');
+
+// With nothing drawn that can be tied to a message at all there is nothing honest to land on: the jump
+// says so rather than scrolling to whatever node happened to be first.
+drawn.remove();
+const beforeMiss = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').length;
+pill.onclick();
+rowFor('https://example.com/r1').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
+const missToast = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').pop();
+assert.equal(
+    pageDocument.body.children.filter((c) => c.className === 'ccx-toast').length,
+    beforeMiss + 1,
+    'a transcript with nothing drawn reports it',
+);
+assert.match(missToast.textContent, /not in the part of the transcript/, 'in words the user can act on');
+pageDocument.body.appendChild(drawn);
+
+// The app names an assistant message itself — `data-bookmark-uuid`, the attribute its own code links
+// to a message by — so for those the jump does not go through the fiber at all.
+const namedNode = new El('div');
+namedNode.className = 'userMessageContainer_named';
+namedNode.setAttribute('data-bookmark-uuid', 'm-search');
+pageDocument.body.appendChild(namedNode);
+pill.onclick();
+rowFor('https://example.com/r1').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
+assert.ok(namedNode.scrolled, 'a message the app names by attribute is found without its fiber');
+assert.equal(namedNode.getAttribute('data-ccx-flash'), '', 'and marked the same way');
+
+// Failing that too, the row's own value is the last handle — a URL pasted into a prompt is in the
+// bubble verbatim, which is what makes a user message reachable at all.
+namedNode.removeAttribute('data-bookmark-uuid');
+namedNode.textContent = 'the ranking comes from https://example.com/r1 and nothing else';
+namedNode.scrolled = false;
+const toastsBefore = pageDocument.body.children.filter((c) => c.className === 'ccx-toast').length;
+pill.onclick();
+rowFor('https://example.com/r1').querySelector('.ccx-res-jump').onclick({ stopPropagation() {} });
+assert.ok(namedNode.scrolled, 'a message with neither attribute nor fiber is still found by the value it holds');
+assert.equal(
+    pageDocument.body.children.filter((c) => c.className === 'ccx-toast').length,
+    toastsBefore,
+    'and landing there is not reported as a failure',
+);
+
+// An attachment has no text to be found by, so the picture is the handle: the row carries the payload
+// and the bubble it came from holds the same bytes.
+const mediaNode = new El('div');
+mediaNode.className = 'userMessageContainer_media';
+const bubbleImage = new El('img');
+bubbleImage.src = 'data:image/png;base64,AAAA';
+mediaNode.appendChild(bubbleImage);
+pageDocument.body.appendChild(mediaNode);
+// Deliberately without a fiber: the uuid paths must both miss so that the picture itself is what
+// answers, which is the only handle an attachment has.
+pill.onclick();
+rowsOf()
+    .find((r) => r.querySelector('.ccx-res-thumb'))
+    .querySelector('.ccx-res-jump')
+    .onclick({ stopPropagation() {} });
+assert.ok(mediaNode.scrolled, 'an attachment is found by its bytes, without a timestamp on the message');
+assert.equal(toastsNow(), toastsBefore, 'and that is not a failure either');
+
+function toastsNow() {
+    return pageDocument.body.children.filter((c) => c.className === 'ccx-toast').length;
+}
 
 // 5. A repaint replaces the dialog rather than stacking, and Escape and a backdrop click close it.
 pill.onclick();
@@ -663,7 +876,7 @@ session.messages.value = messages.concat([
     msg('assistant', [{ type: 'tool_use', id: 't7', name: 'Read', input: { file_path: 'C:/dev/app/README.md' } }]),
 ]);
 pushState();
-assert.equal(pills()[0].textContent, '14 resources', 'a new resource is counted on the next state push');
+assert.equal(pills()[0].textContent, '19 resources', 'a new resource is counted on the next state push');
 
 // 8. Nothing to show means no pill: a control that opens an empty list is one more thing in the row.
 session.messages.value = [];
@@ -700,6 +913,9 @@ assert.ok(/type: 'ccx:openResource'/.test(webview), 'the page must ask the host 
 assert.ok(/function placeResourcePill/.test(webview), 'placement is re-made on every pass, like the countdown\'s');
 assert.ok(/data-testid="assistant-message"/.test(webview), 'the jump must find messages the way the hidden marking does');
 assert.ok(/data-ccx-flash/.test(webview), 'and mark what it landed on with an attribute, not a class React rewrites');
+assert.ok(/data-bookmark-uuid/.test(webview), 'the app\'s own handle on a message must be tried first');
+assert.ok(/function drawnMessages/.test(webview), 'and the fiber walk kept for the messages it does not name');
+assert.ok(/reason: 'jumpMiss'/.test(webview), 'a jump that finds nothing must report what the page held');
 assert.ok(/menuButton_/.test(webview), 'and a row with neither pill still has somewhere but the end to go');
 assert.ok(/m\.type === 'ccx:openResource'/.test(host), 'and the host must answer it');
 assert.ok(/function openResource\(/.test(host), 'with the open itself in one readable place');
