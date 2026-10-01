@@ -896,10 +896,12 @@ thing two runs of the same length cannot be told apart without.
 
 Vannevar splices the call's clock time in as the first element of that array (`__ccx.callTime`,
 runtime/webview.js — local hours and minutes, zero-padded, 24-hour, the epoch in `startTime` being all
-an entry carries). The stock filter then drops it back out for an entry with no start time, so nothing
-else about the line changes. The signature is structural rather than named: the function's second `let`
-is the `usage?.totalTokens` read, which no other function in the bundle makes, and the duration local in
-front of it comes out of the match. It matched once in each of 2.1.280–2.1.286.
+an entry carries; a run from another day gets its date in front of the clock, and its year too once
+that is not the current one, since the map is rebuilt for a reopened session and a bare clock there
+reads as this morning's). The stock filter then drops it back out for an entry with no start time, so
+nothing else about the line changes. The signature is structural rather than named: the function's
+second `let` is the `usage?.totalTokens` read, which no other function in the bundle makes, and the
+duration local in front of it comes out of the match. It matched once in each of 2.1.280–2.1.286.
 
 ### A compaction hides history three times, and deletes none of it (2.1.274)
 

@@ -428,12 +428,37 @@ assert.deepStrictEqual(Object.keys(bare), ['messages', 'sessionId'], 'nothing is
 // The app's own row meta — `5m 1s · 77.9k tokens` — says nothing about when the run happened, and two
 // runs of the same length read alike without it. The page formats the time; the patch splices it into
 // the stock array as the first element, where the stock filter already drops anything undefined.
-const called = new Date(2026, 9, 1, 9, 5, 30).getTime();
-assert.equal(pageWindow.__ccx.callTime(called), '09:05', 'the clock time is zero-padded, 24-hour, in the machine’s zone');
-assert.equal(pageWindow.__ccx.callTime(new Date(2026, 9, 1, 14, 0).getTime()), '14:00', 'a whole hour still shows its minutes');
+// A run from today needs no date — every other row in the map is from today too, and the clock is what
+// separates them. Built off the clock rather than written as a literal date, which would only be today
+// on the one day the test was written.
+const today = (h, m, s) => {
+    const at = new Date();
+    at.setHours(h, m, s || 0, 0);
+    return at.getTime();
+};
+assert.equal(pageWindow.__ccx.callTime(today(9, 5, 30)), '09:05', 'the clock time is zero-padded, 24-hour, in the machine’s zone');
+assert.equal(pageWindow.__ccx.callTime(today(14, 0)), '14:00', 'a whole hour still shows its minutes');
+
+// A reopened session's map holds runs from other days, where a bare clock reads as this morning's.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const yesterday = new Date(Date.now() - 86400000);
+const pad = (n) => ('0' + n).slice(-2);
+const clockOf = (at) => `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+const dated = (at, year) => `${at.getDate()} ${MONTHS[at.getMonth()]}${year ? ' ' + at.getFullYear() : ''} ${clockOf(at)}`;
+assert.equal(
+    pageWindow.__ccx.callTime(yesterday.getTime()),
+    dated(yesterday, yesterday.getFullYear() !== new Date().getFullYear()),
+    'a run from another day carries its date, and the year only when it is not this year',
+);
+assert.equal(
+    pageWindow.__ccx.callTime(new Date(2019, 4, 7, 8, 30).getTime()),
+    '7 May 2019 08:30',
+    'a run from an earlier year carries it, so nothing has to be guessed',
+);
 assert.equal(pageWindow.__ccx.callTime(undefined), undefined, 'a run with no start time contributes nothing to the line');
 assert.equal(pageWindow.__ccx.callTime(0), undefined);
 assert.equal(pageWindow.__ccx.callTime('yesterday'), undefined, 'and anything that is not a timestamp is ignored');
+assert.notEqual(pageWindow.__ccx.callTime(yesterday.getTime()), clockOf(yesterday), 'a date is never dropped for a run that is not today’s');
 
 const patcher = readFileSync(new URL('../runtime/apply-patch.mjs', import.meta.url), 'utf8');
 assert.ok(/callTime: callTime/.test(readFileSync(new URL('../runtime/webview.js', import.meta.url), 'utf8')), 'window.__ccx must expose it');
