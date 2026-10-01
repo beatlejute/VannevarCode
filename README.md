@@ -42,8 +42,9 @@ another on DeepSeek, a third on your ChatGPT subscription.
   transcript either way; sending a summary instead is what makes it cheaper.
 - **Auto-compact before the cache expires** and **History before compaction** — two switches under
   *Thinking*, both off by default. The first runs `/compact` five minutes before a 1-hour cache tier
-  lapses; the second shows everything a `/compact` folded away when a session is reopened (a view only —
-  the model's context is still the summary).
+  lapses — or, on a provider that reports no tier at all, before the lifetime the profile declares in
+  `cache.ttlMinutes` runs out; the second shows everything a `/compact` folded away when a session is
+  reopened (a view only — the model's context is still the summary).
 - **Switching back to Anthropic keeps working.** An id minted by another provider is rejected by
   Anthropic with a `400`, forever, because it is re-read from the transcript on every relaunch. Spawns
   going to Anthropic have those ids dropped first; ids Anthropic itself issued are left alone.
@@ -100,6 +101,14 @@ The ★ beside a name in the picker sets the **default provider**: the profile a
 nothing else — a per-tab pick or a session's own binding — has said otherwise. Click it again to clear,
 which puts new tabs back on `settings.json` / the subscription. The default lives in
 `~/.claude/vannevar/default-profile.json`, not in `settings.json`.
+
+A profile may also declare keys of Vannevar's own, which the CLI never sees. One of them is
+`"cache": { "ttlMinutes": 60, "source": "documented" }` — how long this provider is said to keep the
+prompt prefix alive. No provider returns a cache lifetime in a response, so a non-Anthropic backend
+leaves the page with a cache hit and no expiry; the declared number fills that gap, and
+**Auto-compact before the cache expires** uses it exactly where an Anthropic session uses the measured
+1-hour tier. Treat it as an estimate and not a measurement: `source` is `documented` or `declared`,
+whichever kind of reading it came from, and a hit only proves the prefix was alive at that turn.
 
 ## OpenAI and the ChatGPT subscription
 

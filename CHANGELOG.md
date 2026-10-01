@@ -5,6 +5,18 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## Unreleased
+
+A profile may declare how long its provider keeps a prompt prefix alive: `"cache": { "ttlMinutes": 60,
+"source": "documented" }`. No provider returns a cache lifetime in a response, so a non-Anthropic
+backend reports hits and no expiry; the declared number is what **Auto-compact before the cache
+expires** counts down against there, where an Anthropic session counts down against the measured
+1-hour tier. It is never presented as measured — `source` records whether the number came from
+documentation or an operator's reading — and it travels to the page as a different kind of signal
+(`ttl: "declared"`), with a floor of 15 minutes so a short-lived cache is ignored rather than compacted
+between turns. `list_profiles` prints the declared lifetime beside each profile, and all three bundled
+templates declare 60 minutes.
+
 ## 2.1.286
 
 Verified against Claude Code **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**,

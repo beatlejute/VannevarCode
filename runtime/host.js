@@ -1850,6 +1850,21 @@ function sdkUsage(sdk) {
     return null;
 }
 
+// The lifetime of a non-Anthropic prefix cache, as the profile declares it. No provider puts an
+// expiry in a response, so a backend that is not the Anthropic API leaves the page with a hit and no
+// deadline; `cache: { ttlMinutes }` is the operator's reading of the provider's documentation, and
+// the page is handed it as its own kind of signal so the two can never be confused downstream.
+// Read per hit rather than cached: a profile edited mid-session applies on the next turn, which is
+// the rule the rest of this file follows, and one small read per assistant turn is not worth a
+// watcher of its own.
+function declaredCacheTtl(name) {
+    if (!name) return 0;
+    const raw = readJson(path.join(PROFILES_DIR, name + '.json'));
+    const c = raw && raw.cache;
+    const ttl = c && Number(c.ttlMinutes);
+    return Number.isFinite(ttl) && ttl > 0 ? ttl : 0;
+}
+
 function interceptOutgoing(webview) {
     if (webview.__ccxPatched) return;
     webview.__ccxPatched = true;
@@ -1883,6 +1898,15 @@ function interceptOutgoing(webview) {
                     Number(usage.cache_read_input_tokens) > 0 || Number(usage.cache_creation_input_tokens) > 0;
                 if (cached && webview.__ccxPromptCacheTier === '1h')
                     post(webview, { type: 'ccx:cache', ttl: '1h', anchorAt: Date.now() });
+                else if (cached) {
+                    // Where the split says nothing, a declared lifetime is all there is. A hit renews
+                    // it exactly as it renews the tier, so the anchor moves on every cached turn.
+                    // Nothing is sent for a profile that declares none — silence is the honest answer
+                    // for a backend whose retention nobody wrote down.
+                    const ttlMinutes = declaredCacheTtl(effectiveProfile(webview.__ccxSessionId, webview));
+                    if (ttlMinutes)
+                        post(webview, { type: 'ccx:cache', ttl: 'declared', ttlMinutes, anchorAt: Date.now() });
+                }
             }
         } catch {}
         return original(msg);

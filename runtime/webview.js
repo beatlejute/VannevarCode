@@ -469,11 +469,16 @@
         } else if (d.type === 'ccx:spellcheckResult') {
             applySpellcheckResult(d);
         } else if (d.type === 'ccx:cache') {
-            // The host reports the 1h tier only; anything else is treated as "no signal" so a stale
-            // timer never fires on a session that has since dropped to the 5m tier.
-            cacheInfo = (d.ttl === '1h' && typeof d.anchorAt === 'number')
-                ? { ttl: d.ttl, anchorAt: d.anchorAt }
-                : null;
+            // Two kinds of signal arrive here. The 1h tier is measured — the host reads it off the
+            // usage split — and every other tier from the Anthropic API is treated as "no signal", so
+            // a stale timer never fires on a session that has since dropped to the 5m one. The second
+            // kind is a declared lifetime for a backend with no split to read: `ttlMinutes` comes from
+            // the profile, is an operator's estimate from documentation, and is never dressed as a
+            // measurement — the page labels it where it is used and nowhere pretends to know more.
+            if (d.ttl === '1h' && typeof d.anchorAt === 'number') cacheInfo = { ttl: '1h', anchorAt: d.anchorAt };
+            else if (d.ttl === 'declared' && typeof d.anchorAt === 'number' && Number(d.ttlMinutes) > 0)
+                cacheInfo = { ttl: 'declared', ttlMinutes: Number(d.ttlMinutes), anchorAt: d.anchorAt };
+            else cacheInfo = null;
             if (autocompactPref()) scheduleAutocompact();
             else cancelAutocompact();
         } else if (d.type === 'ccx:agentRuns') {
@@ -1831,13 +1836,19 @@
         }
     }
 
-    // --- Auto-compact before the 1h cache expires ---------------------------------------------
+    // --- Auto-compact before the cache expires --------------------------------------------------
     //
-    // The host reports the last 1h cache signal (ccx:cache) and this schedules a /compact a little
-    // before it lapses — the compaction itself then rides the still-warm prefix instead of paying to
-    // re-cache the whole transcript on the next turn. Only the 1h tier is acted on; the 5m one is too
-    // short for a wait to mean anything, and the host never sends it.
+    // The host reports the last cache signal (ccx:cache) and this schedules a /compact a little before
+    // it lapses — the compaction itself then rides the still-warm prefix instead of paying to re-cache
+    // the whole transcript on the next turn. Two signals count: the 1h tier, which is measured, and a
+    // lifetime the profile declares (`cache.ttlMinutes`) for a backend that reports hits and no
+    // expiry. The 5m tier is ignored — too short for a wait to mean anything — and so is a declared
+    // lifetime below the floor, for the same reason: compacting a five-minute cache would run between
+    // turns and buy nothing. A declared number is documentation, not a measurement, which is why the
+    // two are carried as different kinds and only ever compared against their own threshold.
     var AUTOCOMPACT_KEY = 'ccx.autocompact.enabled';
+    var COMPACT_MARGIN_MS = 5 * 60 * 1000;
+    var DECLARED_MIN_MINUTES = 15;
 
     function autocompactPref() {
         try {
@@ -1900,22 +1911,33 @@
         }
     }
 
+    // When the cache this session is riding is due to lapse, or null when nothing about it can be
+    // acted on — no signal, a measured tier too short to wait, or a declared one below the floor.
+    function cacheDeadline() {
+        if (!cacheInfo || typeof cacheInfo.anchorAt !== 'number') return null;
+        if (cacheInfo.ttl === '1h') return cacheInfo.anchorAt + 60 * 60 * 1000 - COMPACT_MARGIN_MS;
+        if (cacheInfo.ttl === 'declared' && cacheInfo.ttlMinutes >= DECLARED_MIN_MINUTES)
+            return cacheInfo.anchorAt + cacheInfo.ttlMinutes * 60000 - COMPACT_MARGIN_MS;
+        return null;
+    }
+
     function scheduleAutocompact() {
         cancelAutocompact();
-        if (!autocompactPref() || !cacheInfo || cacheInfo.ttl !== '1h') return;
-        var at = cacheInfo.anchorAt + 55 * 60 * 1000;
+        if (!autocompactPref()) return;
+        var at = cacheDeadline();
+        if (at == null) return;
         autocompactTimer = setTimeout(runAutocompact, Math.max(0, at - Date.now()));
     }
 
     function runAutocompact() {
         autocompactTimer = null;
-        if (!autocompactPref() || !cacheInfo || cacheInfo.ttl !== '1h') return;
+        if (!autocompactPref() || cacheDeadline() == null) return;
         // A turn still running means the compaction would queue behind it; retry shortly instead.
         if (!canCompact()) {
             autocompactTimer = setTimeout(runAutocompact, 30000);
             return;
         }
-        toast('Compacting before the 1-hour cache expires…');
+        toast('Compacting before the cache expires…');
         try {
             var s = activeSession();
             if (!s) return;

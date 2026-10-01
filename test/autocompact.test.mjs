@@ -1,6 +1,8 @@
-// Auto-compact before the 1h cache expires. The host reads the tier off each assistant turn's usage,
-// and the page adds a switch under Thinking that schedules a /compact five minutes before a 1-hour
-// cache lapses. Only the 1h tier is forwarded and acted on; the 5m one is too short to wait on.
+// Auto-compact before the cache expires. The host reads the tier off each assistant turn's usage, and
+// the page adds a switch under Thinking that schedules a /compact five minutes before a 1-hour cache
+// lapses. Only the 1h tier is forwarded and acted on; the 5m one is too short to wait on. A backend
+// that reports no split has no tier at all, so it sends the lifetime the profile declares instead —
+// a different kind of number, with a floor of its own, never dressed as a measurement.
 //   node test/autocompact.test.mjs
 
 import { createRequire } from 'node:module';
@@ -108,7 +110,39 @@ tab.posted.length = 0;
 tab.webview.postMessage({ type: 'from-extension', message: { type: 'io_message', message: { type: 'assistant', message: {} } } });
 assert.equal(tab.posted.find((m) => m.type === 'ccx:cache'), undefined, 'a turn with no usage says nothing');
 
-console.log('OK — the host reads the assistant turn and refreshes only the 1h cache tier');
+// A backend that is not the Anthropic API reports a hit and no split, so the only lifetime the page
+// can get is the one the profile declares. It travels as a different kind, never as a tier: an
+// estimate read off documentation must not be able to pass for something this code measured.
+writeFileSync(
+    join(profiles, 'deepseek.json'),
+    JSON.stringify({
+        env: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic' },
+        cache: { ttlMinutes: 60, source: 'declared' },
+    }),
+);
+writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'deepseek' }));
+tab.posted.length = 0;
+tab.webview.postMessage(assistantTurn({ input_tokens: 100, cache_read_input_tokens: 66432, cache_creation_input_tokens: 0 }));
+const declared = tab.posted.find((m) => m.type === 'ccx:cache');
+assert.ok(declared, 'a cached turn on a profile that declares a lifetime reports it');
+assert.equal(declared.ttl, 'declared', 'a declared lifetime is not the measured tier');
+assert.equal(declared.ttlMinutes, 60, 'the declared minutes are carried through');
+assert.ok(declared.anchorAt >= now - 5000, 'the anchor is this turn, not the profile');
+
+// A hit renews a declared lifetime exactly as it renews the tier — the prefix was alive at this turn,
+// which is the one thing the provider actually proved.
+tab.posted.length = 0;
+tab.webview.postMessage(assistantTurn({ cache_read_input_tokens: 66432, cache_creation_input_tokens: 0 }));
+assert.ok(tab.posted.find((m) => m.type === 'ccx:cache'), 'a later hit renews the declared lifetime');
+
+// Nothing declared, nothing said: for a backend whose retention nobody wrote down, the silence is the
+// answer, and a number invented here is exactly what the message shape exists to prevent.
+writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'claude' }));
+tab.posted.length = 0;
+tab.webview.postMessage(assistantTurn({ input_tokens: 100, cache_read_input_tokens: 66432, cache_creation_input_tokens: 0 }));
+assert.equal(tab.posted.find((m) => m.type === 'ccx:cache'), undefined, 'a profile that declares nothing says nothing');
+
+console.log('OK — the host reads the assistant turn, refreshing the 1h tier and any declared lifetime');
 rmSync(home, { recursive: true, force: true });
 
 // --- Part 2: the page — a checkbox under Thinking, and a /compact on the 55th minute -------------
@@ -278,7 +312,17 @@ timeouts.length = 0;
 fromHost({ type: 'ccx:cache', ttl: '5m', anchorAt: Date.now() });
 assert.equal(timeouts.length, 0, 'a 5m signal schedules nothing');
 
-console.log('OK — the page adds a switch of the app\'s own and compacts on the 55th minute');
+// A declared lifetime is the second, unmeasured kind: it has its own floor, and a value too short to
+// wait on is dropped rather than acted on wrongly.
+fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 5, anchorAt: Date.now() });
+assert.equal(timeouts.length, 0, 'a declared lifetime below the floor schedules nothing');
+fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 60, anchorAt: Date.now() - 56 * 60 * 1000 });
+assert.equal(timeouts.length, 1, 'a declared lifetime that is due schedules one compaction');
+assert.equal(timeouts[0].delay, 0, 'already due → fires immediately');
+timeouts[0].fn();
+assert.deepEqual(sent, ['/compact'], 'a declared lifetime compacts exactly like the measured tier');
+
+console.log('OK — the page adds a switch of the app\'s own and compacts before the cache lapses');
 
 // --- Part 3: the menu sort order names the new id ----------------------------------------------
 
