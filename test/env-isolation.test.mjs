@@ -119,6 +119,27 @@ assert.equal(
     'an explicit CLAUDE_CODE_AUTO_MODE_SERVER must survive',
 );
 
+// The Artifact tool is off the same way. Its service is Anthropic's — the page, its versions and its
+// assets live on claude.ai — so the CLI's own eligibility check refuses it for a third-party provider
+// too, but that check is answered by the server: a session that asks before the answer lands keeps the
+// tool, sends its schema, and every turn after that dies on a DeepSeek 400 over the `^[^\0]*$` pattern
+// zod emits for `file_paths`. Nothing in the session can recover from that, so the profile says no first.
+assert.equal(third.CLAUDE_CODE_DISABLE_ARTIFACT, '1', 'third-party endpoint must not carry the Artifact tool');
+assert.ok(!('CLAUDE_CODE_DISABLE_ARTIFACT' in anthropic), 'the subscription profile keeps artifacts');
+assert.ok(
+    !('CLAUDE_CODE_DISABLE_ARTIFACT' in second),
+    'a token-only profile still reaches api.anthropic.com and keeps artifacts',
+);
+assert.ok(
+    !('CLAUDE_CODE_DISABLE_ARTIFACT' in envFor(ambient, 'sess-unknown')),
+    'an unbound session is passed through untouched, artifacts and all',
+);
+assert.equal(
+    envFor({ ...ambient, CLAUDE_CODE_DISABLE_ARTIFACT: '0' }, 'sess-third-party').CLAUDE_CODE_DISABLE_ARTIFACT,
+    '0',
+    'an explicit CLAUDE_CODE_DISABLE_ARTIFACT must survive',
+);
+
 // No binding, no profile: the environment is passed through untouched, by identity.
 assert.strictEqual(envFor(ambient, 'sess-unknown'), ambient, 'unbound session must pass the environment through');
 

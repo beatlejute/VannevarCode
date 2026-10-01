@@ -1004,6 +1004,18 @@ function envFor(baseEnv, resumeSessionId, opts) {
     if (!targetsAnthropic(profile, baseEnv) && !('CLAUDE_CODE_AUTO_MODE_SERVER' in env)) {
         env.CLAUDE_CODE_AUTO_MODE_SERVER = '0';
     }
+
+    // Artifacts are Anthropic's own service: the Artifact tool publishes a page to claude.ai and keeps
+    // its versions, assets and comments there, and the CLI already answers "ineligible" for a
+    // third-party provider or a custom base URL. That verdict comes back from the server, so a session
+    // that asks before it lands still registers the tool and still sends its schema — and DeepSeek
+    // refuses that schema outright, on the `^[^\0]*$` pattern zod emits for the Artifact tool's
+    // `file_paths` (its validator is a Rust regex, where `\0` is not an escape). The 400 arrives before
+    // a single token is read, so the session never answers again. Off up front instead, for every
+    // profile that does not talk to Anthropic; a value the user set themselves still wins.
+    if (!targetsAnthropic(profile, baseEnv) && !('CLAUDE_CODE_DISABLE_ARTIFACT' in env)) {
+        env.CLAUDE_CODE_DISABLE_ARTIFACT = '1';
+    }
     dlog('envFor', { profile, session: resumeSessionId || 'new', baseUrl: profileEnv(profile).ANTHROPIC_BASE_URL });
     console.log(`ccx: spawning with profile "${profile}" (session ${resumeSessionId || 'new'})`);
     return env;
