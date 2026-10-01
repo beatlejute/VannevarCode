@@ -124,6 +124,7 @@ function closeWatchers() {
         'agentRunsWatcher',
         'settingsWatcher',
         'bindingsWatcher',
+        'defaultWatcher',
         'profilesWatcher',
         'healthWatcher',
     ])
