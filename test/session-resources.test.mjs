@@ -413,6 +413,46 @@ const messages = [
         { type: 'tool_result', tool_use_id: 't1' },
         { type: 'text', text: 'The tool answered; see https://example.com/after-tool.' },
     ]),
+    // The repository's own bookkeeping: a branch made (and echoed by git as switched to), a worktree
+    // added, and a commit, whose hash and subject exist only in what git printed.
+    {
+        type: 'assistant',
+        uuid: 'm-git-branch',
+        content: [
+            {
+                content: {
+                    type: 'tool_use',
+                    id: 't8',
+                    name: 'Bash',
+                    input: { command: 'git checkout -b feature/resources && git worktree add ../wt-resources' },
+                },
+                toolResult: {
+                    value: {
+                        content: [
+                            {
+                                type: 'text',
+                                text: "Switched to a new branch 'feature/resources'\nPreparing worktree (new branch 'wt-resources')",
+                            },
+                        ],
+                    },
+                },
+            },
+        ],
+    },
+    {
+        type: 'assistant',
+        uuid: 'm-git-commit',
+        content: [
+            {
+                content: { type: 'tool_use', id: 't9', name: 'Bash', input: { command: 'git commit -m "resources: a section per kind"' } },
+                toolResult: {
+                    value: {
+                        content: [{ type: 'text', text: '[feature/resources 4f2a1c3] resources: a section per kind\n 1 file changed, 3 insertions(+)' }],
+                    },
+                },
+            },
+        ],
+    },
 ];
 
 const session = { messages: { value: messages }, busy: { value: false } };
@@ -423,6 +463,10 @@ const overlays = () => pageDocument.body.children.filter((c) => c.className === 
 const box = () => overlays()[0].children[0];
 const rowsOf = () => box().querySelectorAll('.ccx-res-row');
 const rowFor = (text) => rowsOf().find((r) => r.title.includes(text));
+const sectionFor = (label) =>
+    box()
+        .querySelectorAll('.ccx-res-section')
+        .find((s) => s.querySelector('.ccx-res-head-label').textContent === label);
 const pushState = () => fromHost({ type: 'ccx:state', profiles: [], bindings: {} });
 
 // 1. The pill hangs off the agents pill's own anchor, in the same footer row.
@@ -443,7 +487,7 @@ assert.equal(pill.children[0].className, 'ccx-res-pill-label', 'the count lives 
 
 // 2. The count is of *distinct* resources: 4 links (one written twice), 2 from the search, 2 files
 //    (one touched twice), 1 notebook, 1 image, 1 document — 10 rows out of 13 mentions.
-assert.equal(pill.textContent, '10 resources', 'the pill counts distinct resources, not mentions');
+assert.equal(pill.textContent, '13 resources', 'the pill counts distinct resources, not mentions');
 assert.match(pill.title, /click for the list/);
 
 // 3. The dialog groups them, in a fixed order, one row per resource.
@@ -452,12 +496,12 @@ assert.equal(overlays().length, 1, 'the pill opens exactly one overlay');
 assert.ok(box().className.includes('ccx-resources-box'), 'and it is the resource box');
 assert.deepEqual(
     box()
-        .querySelectorAll('.ccx-res-head')
-        .map((h) => h.textContent.replace(/\d+$/, '')),
-    ['Links in messages', 'URLs from tools', 'Files', 'Images & documents'],
+        .querySelectorAll('.ccx-res-head-label')
+        .map((h) => h.textContent),
+    ['Links in messages', 'URLs from tools', 'Files', 'Branches', 'Commits', 'Worktrees', 'Images & documents'],
     'sections come in a fixed order and empty ones are skipped',
 );
-assert.equal(rowsOf().length, 10, 'one row per distinct resource');
+assert.equal(rowsOf().length, 13, 'one row per distinct resource');
 
 const shared = rowFor('https://example.com/a');
 assert.ok(shared, 'the URL written twice and fetched once is one row');
@@ -466,9 +510,38 @@ assert.match(shared.title, /in your message/, 'and its provenance');
 assert.match(shared.title, /fetched by WebFetch/, 'from every source that named it');
 // First seen wins the section: it was written in a message before a tool was handed it.
 assert.ok(
-    box().querySelectorAll('.ccx-res-head')[2].textContent.startsWith('Files'),
+    box().querySelectorAll('.ccx-res-head-label')[2].textContent === 'Files',
     'the merged row stays in the section of its earliest occurrence',
 );
+
+// 3c. The repository's own bookkeeping, read from git's grammar rather than from a shell line: a
+//     branch made by `checkout -b` and confirmed by what git echoed back, a worktree added, and a
+//     commit whose hash and subject exist only in git's output.
+const branchRow = rowsOf().find((r) => r.querySelector('.ccx-res-label').textContent === 'feature/resources');
+assert.ok(branchRow, 'a branch the session made is a resource');
+assert.equal(branchRow.querySelector('.ccx-res-count').textContent, '×2', 'created and switched to are one branch');
+assert.equal(branchRow.className.includes('ccx-res-open'), false, 'a branch has nothing to open');
+assert.equal(branchRow.querySelector('.ccx-res-you'), null, 'the model made it, not the user');
+const commitRow = rowFor('4f2a1c3');
+assert.ok(commitRow, 'a commit the session wrote is a resource');
+assert.match(commitRow.querySelector('.ccx-res-label').textContent, /resources: a section per kind/, 'the subject is what the row reads');
+assert.equal(commitRow.className.includes('ccx-res-open'), false, 'a commit has nothing to open either');
+const worktreeRow = rowFor('wt-resources');
+assert.ok(worktreeRow, 'a worktree the session added is a resource');
+assert.ok(worktreeRow.className.includes('ccx-res-open'), 'a worktree is a directory, so its row opens');
+
+// 3d. Sections fold, and Files arrive folded: a working session has more of them than of anything
+//     else, and the list is opened for what was said and what was committed first.
+assert.equal(sectionFor('Files').getAttribute('data-ccx-open'), '0', 'Files start folded');
+assert.equal(sectionFor('Links in messages').getAttribute('data-ccx-open'), '1', 'the rest start open');
+sectionFor('Files').querySelector('.ccx-res-head').onclick();
+assert.equal(sectionFor('Files').getAttribute('data-ccx-open'), '1', 'the head unfolds a section');
+// The dialog is repainted on every state push, so a fold has to survive one.
+pushState();
+assert.equal(sectionFor('Files').getAttribute('data-ccx-open'), '1', 'a repaint keeps what was unfolded');
+sectionFor('Files').querySelector('.ccx-res-head').onclick();
+pushState();
+assert.equal(sectionFor('Files').getAttribute('data-ccx-open'), '0', 'and keeps what was folded again');
 
 // 3b. What came from the user is set apart: a `you` tag on the row, and the user's rows ahead of the
 //     model's inside a section — a URL from a prompt and one from a reply look exactly alike.
@@ -590,7 +663,7 @@ session.messages.value = messages.concat([
     msg('assistant', [{ type: 'tool_use', id: 't7', name: 'Read', input: { file_path: 'C:/dev/app/README.md' } }]),
 ]);
 pushState();
-assert.equal(pills()[0].textContent, '11 resources', 'a new resource is counted on the next state push');
+assert.equal(pills()[0].textContent, '14 resources', 'a new resource is counted on the next state push');
 
 // 8. Nothing to show means no pill: a control that opens an empty list is one more thing in the row.
 session.messages.value = [];

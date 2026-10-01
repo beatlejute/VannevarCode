@@ -2192,13 +2192,28 @@
         { kind: 'link', label: 'Links in messages' },
         { kind: 'tool', label: 'URLs from tools' },
         { kind: 'file', label: 'Files' },
+        { kind: 'branch', label: 'Branches' },
+        { kind: 'commit', label: 'Commits' },
+        { kind: 'worktree', label: 'Worktrees' },
         { kind: 'media', label: 'Images & documents' },
     ];
+    // What a row's own click does, where it has one. A branch or a commit has nothing to open — there
+    // is no file behind either — and says so by having no handler rather than by failing at the host.
+    var RESOURCE_OPEN = { link: 'url', tool: 'url', file: 'file', media: 'media', worktree: 'file' };
     // A WebSearch-heavy turn can produce dozens of links and the list is meant to be read, so a
     // section stops where a wall of rows would begin. The count stays the full one.
     var RESOURCE_CAP = 100;
     var RESOURCE_URL = /https?:\/\/[^\s<>"'`]+/g;
     var resourceSeq = 0;
+    // Sections arrive folded or open, and Files arrive folded: a working session has more of them than
+    // of anything else, and the list is opened for what was said and what was committed first. What the
+    // user folds is remembered for the life of the page — the dialog is repainted on every state push,
+    // and a repaint that unfolded what had just been folded would be unusable on a live session.
+    var RESOURCE_FOLDED = { file: true };
+    var resourceFold = {};
+    function sectionOpen(kind) {
+        return resourceFold[kind] === undefined ? !RESOURCE_FOLDED[kind] : resourceFold[kind];
+    }
     // { stamp, rows }, so the ~60 ms observer pass during a stream does not re-walk the transcript.
     var resourceMemo = { stamp: null, rows: [] };
 
@@ -2290,6 +2305,18 @@
         );
     }
 
+    // What a shell command says about the repository. Only git's own grammar is read, never a path out
+    // of a command line: `git switch -c x` names a branch and nothing else, and `[main 4f2a1c3] subject`
+    // is what git prints when it commits. A bare `git checkout x` is deliberately *not* read from the
+    // command — that call may be restoring a file — so a branch moved to is taken from what git echoes
+    // back instead. A `git log` full of hashes contributes nothing for the same reason: the list is of
+    // what this session did, not of what it looked at.
+    var GIT_BRANCH_CREATE = /git\s+(?:checkout\s+-b|switch\s+-c|branch)\s+([^\s;&|'"]+)/g;
+    var GIT_WORKTREE_ADD = /git\s+worktree\s+add\s+([^\n;&|]+)/g;
+    var GIT_SWITCHED = /Switched to (?:a new )?branch '([^']+)'/g;
+    var GIT_COMMITTED = /\[([^\s\]]+)(?:\s+\([^)]*\))?\s+([0-9a-f]{7,40})\]\s*(.*)$/gm;
+    var GIT_WORKTREE_LIST = /^\s*(\S+)\s+([0-9a-f]{7,40})\s+\[([^\]]+)\]/gm;
+
     function resourceScan() {
         var messages = sessionField('messages');
         if (!Array.isArray(messages)) messages = [];
@@ -2310,6 +2337,7 @@
                     count: 0,
                     from: [],
                     you: false,
+                    open: RESOURCE_OPEN[kind] || null,
                     // Where it first appeared, for the row's jump. The first sighting and not the last:
                     // "where did this come from" is the question, and the rest are the same thing said
                     // again.
@@ -2332,6 +2360,49 @@
             while ((m = RESOURCE_URL.exec(text))) {
                 var url = trimUrl(m[0]);
                 if (url) note(kind, urlKey(url), url, url, url, source, you, uuid);
+            }
+        }
+
+        function noteBranch(name, how, uuid) {
+            note('branch', 'branch:' + name, name, name, name, how, false, uuid);
+        }
+
+        function noteGit(command, output, uuid) {
+            var m;
+            GIT_BRANCH_CREATE.lastIndex = 0;
+            while ((m = GIT_BRANCH_CREATE.exec(command)))
+                if (m[1].charAt(0) !== '-') noteBranch(m[1], 'created', uuid);
+            GIT_WORKTREE_ADD.lastIndex = 0;
+            while ((m = GIT_WORKTREE_ADD.exec(command))) {
+                // `git worktree add [-b name] [-B name] [--detach] <path>`: the path is the last
+                // argument, which is the one thing about that line readable without parsing git's
+                // options — an option's own value is not last, and a path always is.
+                var parts = m[1].trim().split(/\s+/);
+                var target = parts[parts.length - 1] || '';
+                if (target && target.charAt(0) !== '-')
+                    note('worktree', 'worktree:' + fileKey(target), baseName(target), target, target, 'added as a worktree', false, uuid);
+            }
+            if (typeof output !== 'string' || !output) return;
+            GIT_SWITCHED.lastIndex = 0;
+            while ((m = GIT_SWITCHED.exec(output))) noteBranch(m[1], 'switched to', uuid);
+            GIT_COMMITTED.lastIndex = 0;
+            while ((m = GIT_COMMITTED.exec(output))) {
+                var subject = String(m[3] || '').trim().slice(0, 80);
+                note(
+                    'commit',
+                    'commit:' + m[2],
+                    subject || m[2].slice(0, 7),
+                    m[2],
+                    m[2] + ' on ' + m[1] + (subject ? ' — ' + subject : ''),
+                    'committed on ' + m[1],
+                    false,
+                    uuid,
+                );
+            }
+            if (command.indexOf('worktree') > -1) {
+                GIT_WORKTREE_LIST.lastIndex = 0;
+                while ((m = GIT_WORKTREE_LIST.exec(output)))
+                    note('worktree', 'worktree:' + fileKey(m[1]), baseName(m[1]), m[1], m[1], 'listed as a worktree on ' + m[3], false, uuid);
             }
         }
 
@@ -2384,6 +2455,20 @@
                     // links are read the way the agent map reads a delegated run's, not off a field.
                     var hit = callResult(m.content[j]);
                     if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results', false, uuid);
+                }
+                if (raw.name === 'Bash') {
+                    // A shell command is not a file and is not parsed for one — the paths inside one are
+                    // guesswork. What *is* read from it is the repository's own bookkeeping, because git
+                    // spells those in a grammar rather than in a shell: a branch is created by
+                    // `checkout -b`/`switch -c`/`branch`, a worktree by `worktree add`, and a commit is
+                    // whatever git answers with.
+                    var out = callResult(m.content[j]);
+                    noteGit(
+                        typeof input.command === 'string' ? input.command : '',
+                        out && !out.isError ? out.text : '',
+                        uuid,
+                    );
+                    continue;
                 }
                 var p = filePathOf(input);
                 if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'), false, uuid);
@@ -2539,24 +2624,28 @@
 
     function resourceRow(row) {
         var el = document.createElement('div');
-        el.className = 'ccx-row ccx-res-row ccx-res-open';
-        el.onclick = function () {
-            // The host decides what may be opened and says why when it may not: a path that is not
-            // absolute has no directory to resolve against here, and the wrong file is worse than a
-            // refusal. An attachment is the one kind with nothing to open *yet* — the payload travels
-            // with the request and the host writes it to a file before handing it to the OS, so what
-            // the user sees is the picture, not a base64 blob.
-            send({
-                type: 'ccx:openResource',
-                kind: row.kind === 'file' ? 'file' : row.kind === 'media' ? 'media' : 'url',
-                value: row.value,
-                mediaType: row.payload ? row.payload.mediaType : undefined,
-                data: row.payload ? row.payload.data : undefined,
-                url: row.payload ? row.payload.url : undefined,
-                seq: ++resourceSeq,
-            });
-            closePicker();
-        };
+        // A branch or a commit has nothing to open — there is no file behind either — so its row is not
+        // drawn as something that opens. The jump arrow is on every row; that is the affordance both
+        // kinds do have.
+        el.className = 'ccx-row ccx-res-row' + (row.open ? ' ccx-res-open' : '');
+        if (row.open)
+            el.onclick = function () {
+                // The host decides what may be opened and says why when it may not: a path that is not
+                // absolute has no directory to resolve against here, and the wrong file is worse than a
+                // refusal. An attachment is the one kind with nothing to open *yet* — the payload
+                // travels with the request and the host writes it to a file before handing it to the OS,
+                // so what the user sees is the picture, not a base64 blob.
+                send({
+                    type: 'ccx:openResource',
+                    kind: row.open,
+                    value: row.value,
+                    mediaType: row.payload ? row.payload.mediaType : undefined,
+                    data: row.payload ? row.payload.data : undefined,
+                    url: row.payload ? row.payload.url : undefined,
+                    seq: ++resourceSeq,
+                });
+                closePicker();
+            };
 
         // An attached image gets the composer chip's own treatment: the picture itself, at the chip's
         // own class, so the row is recognised the way the attachment it came from was. Only images —
@@ -2593,6 +2682,17 @@
                 label.appendChild(dim);
                 label.appendChild(name);
             } else label.textContent = row.label;
+        } else if (row.kind === 'commit') {
+            // The hash dimmed and the subject beside it, the way a directory sits in front of a file: a
+            // column of commits is read by its subjects, and the hashes only have to line up.
+            var hash = document.createElement('span');
+            hash.className = 'ccx-res-dir';
+            hash.textContent = row.value.slice(0, 7) + ' ';
+            var subject = document.createElement('span');
+            subject.className = 'ccx-res-name';
+            subject.textContent = row.label;
+            label.appendChild(hash);
+            label.appendChild(subject);
         } else label.textContent = row.label;
         el.appendChild(label);
         if (row.you) {
@@ -2651,11 +2751,12 @@
         var hint = document.createElement('div');
         hint.className = 'ccx-hint';
         hint.textContent =
-            'Read from this session\'s transcript — links in messages, pages the tools fetched, files they touched, attachments. "you" marks what came from your own messages, which come first in each section';
+            'Read from this session\'s transcript — links in messages, pages the tools fetched, files they touched, the branches, commits and worktrees it made, attachments. "you" marks what came from your own messages, which come first in each section; a section head folds it';
         box.appendChild(hint);
 
-        for (var s = 0; s < RESOURCE_SECTIONS.length; s++) {
-            var section = RESOURCE_SECTIONS[s];
+        // forEach rather than a counting loop, because each section's head closes over its own wrapper:
+        // one `var` between them and every head would fold the last section drawn.
+        RESOURCE_SECTIONS.forEach(function (section) {
             // The user's own first, inside the section: the question this dialog is opened with is
             // usually "what did I put in this session", and a tag alone would still leave the answer
             // to be picked out of a list ordered by nothing the reader knows. The rest keeps the
@@ -2666,27 +2767,50 @@
                 if (rows[i].kind !== section.kind) continue;
                 (rows[i].you ? mine : theirs).push(rows[i]);
             }
-            if (!mine.length && !theirs.length) continue;
+            if (!mine.length && !theirs.length) return;
             mine = mine.concat(theirs);
+
+            var wrap = document.createElement('div');
+            wrap.className = 'ccx-res-section';
+            wrap.setAttribute('data-ccx-open', sectionOpen(section.kind) ? '1' : '0');
 
             var head = document.createElement('div');
             head.className = 'ccx-res-head';
-            head.textContent = section.label;
+            var caret = document.createElement('span');
+            caret.className = 'ccx-res-caret';
+            caret.textContent = '▸';
+            var name = document.createElement('span');
+            name.className = 'ccx-res-head-label';
+            name.textContent = section.label;
             var count = document.createElement('span');
             count.className = 'ccx-res-head-count';
             count.textContent = String(mine.length);
+            head.appendChild(caret);
+            head.appendChild(name);
             head.appendChild(count);
-            box.appendChild(head);
+            head.onclick = function () {
+                var folded = wrap.getAttribute('data-ccx-open') === '1';
+                wrap.setAttribute('data-ccx-open', folded ? '0' : '1');
+                resourceFold[section.kind] = !folded;
+            };
+            wrap.appendChild(head);
 
+            // The rows are built whether the section is folded or not: the fold is a stylesheet rule on
+            // the wrapper, so nothing has to be rebuilt to unfold one — and the dialog is repainted on
+            // every state push, which would otherwise throw away what was unfolded.
+            var body = document.createElement('div');
+            body.className = 'ccx-res-body';
             var shown = mine.slice(0, RESOURCE_CAP);
-            for (var k = 0; k < shown.length; k++) box.appendChild(resourceRow(shown[k]));
+            for (var k = 0; k < shown.length; k++) body.appendChild(resourceRow(shown[k]));
             if (mine.length > shown.length) {
                 var more = document.createElement('div');
                 more.className = 'ccx-res-more';
                 more.textContent = '+' + (mine.length - shown.length) + ' more';
-                box.appendChild(more);
+                body.appendChild(more);
             }
-        }
+            wrap.appendChild(body);
+            box.appendChild(wrap);
+        });
         if (!rows.length) {
             var empty = document.createElement('div');
             empty.className = 'ccx-res-empty';
@@ -4045,7 +4169,11 @@
         '.ccx-resource-pill{cursor:pointer}',
         '.ccx-resources-box{min-width:420px;max-width:min(760px,80vw)}',
         '.ccx-res-tally{float:right;font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;opacity:.55}',
-        '.ccx-res-head{padding:8px 10px 2px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.5}',
+        '.ccx-res-head{display:flex;align-items:center;gap:5px;padding:8px 10px 2px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.5;cursor:pointer;user-select:none}',
+        '.ccx-res-head:hover{opacity:.85}',
+        '.ccx-res-caret{flex:0 0 auto;width:8px;transition:transform .12s ease}',
+        '.ccx-res-section[data-ccx-open="1"] .ccx-res-caret{transform:rotate(90deg)}',
+        '.ccx-res-section[data-ccx-open="0"] .ccx-res-body{display:none}',
         '.ccx-res-head-count{margin-left:6px;opacity:.8}',
         // One row per resource, so the value is what the eye follows: monospace, ellipsised from the
         // right for a path and from the left is not possible in CSS — a long URL therefore gives up

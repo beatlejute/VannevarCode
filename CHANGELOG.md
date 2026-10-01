@@ -49,6 +49,18 @@ thumbnail class, and its pixel size lands beside the name once the image has dec
 the chip shows. A document gets no thumbnail, having none in the composer either. The list is read
 entirely from the transcript the tab already holds — nothing is asked of the host to draw it.
 
+The repository is part of the session's resources too: the branches it created or moved to, the commits
+it wrote and the worktrees it added, read out of git's own grammar — `checkout -b`, `switch -c`,
+`branch`, `worktree add` — and out of what git prints back (`Switched to branch 'x'`, and the
+`[main 4f2a1c3] subject` line a commit answers with). A bare `git checkout x` is deliberately not read
+from the command line, since that call may be restoring a file, and a `git log` full of hashes
+contributes nothing: the list is what the session *did*, not what it looked at. Neither a branch nor a
+commit has anything to open, so those rows are not drawn as clickable — their jump is the arrow.
+
+Sections fold, and **Files** arrive folded: a working session has more of them than of anything else,
+and the list is opened for what was said and what was committed first. What was folded stays folded
+through the repaints a live session causes.
+
 A row also goes back to where it came from: an arrow on it closes the dialog, scrolls the transcript
 to the message the resource first appeared in and marks that message for a moment, so a link pasted
 three turns up can be read in its context rather than only in the list. The message is found off the
