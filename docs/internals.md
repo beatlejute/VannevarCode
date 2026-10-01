@@ -903,6 +903,90 @@ nothing else about the line changes. The signature is structural rather than nam
 second `let` is the `usage?.totalTokens` read, which no other function in the bundle makes, and the
 duration local in front of it comes out of the match. It matched once in each of 2.1.280–2.1.286.
 
+### The resource list hangs off the agents pill, and one Map dedupes four kinds
+
+The agent map is the one place a session's subagents are counted and listed, and the pill beside the
+model picker is the whole of its entry point. A session's *resources* — links written in it, pages its
+tools fetched, files its tool calls touched, images and documents attached to a prompt — have no such
+place, so Vannevar adds one beside it: `decorateResourcePill()` inserts a button after the stock pill
+and `openResources()` (runtime/webview.js) draws the dialog behind it.
+
+The anchor is the interesting part. The pill renders as
+
+`F("button",{type:"button",className:`${T7.modelPill} ${ZS.agentsPill}`,"data-agents-dot":J,...})`
+
+— both class names hashed per build, which is the handle that breaks on a release that renames a CSS
+module. Everywhere else in this file a hashed name is worked around: the model tags are found by walking
+text nodes, the footer classes are lifted off the live DOM by `stockClass()`. Here the workaround is not
+needed, because `data-agents-dot` is a data attribute the app writes for its own dot styling and no
+minifier touches it — present in every installed build 2.1.280–2.1.286. The pill still borrows
+`modelPill_<hash>` and `footerButton_<hash>` so it reads as part of the row; only its *position* is
+asked for by attribute. Placement is re-made on every pass rather than taken once — the same walk the
+countdown takes in `placeCachePill()`, and for the same reason: the composer renders its chips only
+when their state calls for them, so a pill placed at the first opportunity would spend the session at
+whichever end the row happened to have just then. A build with no agents pill falls back to the model
+pill's far side, then to the position after the menu button; never to the end of the footer, which is
+where an unanchored insert lands and what put the first version of this past the send button. Our own
+pill wears the model pill's class, so that search has to skip the pill itself — the same trap the
+countdown documents, and the same bug when it is missed.
+
+Which side of the conversation a resource came from is the one thing a reader cannot recover from the
+value: a URL pasted into a prompt and a URL the model wrote look exactly alike. So the row carries it —
+a `you` tag, and the user's rows ahead of the model's inside each section, first-seen order kept
+within each half. The flag is set by `userVoice()`, which is a little less trivial than it looks: a
+message of type `user` is not always the user's, since a tool result arrives on the same side of the
+conversation, and the app's own injected turns carry `isSynthetic`. Only a `user` message that is
+neither synthetic nor carrying a `tool_result` block counts, and an attachment always does — the app
+has no other way to put one into a transcript.
+
+The count is a set count, which is what the stock one is: `N agents` is how many subagents there are,
+not how many task events arrived. So one `Map` holds all four kinds keyed by the resource itself — a URL
+normalised for case in scheme and host, a path with backslashes folded to forward slashes, a base64
+image or document by media type, decoded length and a prefix of the payload — and the first sighting
+fixes both its section and its position. A URL written three times and fetched once is one row reading
+`×3`, with both origins in its tooltip, and the pill counts one. Counting mentions instead would make
+the number track how often the model repeated itself, which is the one thing it must not measure.
+
+There is no timer behind the pill, unlike the cache countdown: minutes pass on their own, resources do
+not. The number moves when a message arrives or a session is swapped, and both are React commits the
+debounced `MutationObserver` pass already sees. The scan is memoised on a stamp of the transcript's
+shape — length, last uuid, the last message's text length, the session id — because that pass runs every
+60 ms while a turn streams. The text length is in the stamp precisely so a URL arriving halfway through
+a streamed reply is counted then rather than when the reply ends.
+
+An attachment has no name to be keyed by: a pasted image is base64 and a media type and nothing else,
+which is the same reason `attachmentNoun()` reads the composer's DOM to tell images from documents. So
+media type, decoded length and the first 32 characters of the payload stand in for the name. The row
+then leads with the picture itself, in an `<img>` whose `src` is the payload as a data URI and whose
+class is the composer chip's own `thumbIcon_<hash>` — so an attachment is recognised in the dialog the
+way it was recognised in the composer. The chip's 12px is a chip's size, though, so a second class of
+ours raises it to 28px: two classes beat the stock rule wherever the two stylesheets land, where one
+class would have depended on which was written last. The pixel size is added on `load` rather than
+guessed from the payload length, and a document gets no thumbnail at all — the composer draws it an
+icon instead, and an `<img>` of a PDF is a broken image. The payload is kept out of the key, but it is
+what the thumbnail and the click both need, and it is the only copy there is. The composer's *draft* chips are deliberately not a source — a draft is not
+part of the session, and counting it would make the number flicker while the user attaches.
+
+Opening a row is the only thing that crosses to the host, being the one thing the page cannot do: a
+webview may navigate, but only the app frame. `ccx:openResource` carries a kind and a value, and the
+host answers `ccx:openResourceResult` echoing the `seq`, the pattern `ccx:searchContent` already uses.
+The host whitelists http(s) before `vscode.env.openExternal` and demands an absolute path before
+`vscode.window.showTextDocument`: a transcript is model output, so a `vscode://` or `command:` value in
+a message must never reach the shell, and a relative path has no directory to be resolved against — the
+host keeps no per-session cwd it can trust. A path that is in fact a directory — a search tool names
+one with its `path` — is revealed in the explorer rather than handed to the editor, which answers a
+directory with a paragraph about being unable to read it; that paragraph is what the first version of
+this showed the user, which is why the check is a `statSync` and not a guess. An attachment is the third case and the awkward one: those
+bytes are nowhere on disk, so they ride along with the request and the host writes them to
+`<tmp>/vannevar-resources/<sha1-of-payload>.<ext>` before calling `openExternal` on that file — named
+after the payload, so the same screenshot opened twice reuses one file and the temp directory does not
+grow a copy per click. Past twelve megabytes the request is refused rather than moved. Every refusal
+travels back as the reason and is shown as a toast.
+
+Bash is not parsed for paths. The paths inside a command are guesswork, and a list whose whole point is
+being scannable cannot carry guesses; `file_path`, `notebook_path` and `path` — the fields the CLI
+actually names a file in — are the whole of the file section.
+
 ### A compaction hides history three times, and deletes none of it (2.1.274)
 
 `/compact` and auto-compaction only append. The transcript gets a `system`/`compact_boundary` line and a

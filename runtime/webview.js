@@ -446,10 +446,12 @@
             syncAction();
             syncChip();
             if (overlayKind === 'health') openHealth();
+            if (overlayKind === 'resources') openResources();
             decorateModelPicker();
             decorateSessionList();
             decorateAgentFrames();
             decorateSidebar();
+            decorateResourcePill();
             applyHidden();
         } else if (d.type === 'ccx:icons') {
             icons = d.icons || {};
@@ -491,6 +493,11 @@
             agentRuns = Array.isArray(d.runs) ? d.runs : [];
             claimedRuns = {};
             decorateAgentFrames();
+        } else if (d.type === 'ccx:openResourceResult') {
+            // Success is silent — the editor or the browser has already answered for it. A refusal is
+            // the only thing the page can say something about, and the host words it.
+            if (d.seq !== resourceSeq) return;
+            if (!d.ok) toast(d.error || 'Could not open that resource.');
         } else if (d.type === 'ccx:agentReply') {
             onAgentReply(d);
         }
@@ -2165,6 +2172,471 @@
         if (!cacheInterval) cacheInterval = setInterval(decorateCachePill, 30000);
     }
 
+    // --- The session's external resources -------------------------------------------------------
+    //
+    // A tab accumulates references it never gathers in one place: links written in messages, pages
+    // handed to a fetch tool, files read or written by tool calls, images and documents pasted into
+    // prompts. The agent map is the one dialog Claude Code has that summarises a session's working
+    // state; this is its resource-side counterpart — a pill beside the agents pill, carrying a count,
+    // and a dialog behind it with one section per kind.
+    //
+    // The whole list is read off `session.messages`, which the page already holds; nothing is asked of
+    // the host to draw it. The host is reached only when a row is clicked, because opening a file in
+    // the editor or a URL in the browser is something only the extension host can do.
+    //
+    // The count is of *distinct* resources, which is what makes it worth carrying: a URL the model
+    // wrote three times and fetched once is one resource. So one Map holds every kind — first seen
+    // wins its section and its position, and the same URL reaching the list from a message and from a
+    // tool call merges into the row that was already there.
+    var RESOURCE_SECTIONS = [
+        { kind: 'link', label: 'Links in messages' },
+        { kind: 'tool', label: 'URLs from tools' },
+        { kind: 'file', label: 'Files' },
+        { kind: 'media', label: 'Images & documents' },
+    ];
+    // A WebSearch-heavy turn can produce dozens of links and the list is meant to be read, so a
+    // section stops where a wall of rows would begin. The count stays the full one.
+    var RESOURCE_CAP = 100;
+    var RESOURCE_URL = /https?:\/\/[^\s<>"'`]+/g;
+    var resourceSeq = 0;
+    // { stamp, rows }, so the ~60 ms observer pass during a stream does not re-walk the transcript.
+    var resourceMemo = { stamp: null, rows: [] };
+
+    // A link that ended a sentence carries the author's punctuation, not the URL's.
+    function trimUrl(url) {
+        return String(url).replace(/[.,;:!?)\]}>]+$/, '');
+    }
+
+    // Scheme and host are case-insensitive and name the resource; the path is left exactly as written,
+    // a path being case-sensitive on the systems that matter here.
+    function urlKey(url) {
+        var s = trimUrl(url);
+        var m = /^(https?:\/\/)([^\/?#]*)([\s\S]*)$/i.exec(s);
+        return m ? m[1].toLowerCase() + m[2].toLowerCase() + m[3] : s;
+    }
+
+    // The Windows and the POSIX spelling of one file are one file, and `./a.js` is the `a.js` a Write
+    // call named.
+    function fileKey(p) {
+        return String(p).replace(/\\/g, '/').replace(/^\.\//, '');
+    }
+
+    function baseName(p) {
+        var s = String(p).replace(/[\/\\]+$/, '');
+        var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+        return i < 0 ? s : s.slice(i + 1);
+    }
+
+    function dirPrefix(p) {
+        var s = String(p).replace(/[\/\\]+$/, '');
+        var i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
+        return i < 0 ? '' : s.slice(0, i + 1);
+    }
+
+    // Which input field names a file is the CLI's business, not this file's, and it differs by tool:
+    // NotebookEdit has `notebook_path` where Write has `file_path`, and a search tool names a
+    // directory with `path`. All three are a place the session touched. A shell command is not: the
+    // paths inside one are guesswork, and guessing them back out would read as noise in a list whose
+    // point is being scannable.
+    function filePathOf(input) {
+        if (!input || typeof input !== 'object') return '';
+        var keys = ['file_path', 'notebook_path', 'path'];
+        for (var i = 0; i < keys.length; i++) {
+            var v = input[keys[i]];
+            if (typeof v === 'string' && v.trim()) return v.trim();
+        }
+        return '';
+    }
+
+    function humanSize(chars) {
+        var bytes = Math.round((chars * 3) / 4);
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' kB';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    // A pasted image is base64 and a media type; a document is the same plus whatever title the app
+    // gave it, which is not always there. So a block with no name is identified by its type, its
+    // decoded length and the head of its payload — enough to count one attachment once, and the
+    // payload itself is never used for the key, only that prefix.
+    function mediaEntry(kind, block) {
+        var src = block && block.source;
+        var type = (src && src.media_type) || (block && block.name) || kind;
+        var data = typeof (src && src.data) === 'string' ? src.data : '';
+        var link = typeof (src && src.url) === 'string' ? src.url : '';
+        var size = (data || link).length;
+        var title = typeof (block && block.title) === 'string' ? block.title : '';
+        return {
+            key: kind + ':' + type + ':' + size + ':' + (data || link).slice(0, 32),
+            label: title || link || kind + ' · ' + type + ' · ' + humanSize(size),
+            // What opening it needs: a URL when the block carries one, otherwise the payload itself.
+            // Nothing is decoded here — the host writes the bytes to a file and hands it to the OS.
+            payload: { mediaType: type, data: data, url: link },
+        };
+    }
+
+    // The transcript is the whole signal, so the stamp has to move for anything that can add a
+    // resource: a new message, a message rewritten, or a reply still growing its text.
+    function resourceStamp(messages) {
+        var last = messages.length ? messages[messages.length - 1] : null;
+        var tail = '';
+        if (last && Array.isArray(last.content))
+            for (var i = 0; i < last.content.length; i++) {
+                var raw = blockOf(last.content[i]);
+                if (raw && raw.type === 'text' && typeof raw.text === 'string') tail += raw.text.length + ',';
+            }
+        return (
+            messages.length + '|' + ((last && last.uuid) || '') + '|' + tail + '|' + (sessionField('sessionId') || '')
+        );
+    }
+
+    function resourceScan() {
+        var messages = sessionField('messages');
+        if (!Array.isArray(messages)) messages = [];
+        var stamp = resourceStamp(messages);
+        if (resourceMemo.stamp === stamp) return resourceMemo.rows;
+
+        var rows = new Map();
+        function note(kind, key, label, value, full, source, you) {
+            if (!key) return;
+            var row = rows.get(key);
+            if (!row) {
+                row = {
+                    kind: kind,
+                    key: key,
+                    label: label,
+                    value: value,
+                    full: full || value,
+                    count: 0,
+                    from: [],
+                    you: false,
+                };
+                rows.set(key, row);
+            }
+            row.count++;
+            // Yours stays yours: a link the user pasted is theirs however many times a tool then touched
+            // it. Which side of the conversation a resource came from is the one thing about it a reader
+            // cannot recover from the value itself — a URL from a reply and a URL from a prompt look
+            // exactly alike — so it is carried on the row rather than left to the tooltip.
+            if (you) row.you = true;
+            if (source && row.from.indexOf(source) < 0) row.from.push(source);
+        }
+        function noteUrls(text, kind, source, you) {
+            if (typeof text !== 'string' || text.indexOf('http') < 0) return;
+            RESOURCE_URL.lastIndex = 0;
+            var m;
+            while ((m = RESOURCE_URL.exec(text))) {
+                var url = trimUrl(m[0]);
+                if (url) note(kind, urlKey(url), url, url, url, source, you);
+            }
+        }
+
+        // A message of type `user` is not always the user's — a tool result arrives on the same side of
+        // the conversation, and the app's own injected turns are marked synthetic. Only what they
+        // actually typed counts as theirs.
+        function userVoice(m) {
+            if (m.type !== 'user' || m.isSynthetic) return false;
+            if (!Array.isArray(m.content)) return true;
+            for (var k = 0; k < m.content.length; k++) {
+                var b = blockOf(m.content[k]);
+                if (b && b.type === 'tool_result') return false;
+            }
+            return true;
+        }
+
+        for (var i = 0; i < messages.length; i++) {
+            var m = messages[i];
+            if (!m) continue;
+            var you = userVoice(m);
+            var mine = you ? 'in your message' : 'in a reply';
+            if (typeof m.content === 'string') {
+                noteUrls(m.content, 'link', mine, you);
+                continue;
+            }
+            if (!Array.isArray(m.content)) continue;
+            for (var j = 0; j < m.content.length; j++) {
+                var raw = blockOf(m.content[j]);
+                if (!raw) continue;
+                if (raw.type === 'text') {
+                    noteUrls(raw.text, 'link', mine, you);
+                    continue;
+                }
+                if (raw.type === 'image' || raw.type === 'document') {
+                    var media = mediaEntry(raw.type, raw);
+                    // An attachment is always the user's: the app has no other way to put one in a
+                    // transcript, and a pasted screenshot is the clearest "this came from me" there is.
+                    note('media', media.key, media.label, media.label, media.label, 'attached by you', true);
+                    var mediaRow = rows.get(media.key);
+                    if (mediaRow && !mediaRow.payload) mediaRow.payload = media.payload;
+                    continue;
+                }
+                if (raw.type !== 'tool_use') continue;
+                var input = raw.input || {};
+                if (raw.name === 'WebFetch' && typeof input.url === 'string' && input.url.trim())
+                    note('tool', urlKey(input.url), trimUrl(input.url), input.url, input.url, 'fetched by WebFetch');
+                else if (raw.name === 'WebSearch') {
+                    // A search result is on the call's own wrapper — the app attaches it there — so its
+                    // links are read the way the agent map reads a delegated run's, not off a field.
+                    var hit = callResult(m.content[j]);
+                    if (hit && !hit.isError) noteUrls(hit.text, 'tool', 'from WebSearch results');
+                }
+                var p = filePathOf(input);
+                if (p) note('file', fileKey(p), baseName(p), p, p, 'touched by ' + String(raw.name || 'a tool'));
+            }
+        }
+
+        var out = [];
+        rows.forEach(function (row) {
+            out.push(row);
+        });
+        resourceMemo = { stamp: stamp, rows: out };
+        return out;
+    }
+
+    function resourceLabel(n) {
+        return n + (n === 1 ? ' resource' : ' resources');
+    }
+
+    function decorateResourcePill() {
+        try {
+            var rows = resourceScan();
+            var pill = document.querySelector('.ccx-resource-pill');
+            // No resources means no pill: a control that opens an empty list is one more thing in the
+            // row for no answer. The stock agents pill draws its own zero, but its zero is a state of
+            // the tab; this one is a property of the transcript.
+            if (!rows.length) {
+                if (pill) pill.remove();
+                return;
+            }
+            var footer = document.querySelector('[class*="inputFooterV2_"]');
+            if (!pill) {
+                if (!footer) return;
+                pill = document.createElement('button');
+                pill.type = 'button';
+                // The agents pill is `modelPill_<hash> agentsPill_<hash>`, and the look is the first of
+                // those: `modelPill` is what carries the rounded pill, the min-height and the padding.
+                // `footerButton` is deliberately not borrowed — it sets `border-radius:2px` and a
+                // transparent background, and whichever of the two the stylesheet defines last wins, so
+                // asking for both a pill and a footer button is asking for a square. The label goes in
+                // a span because `modelPill span` is the rule that stops it wrapping.
+                pill.className = ['ccx-resource-pill', stockClass('modelPill', footer)].filter(Boolean).join(' ');
+                var label = document.createElement('span');
+                label.className = 'ccx-res-pill-label';
+                pill.appendChild(label);
+                pill.onclick = openResources;
+            }
+            placeResourcePill(pill);
+            // The label span is written, never the button: assigning textContent would delete the span
+            // and with it the `modelPill span` rule that keeps the text on one line.
+            var text = resourceLabel(rows.length);
+            var labelEl = pill.querySelector('.ccx-res-pill-label');
+            if (labelEl) {
+                if (labelEl.textContent !== text) labelEl.textContent = text;
+            } else if (pill.textContent !== text) pill.textContent = text;
+            pill.title = text + ' · click for the list';
+            pill.setAttribute('aria-label', pill.title);
+        } catch (e) {
+            /* a footer that cannot take the pill is a missing list, not a broken composer */
+        }
+    }
+
+    // Where the count belongs, in the order of how exactly that is known — the same walk the countdown
+    // takes (placeCachePill), because the composer renders its chips only when their state calls for
+    // them and a pill placed at the first opportunity spends the session at whichever end the row
+    // happened to have just then.
+    //
+    // First choice is immediately right of the agents pill: the two are the row's per-session summaries
+    // and read as a pair. That pill is also the one thing here with a stable handle — `data-agents-dot`
+    // — where everything else about it is a hashed class name. Failing that, right of the model pill,
+    // the row's other control that says something about the session and the one that is always there;
+    // then after the menu button. Never the end of the footer, which is where an unanchored insert
+    // lands and what put the first version of this past the send button.
+    function placeResourcePill(pill) {
+        var footer = document.querySelector('[class*="inputFooterV2_"]');
+        if (!footer) return;
+        var anchor = document.querySelector('button[data-agents-dot]');
+        if (anchor && anchor.parentElement) {
+            if (anchor.nextSibling !== pill) anchor.parentElement.insertBefore(pill, anchor.nextSibling);
+            return;
+        }
+        // Our own pill wears the model pill's class — that is what gives it the pill look — so the
+        // search for the stock one has to skip the pill itself, the same trap the countdown documents.
+        var model = null;
+        var found = footer.querySelectorAll ? footer.querySelectorAll('[class*="modelPill_"]') : [];
+        for (var i = 0; i < found.length; i++)
+            if (found[i] !== pill) {
+                model = found[i];
+                break;
+            }
+        if (model && model.parentElement) {
+            if (model.nextSibling !== pill) model.parentElement.insertBefore(pill, model.nextSibling);
+            return;
+        }
+        var menu = footer.querySelector('[class*="menuButton_"]');
+        if (menu && menu.parentElement && menu.nextSibling !== pill) {
+            menu.parentElement.insertBefore(pill, menu.nextSibling);
+            return;
+        }
+        if (pill.parentElement !== footer) footer.appendChild(pill);
+    }
+
+    function resourceRow(row) {
+        var el = document.createElement('div');
+        el.className = 'ccx-row ccx-res-row ccx-res-open';
+        el.onclick = function () {
+            // The host decides what may be opened and says why when it may not: a path that is not
+            // absolute has no directory to resolve against here, and the wrong file is worse than a
+            // refusal. An attachment is the one kind with nothing to open *yet* — the payload travels
+            // with the request and the host writes it to a file before handing it to the OS, so what
+            // the user sees is the picture, not a base64 blob.
+            send({
+                type: 'ccx:openResource',
+                kind: row.kind === 'file' ? 'file' : row.kind === 'media' ? 'media' : 'url',
+                value: row.value,
+                mediaType: row.payload ? row.payload.mediaType : undefined,
+                data: row.payload ? row.payload.data : undefined,
+                url: row.payload ? row.payload.url : undefined,
+                seq: ++resourceSeq,
+            });
+            closePicker();
+        };
+
+        // An attached image gets the composer chip's own treatment: the picture itself, at the chip's
+        // own class, so the row is recognised the way the attachment it came from was. Only images —
+        // a document block has no thumbnail in the composer either, and a broken `<img>` is worse than
+        // a name.
+        var dims = null;
+        if (row.kind === 'media' && row.payload && /^image\//i.test(row.payload.mediaType) && row.payload.data) {
+            var thumb = document.createElement('img');
+            thumb.className = 'ccx-res-thumb ' + stockClass('thumbIcon', document);
+            thumb.src = 'data:' + row.payload.mediaType + ';base64,' + row.payload.data;
+            thumb.alt = '';
+            // The chip prints the pixel size beside the name, and the size is only known once the
+            // image has decoded, so the span starts empty and the load fills it.
+            dims = document.createElement('span');
+            dims.className = 'ccx-res-dims';
+            thumb.onload = function () {
+                if (thumb.naturalWidth && thumb.naturalHeight)
+                    dims.textContent = thumb.naturalWidth + '×' + thumb.naturalHeight;
+            };
+            el.appendChild(thumb);
+        }
+
+        var label = document.createElement('span');
+        label.className = 'ccx-res-label';
+        if (row.kind === 'file') {
+            var dir = dirPrefix(row.value);
+            if (dir) {
+                var dim = document.createElement('span');
+                dim.className = 'ccx-res-dir';
+                dim.textContent = dir;
+                var name = document.createElement('span');
+                name.className = 'ccx-res-name';
+                name.textContent = baseName(row.value);
+                label.appendChild(dim);
+                label.appendChild(name);
+            } else label.textContent = row.label;
+        } else label.textContent = row.label;
+        el.appendChild(label);
+        if (row.you) {
+            var youTag = document.createElement('span');
+            youTag.className = 'ccx-res-you';
+            youTag.textContent = 'you';
+            youTag.title = 'This came from one of your own messages, not from the model';
+            el.appendChild(youTag);
+        }
+        if (dims) el.appendChild(dims);
+
+        if (row.count > 1) {
+            var badge = document.createElement('span');
+            badge.className = 'ccx-res-count';
+            badge.textContent = '×' + row.count;
+            el.appendChild(badge);
+        }
+        el.title = row.full + (row.from.length ? '\n' + row.from.join(' · ') : '');
+        return el;
+    }
+
+    function openResources() {
+        closePicker();
+        var rows = resourceScan();
+        overlay = document.createElement('div');
+        overlay.className = 'ccx-overlay';
+        overlay.onclick = function (e) {
+            if (e.target === overlay) closePicker();
+        };
+        overlayKind = 'resources';
+
+        var box = document.createElement('div');
+        box.className = 'ccx-box ccx-resources-box';
+
+        var title = document.createElement('div');
+        title.className = 'ccx-title';
+        title.textContent = 'Session resources';
+        var tally = document.createElement('span');
+        tally.className = 'ccx-res-tally';
+        tally.textContent = rows.length ? resourceLabel(rows.length) : 'none yet';
+        title.appendChild(tally);
+        box.appendChild(title);
+
+        var hint = document.createElement('div');
+        hint.className = 'ccx-hint';
+        hint.textContent =
+            'Read from this session\'s transcript — links in messages, pages the tools fetched, files they touched, attachments. "you" marks what came from your own messages, which come first in each section';
+        box.appendChild(hint);
+
+        for (var s = 0; s < RESOURCE_SECTIONS.length; s++) {
+            var section = RESOURCE_SECTIONS[s];
+            // The user's own first, inside the section: the question this dialog is opened with is
+            // usually "what did I put in this session", and a tag alone would still leave the answer
+            // to be picked out of a list ordered by nothing the reader knows. The rest keeps the
+            // first-seen order it was scanned in.
+            var mine = [];
+            var theirs = [];
+            for (var i = 0; i < rows.length; i++) {
+                if (rows[i].kind !== section.kind) continue;
+                (rows[i].you ? mine : theirs).push(rows[i]);
+            }
+            if (!mine.length && !theirs.length) continue;
+            mine = mine.concat(theirs);
+
+            var head = document.createElement('div');
+            head.className = 'ccx-res-head';
+            head.textContent = section.label;
+            var count = document.createElement('span');
+            count.className = 'ccx-res-head-count';
+            count.textContent = String(mine.length);
+            head.appendChild(count);
+            box.appendChild(head);
+
+            var shown = mine.slice(0, RESOURCE_CAP);
+            for (var k = 0; k < shown.length; k++) box.appendChild(resourceRow(shown[k]));
+            if (mine.length > shown.length) {
+                var more = document.createElement('div');
+                more.className = 'ccx-res-more';
+                more.textContent = '+' + (mine.length - shown.length) + ' more';
+                box.appendChild(more);
+            }
+        }
+        if (!rows.length) {
+            var empty = document.createElement('div');
+            empty.className = 'ccx-res-empty';
+            empty.textContent = 'No external resources in this session yet.';
+            box.appendChild(empty);
+        }
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        var onKey = function (e) {
+            if (e.key === 'Escape') {
+                closePicker();
+                window.removeEventListener('keydown', onKey, true);
+            }
+        };
+        window.addEventListener('keydown', onKey, true);
+    }
+
     // --- History before compaction --------------------------------------------------------------
     //
     // The switch lives on the host (full-history.json), because the host is what rebuilds a transcript
@@ -2353,6 +2825,7 @@
                 syncAttachmentPrompt();
                 syncResumePrompt();
                 decorateCachePill();
+                decorateResourcePill();
             }, 60);
         }).observe(document.body, { childList: true, subtree: true });
         watchRunningFrames();
@@ -3498,6 +3971,29 @@
         // theme is loaded, and no stock class is borrowed except the two copied off the panel itself.
         '.ccx-prov-tally{float:right;font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;opacity:.55}',
         '.ccx-health-box{min-width:340px;padding-bottom:8px}',
+        // The pill itself borrows the stock model-pill classes, so only its pointer is ours; the
+        // dialog below it follows the picker's own box.
+        '.ccx-resource-pill{cursor:pointer}',
+        '.ccx-resources-box{min-width:420px;max-width:min(760px,80vw)}',
+        '.ccx-res-tally{float:right;font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;opacity:.55}',
+        '.ccx-res-head{padding:8px 10px 2px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.5}',
+        '.ccx-res-head-count{margin-left:6px;opacity:.8}',
+        // One row per resource, so the value is what the eye follows: monospace, ellipsised from the
+        // right for a path and from the left is not possible in CSS — a long URL therefore gives up
+        // its tail, which is why the full value is in the tooltip.
+        '.ccx-res-row{align-items:center}',
+        '.ccx-res-open{cursor:pointer}',
+        '.ccx-res-label{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--vscode-editor-font-family, monospace);font-size:11.5px}',
+        '.ccx-res-dir{opacity:.45}',
+        // The chip's own thumbnail is 12px, which is the right size in a one-line chip and too small to
+        // recognise a picture by in a dialog row. Two classes here, so this beats the stock rule
+        // whatever order the two stylesheets end up in; the radius and the cover fit stay the chip's.
+        '.ccx-res-row .ccx-res-thumb{width:28px;height:28px}',
+        '.ccx-res-dims{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums}',
+        '.ccx-res-you{flex:0 0 auto;padding:0 4px;border-radius:6px;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.8;color:var(--vscode-badge-foreground, var(--vscode-foreground));background:var(--vscode-badge-background)}',
+        '.ccx-res-count{flex:0 0 auto;opacity:.45;font-size:10.5px;font-variant-numeric:tabular-nums}',
+        '.ccx-res-more{padding:2px 10px 6px;opacity:.45;font-size:10.5px}',
+        '.ccx-res-empty{padding:10px;opacity:.55;font-size:12px}',
         // The sidebar section borrows the stock header markup, so only the fold and the body are new.
         '.ccx-side-section[data-ccx-open="0"] .ccx-side-body{display:none}',
         '.ccx-side-chev{display:flex;align-items:center;transition:transform .12s ease}',

@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const net = require('net');
@@ -1291,6 +1292,103 @@ function openProfileFile(name) {
     }
 }
 
+// The one thing the page's resource list cannot do for itself: hand a URL to the OS, a file to the
+// editor, or the bytes of a pasted attachment to whatever opens that kind of thing. All three are
+// refused rather than guessed at — a path that is not absolute has no directory to be resolved
+// against here (the host tracks no reliable per-session cwd), and opening the wrong file is worse
+// than a refusal — so the reply carries the reason and the page shows it as a toast.
+//
+// The bytes travel with the request rather than being looked up again: an attachment exists in the
+// transcript and nowhere on disk, and re-reading a session's jsonl to find one block is a fragile way
+// to avoid a copy. Past this size the request is refused instead of moved — a pasted screenshot is a
+// few hundred kilobytes, and anything at this size is a file the user has on disk somewhere.
+const RESOURCE_MEDIA_MAX = 12 * 1024 * 1024;
+
+const EXT_BY_TYPE = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+    'image/svg+xml': '.svg',
+    'application/pdf': '.pdf',
+    'text/plain': '.txt',
+    'text/markdown': '.md',
+    'text/csv': '.csv',
+    'application/json': '.json',
+};
+
+function extensionForType(type) {
+    const known = EXT_BY_TYPE[String(type || '').toLowerCase()];
+    if (known) return known;
+    const sub = /^[a-z]+\/([a-z0-9.+-]+)/i.exec(String(type || ''));
+    return sub ? '.' + sub[1].replace(/[^a-z0-9]/gi, '').slice(0, 8) : '.bin';
+}
+
+// Named after the payload, so opening the same screenshot twice reuses one file rather than filling
+// the temp directory with copies of it.
+function mediaFile(mediaType, data) {
+    const dir = path.join(os.tmpdir(), 'vannevar-resources');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, crypto.createHash('sha1').update(data).digest('hex').slice(0, 16) + extensionForType(mediaType));
+    if (!fs.existsSync(file)) fs.writeFileSync(file, Buffer.from(data, 'base64'));
+    return file;
+}
+
+function openResource(m, webview) {
+    const seq = typeof m.seq === 'number' ? m.seq : null;
+    const reply = (ok, error) => post(webview, { type: 'ccx:openResourceResult', seq, ok, error });
+    const openExternal = (uri, what) =>
+        Promise.resolve(vscode.env.openExternal(uri)).then(
+            () => reply(true),
+            (e) => reply(false, `could not open the ${what}: ` + ((e && e.message) || e)),
+        );
+    try {
+        const value = typeof m.value === 'string' ? m.value.trim() : '';
+        const link = typeof m.url === 'string' ? m.url.trim() : '';
+        if (m.kind === 'url' || (m.kind === 'media' && link)) {
+            // A scheme whitelist, so a `vscode:`/`file:`/`command:` value that arrived from a
+            // transcript the model wrote never reaches the shell.
+            const url = link || value;
+            if (!/^https?:\/\//i.test(url)) throw new Error('only http(s) links are opened');
+            openExternal(vscode.Uri.parse(url), 'link');
+        } else if (m.kind === 'file') {
+            if (!path.isAbsolute(value)) throw new Error(`${value} is not an absolute path — open it from the terminal`);
+            // A tool that names a directory — a search rooted at one, most often — is a place the
+            // session touched as much as a file is, so the row is kept and the folder is revealed
+            // rather than opened. `showTextDocument` on one answers with a paragraph about reading a
+            // directory, which is what the first version of this showed the user.
+            let isDir = false;
+            try {
+                isDir = fs.statSync(value).isDirectory();
+            } catch (e) {
+                /* a path that is not there is the editor's to report, in its own words */
+            }
+            if (isDir)
+                Promise.resolve(vscode.commands.executeCommand('revealInExplorer', vscode.Uri.file(value))).then(
+                    () => reply(true),
+                    (e) => reply(false, 'could not reveal the folder: ' + ((e && e.message) || e)),
+                );
+            else
+                vscode.window.showTextDocument(vscode.Uri.file(value), { preview: true }).then(
+                    () => reply(true),
+                    (e) => reply(false, 'could not open the file: ' + ((e && e.message) || e)),
+                );
+        } else if (m.kind === 'media') {
+            const data = typeof m.data === 'string' ? m.data : '';
+            if (!data) throw new Error('this attachment carries nothing to open');
+            if (data.length > RESOURCE_MEDIA_MAX)
+                throw new Error(
+                    `this attachment is about ${Math.round((data.length * 3) / 4 / 1048576)} MB — too large to open from here`,
+                );
+            openExternal(vscode.Uri.file(mediaFile(m.mediaType, data)), 'attachment');
+        } else if (!value) throw new Error('nothing to open');
+        else throw new Error('unknown resource kind');
+    } catch (e) {
+        reply(false, (e && e.message) || String(e));
+    }
+}
+
 // The Settings row in the command menu, which is where the account Claude Code itself runs on is
 // switched — so the subscription is signed into from there rather than from the command palette, and
 // the palette command stays for a window whose patch is off. One flow at a time, guarded on the shared
@@ -2034,6 +2132,8 @@ function attachWebview(webview) {
             }
         } else if (m.type === 'ccx:searchContent') {
             post(webview, { type: 'ccx:searchResults', seq: m.seq, matches: searchTranscripts(m.query, m.sessionIds) });
+        } else if (m.type === 'ccx:openResource') {
+            openResource(m, webview);
         } else if (m.type === 'ccx:spellcheck') {
             // The request contains a bounded, de-duplicated list of Russian words, not the draft. Do
             // not log it: a prompt can contain names, hostnames or other sensitive project context.

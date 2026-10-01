@@ -30,6 +30,31 @@ the map is rebuilt when an old session is reopened and a bare clock there reads 
 is the app's own row that carries it, so every subagent in the dialog gets it, not only the ones
 delegated through the bundled MCP server.
 
+A session's external resources are now countable without scrolling. A **resources** pill sits in the
+composer footer beside the stock **agents** pill, carrying a set count — links written in messages,
+pages a `WebFetch` call went to, links a `WebSearch` returned, files tool calls read or wrote, and
+images and documents attached to a prompt — and the dialog behind it groups them into sections in
+first-seen order, with a resource mentioned many times collapsing into one row that shows how many
+times (`×3`). The count is of distinct resources, which is the only number worth carrying: a URL
+written twice and fetched once is one resource, and the same URL reached from a message and from a
+tool call is one row, in the section where it first appeared, with both origins in its tooltip. Every
+URL is compared by scheme and host lowercased, so two spellings of one page do not become two rows.
+What came from the user is set apart from what the model brought in: those rows carry a **you** tag and
+lead their section, because a URL from a prompt and a URL from a reply look exactly alike. A tool
+result is not the user speaking, though it arrives on their side of the conversation — only the turns
+they actually typed, and the images and documents they attached, are marked.
+
+An attached image is drawn as itself: the row leads with the picture, wearing the composer chip's own
+thumbnail class, and its pixel size lands beside the name once the image has decoded — the same pair
+the chip shows. A document gets no thumbnail, having none in the composer either. The list is read
+entirely from the transcript the tab already holds — nothing is asked of the host to draw it. Every row opens what it names: an http(s) link through the OS, an absolute path in the
+editor, and an attached image or document by being written to a file first, since a pasted screenshot
+exists in the transcript and nowhere else — the same attachment opened twice reuses its file. What
+cannot be opened is refused with the reason shown rather than guessed at: a relative path has no
+directory to be resolved against, a scheme that is not http(s) never reaches the shell, and an
+attachment past a dozen megabytes is refused instead of being moved. A row naming a folder — a search
+tool names one with its `path` — is revealed in the explorer rather than fed to the editor as a file.
+
 ## 2.1.286
 
 Verified against Claude Code **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**,
