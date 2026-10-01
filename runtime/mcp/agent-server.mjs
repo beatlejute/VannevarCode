@@ -824,6 +824,12 @@ function lookupSession(sessionId) {
 // one piece at the end, and a fifteen-minute run looks identical to a hung one. The manifest is the
 // hook the extension host needs — written before the spawn, so a run is watchable from its first
 // second, and rewritten once with the outcome.
+//
+// Every manifest this server has open, so that one that ends without an outcome can still be closed
+// — see abandonRuns. Nothing else reads it: the file is the shared state, this is only what this
+// process owes the file when it goes away.
+const openRuns = new Set();
+
 function runFile(id) {
     return path.join(RUNS_DIR, `${id}.json`);
 }
@@ -904,11 +910,13 @@ function openRun(ctx, background) {
         finishedAt: null,
         state: 'running',
     });
+    openRuns.add(id);
     return id;
 }
 
 function closeRun(id, state, extra = {}) {
     if (!id) return;
+    openRuns.delete(id);
     writeRun(id, { state, finishedAt: Date.now(), ...extra });
 }
 
@@ -935,6 +943,27 @@ function killTree(child) {
         }
     }
     child.kill();
+}
+
+// Runs whose client went away while they were still going. A killed child breaks the pipe under the
+// answer being read, so `execute` comes back to a partial read — and without this it would write
+// that down as a failed run, over the ending that actually happened.
+const abandoned = new Set();
+
+// The client closed the pipe: this server is about to exit, and everything it was doing goes with
+// it — the children are killed, and every run it still has open is closed with them.
+//
+// This is the half that was missing: without it a run ended by the session ending left its manifest
+// saying `running` for good. The map reads that manifest, so the row sat there "working" for hours,
+// and "Stop agent" on it wrote a request into a file no live process would ever poll — the host has
+// nothing to check but the manifest, and the manifest said running.
+function abandonRuns() {
+    for (const child of running) killTree(child);
+    running.clear();
+    for (const id of [...openRuns]) {
+        abandoned.add(id);
+        closeRun(id, 'stopped');
+    }
 }
 
 // ------------------------------------------------------------------------------------ run modes
@@ -1219,6 +1248,10 @@ async function execute(ctx, task) {
     if (task?.stopped) {
         closeRun(run, 'stopped');
         throw new Error(`the "${profile}" agent was stopped after ${span(Date.now() - startedAt)}`);
+    }
+    if (abandoned.has(run)) {
+        closeRun(run, 'stopped');
+        throw new Error(`the "${profile}" agent was stopped when the session that asked for it ended`);
     }
     if (outcome.timedOut) {
         closeRun(run, 'timeout');
@@ -1605,9 +1638,10 @@ function main() {
     });
     // The client closing the pipe ends this server, and a task still running under it would be left
     // orphaned — a headless CLI with nobody to report to, still billing. Background tasks included:
-    // nothing survives the session that asked for it.
+    // nothing survives the session that asked for it. Its manifests are closed on the way out, so
+    // the agent map does not keep drawing a row for a run that ended with the session.
     process.stdin.on('end', () => {
-        for (const child of running) killTree(child);
+        abandonRuns();
         process.exit(0);
     });
 }
@@ -1622,6 +1656,7 @@ export {
     TOOLS,
     callTool,
     execute,
+    abandonRuns,
     handle,
     prepare,
     envForProfile,
