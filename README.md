@@ -96,6 +96,11 @@ A profile is a JSON file in `~/.claude/profiles/`; its name is what the picker s
 A profile with an empty `env` means the Anthropic subscription. `~/.claude/settings.json` is **never
 modified**. **Vannevar: Open profiles folder** opens the directory.
 
+The ★ beside a name in the picker sets the **default provider**: the profile a new tab runs on when
+nothing else — a per-tab pick or a session's own binding — has said otherwise. Click it again to clear,
+which puts new tabs back on `settings.json` / the subscription. The default lives in
+`~/.claude/vannevar/default-profile.json`, not in `settings.json`.
+
 ## OpenAI and the ChatGPT subscription
 
 Anything that speaks the Anthropic protocol needs only the profile above. Everything else goes through

@@ -27,7 +27,7 @@
         window.acquireVsCodeApi = function () { return proxy; };
     }
 
-    var state = { profiles: [], active: null, sessionId: null, bindings: {} };
+    var state = { profiles: [], active: null, defaultProfile: null, sessionId: null, bindings: {} };
     var icons = {};
     var fallback = null;
     var registry = null;
@@ -349,7 +349,24 @@
             var model = document.createElement('span');
             model.className = 'ccx-model';
             model.textContent = p.model || '—';
-            row.append(mark, name, model);
+            // The default is a third state beside the active mark: the star sets which profile a new
+            // tab falls back to, without touching the one this tab is on. Clicking it again clears it,
+            // which puts the fallback back on settings.json / the subscription.
+            var star = document.createElement('span');
+            star.className = 'ccx-star';
+            star.textContent = p.name === state.defaultProfile ? '★' : '☆';
+            star.title = p.name === state.defaultProfile
+                ? 'Default provider — click to clear'
+                : 'Set as default for new sessions';
+            star.onclick = function (e) {
+                e.stopPropagation();
+                send({ type: 'ccx:setDefault', name: p.name === state.defaultProfile ? null : p.name });
+                toast(p.name === state.defaultProfile
+                    ? 'Default cleared — new sessions fall back to settings.json.'
+                    : 'Default provider set to "' + p.name + '".');
+                closePicker();
+            };
+            row.append(mark, name, model, star);
             box.appendChild(row);
         });
 
@@ -393,6 +410,7 @@
             state = {
                 profiles: d.profiles || [],
                 active: d.active || null,
+                defaultProfile: d.defaultProfile || null,
                 models: d.models || null,
                 bindings: d.bindings || {},
                 // The host stamps every state push, so the ages in the panel are all measured from
@@ -3228,6 +3246,8 @@
         '.ccx-row:hover{background:var(--vscode-list-hoverBackground)}',
         '.ccx-mark{opacity:.7;width:1em}',
         '.ccx-model{margin-left:auto;opacity:.6;font-size:11px}',
+        '.ccx-star{margin-left:8px;opacity:.55;cursor:pointer}',
+        '.ccx-star:hover{opacity:1}',
         '.ccx-prov-tag{opacity:.7;font-size:11px;padding:1px 6px;border-radius:8px;color:var(--vscode-badge-foreground, var(--vscode-foreground));background:var(--vscode-badge-background);border:none}',
         '.ccx-side-link{margin-left:auto;align-self:center;cursor:pointer;font-family:var(--vscode-font-family)}',
         '.ccx-side-link:hover{opacity:1}',
