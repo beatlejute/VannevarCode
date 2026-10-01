@@ -172,6 +172,79 @@ So `claude-vscode.editor.open` with a live `sessionId` only reveals the existing
 
 `close_channel` does not complete instantly: roughly 0.5 s pass between "Closing Claude on channel" and the channel actually being freed. Sending `launch_claude` on a timer before that returns `Channel already exists`, after which the host finishes killing the channel and the tab is left without a process (`Channel not found for io_message`). The trigger must be the **incoming** `close_channel`, not a timeout.
 
+### `--channels` cannot be reached from the spawn options, so a channel is started at runtime instead
+
+Plugin channels — the Telegram bridge, whose terminal launch line is `--channels
+plugin:telegram@claude-plugins-official` — look like a spawn flag, and the SDK even has an option for
+one. The argv builder inside `extension.js` reads it:
+
+```js
+if(this.options.channels&&this.options.channels.length>0)for(let Q1 of this.options.channels)rA1(a,"channels",Q1)
+```
+
+but the object it reads is not the one the extension hands the SDK. The Query class rebuilds the
+transport's options from a literal that names every field it forwards —
+
+```js
+let N61=new kS1({abortController:N,additionalDirectories:M,projectConfigRoot:F,agent:j,betas:x,cwd:R,debug:P,debugFile:I,
+  executable:f,executableArgs:p,extraArgs:G61?{...r,workload:G61}:r,pathToClaudeCodeExecutable:NC,env:a6,forkSession:m,…})
+```
+
+— and `channels` is not among them, so the flag can never leave the panel however the spawn options are
+written. That is also why `extraArgs:{channels:"…"}` is not the answer: it does reach the argv builder
+(`for(let[Q1,Y1]of Object.entries(h))…rA1(a,Q1,Y1)`, and `rA1` emits `--<key> <value>`), but it is fixed
+at spawn, and it would be the only thing in this project that has to be decided before the user asks for
+it.
+
+The runtime path is the one Remote Control takes, and it is the same shape of feature: a connection
+opened on a session that is already running. The SDK's query object carries
+
+```js
+async enableChannel($){return $8("sdk_mcp_enable_channel",async()=>{await this.request({subtype:"channel_enable",serverName:$})})}
+```
+
+which sends the `channel_enable` control request. The CLI resolves the server's `pluginSource` from it —
+"server `<x>` is not plugin-sourced; channel_enable requires a marketplace plugin" is its refusal for a
+plain MCP server — then applies the organization's policy: `channelsEnabled` in managed settings, and
+`allowedChannelPlugins` as the allowlist. The argument is an **MCP server name**, not the plugin spec:
+`telegram` for `plugin:telegram@claude-plugins-official`, which is the plugin's only declared mcpServer
+in the catalog. Present in the CLI binary of 2.1.280 through 2.1.286, and `enableChannel` in the SDK of
+every one of them; 2.1.281, which never landed here in a verified release, has both too.
+
+What the host is missing is the session manager, and the only place it and a channel id are in reach
+together is the manager's own
+
+```js
+channelInitialized($){let J=this.channels.get($);if(!J)return;this.initializedChannelIds.push($);…}
+```
+
+— a class method, so the minifier leaves its name alone (like `toggleRemoteControl`, `enableChannel` and
+`closeChannel`), called once per channel right after `system/init`, by which time `this.channels.get($)`
+already holds the record with the `query` in it. One match in each of 2.1.280–2.1.286. The injected call
+hands over `this` and the id; the host keeps the manager and later calls `enableChannel` on the record's
+`query` — as a method, never detached, since the request is sent through `this`.
+
+The other half of the join is `webview.__ccxChannelId`, taken from `launch_claude`. Until this, the
+extension's channel id was read in exactly one place in `host.js` — a `dlog` — and thrown away; a
+relaunch is a new channel with a new id, so the previous record is dropped with it unless another tab
+still points at it.
+
+Two things about the answer the row shows. `enableChannel` resolving means the CLI **took** the control
+request, not that the bridge behind it is live, so the row says `enabled` and never `connected` — the
+same claim the stock Remote Control pill makes only once it has a session URL. And there is no way back:
+no `channel_disable` exists in any of these releases, `closeChannel` ends the whole session, so the row
+is start-only and says so.
+
+This anchor is the one signature in `apply-patch.mjs` declared `optional: true`. It has to be: 2.1.274,
+2.1.276 and 2.1.278 are on `verifiedAgainst` and were not installed on the machine this was written on,
+so a miss there cannot be distinguished from a release that never had the method — and refusing the whole
+patch over a feature a bundle never had would be worse than the feature being off. A miss is still not
+silent: `EXPECTATIONS` carries the same regex and prints
+`NOTE: extension.js no longer has channelInitialized()` when nothing matched, and the menu row reports
+itself unavailable rather than doing nothing. `test/auto-repatch.test.mjs` pins both ends — the hook
+present in a patched real bundle, and a fixture with the method renamed taking the patch with the note
+and no hook.
+
 ### Two host-kind lists, and only one of them matters
 
 The CLI layers `~/.claude/settings.json`'s `env` block over the spawn environment and only filters

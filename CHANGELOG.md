@@ -110,6 +110,23 @@ directory to be resolved against, a scheme that is not http(s) never reaches the
 attachment past a dozen megabytes is refused instead of being moved. A row naming a folder — a search
 tool names one with its `path` — is revealed in the explorer rather than fed to the editor as a file.
 
+A session can now be given a plugin channel — the Telegram bridge, launched in the terminal with
+`--channels plugin:telegram@claude-plugins-official` — from a row in the command menu's *Settings*
+section, beside *Sign in to ChatGPT…*. The row starts the channel in the session that is already
+running, the way Remote Control starts its own connection: through the session's `enableChannel`
+control request, naming the MCP server the plugin declares (`telegram` here) rather than a launch flag,
+which the CLI never sees from this spawn — the SDK rebuilds the transport's options object without the
+`channels` field, though its argument builder reads it. Nothing is started on its own; the row is the
+only door, and a second click on a channel that is already up does nothing. The row says where it got
+to while it gets there and afterwards: `starting…`, then `enabled` once the CLI has taken the request —
+not `connected`, since whether the bridge behind it is live is not in that answer — or `failed` with the
+provider's own words in the tooltip, which is where an organization's policy
+(`channelsEnabled`, `allowedChannelPlugins`) and an uninstalled plugin both show up. There is no way
+back within a session: the CLI has no control request that turns a channel off, so a new session is
+what ends one. The anchor this rides on is the one signature in the patcher declared optional — a
+release that does not have the method the hook hangs off takes the rest of the patch and says so in a
+`NOTE`, and the row reports itself unavailable rather than doing nothing.
+
 ## 2.1.286
 
 Verified against Claude Code **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**,

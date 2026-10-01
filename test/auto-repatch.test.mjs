@@ -172,13 +172,22 @@ try {
     } else {
         const ahead = supported.replace(/\d+$/, (last) => Number(last) + 1);
 
-        const onAhead = run(PATCHER, [`--dir=${fixture(`anthropic.claude-code-${ahead}-win32-x64`, source)}`, '--if-needed']);
+        const aheadDir = fixture(`anthropic.claude-code-${ahead}-win32-x64`, source);
+        const onAhead = run(PATCHER, [`--dir=${aheadDir}`, '--if-needed']);
         assert.equal(onAhead.code, 0, `the patch did not go onto ${ahead}:\n${onAhead.text.slice(-1500)}`);
         assert.match(onAhead.text, /^ccx-result: patched$/m, 'a fresh patch reported nothing');
         assert.match(
             onAhead.text,
             new RegExp(`^ccx-unverified: ${escape(ahead)} ${escape(supported)}$`, 'm'),
             `a patch onto an unverified version did not say so:\n${onAhead.text}`,
+        );
+        // The channel hook rides on the same run as everything else, and it is the one that can be
+        // absent: where it is not, the patcher says so below rather than reporting the same silence as
+        // a run that wired it in. On the newest release it has to be there.
+        assert.match(
+            readFileSync(path.join(aheadDir, 'extension.js'), 'utf8'),
+            /onChannelReady/,
+            'the channel hook did not reach a patched bundle that has the anchor for it',
         );
         console.log(`OK — a patch onto ${ahead}, which nothing verified, applies and reports the mismatch`);
 
@@ -192,6 +201,30 @@ try {
             assert.doesNotMatch(onNamed.text, /^ccx-unverified:/m, `${release} is on the list and was flagged anyway`);
         }
         console.log(`OK — every release in verifiedAgainst (${verified.join(', ')}) applies without a warning`);
+
+        // --- an optional anchor a release simply does not have ----------------------------------------
+        // The channel hook hangs off one method, and a release can be old enough not to have it — the
+        // point of `optional`. Missing is not a refusal: the rest of the runtime is still wired in and a
+        // bundle refused over a feature it never had would be worse than the feature being off. It is not
+        // silence either, and that is the half worth pinning: without the NOTE the hook would vanish and
+        // nothing would say so until somebody noticed the row had stopped working.
+        const withoutAnchor = fixture('anthropic.claude-code-9.9.9-nochannelanchor', {
+            // Both halves of the name — the definition and its call site — so the file stays valid.
+            'extension.js': source['extension.js'].replace(/channelInitialized/g, 'channelInitialised'),
+            'webview/index.js': source['webview/index.js'],
+        });
+        const missing = run(PATCHER, [`--dir=${withoutAnchor}`, '--if-needed']);
+        assert.equal(missing.code, 0, `a bundle without the channel anchor was refused:\n${missing.text.slice(-1200)}`);
+        assert.match(missing.text, /^ccx-result: patched$/m, 'the patch did not apply without the optional anchor');
+        assert.match(
+            missing.text,
+            /NOTE: extension\.js no longer has channelInitialized\(\)/,
+            `a missing optional anchor went unmentioned:\n${missing.text.slice(-800)}`,
+        );
+        const withoutHook = readFileSync(path.join(withoutAnchor, 'extension.js'), 'utf8');
+        assert.ok(!withoutHook.includes('onChannelReady'), 'the hook was injected where its anchor is not');
+        assert.ok(withoutHook.includes('renderScript'), 'the rest of the runtime should still be wired in');
+        console.log('OK — an optional anchor that is missing is named in a NOTE, and does not refuse the patch');
 
         // --- a signature that moved in the second file only -------------------------------------------
         // extension.js is patched first, and a refusal that came from webview/index.js used to arrive

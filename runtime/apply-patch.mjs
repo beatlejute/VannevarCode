@@ -23,6 +23,12 @@ const HOST_REQUIRE =
 // refresh it often enough for an edited host.js to reach these on its own.
 const HOST_LOAD = '/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","vannevar","host.js");';
 
+// The session manager's per-channel initialization hook, and the one anchor in this file that is
+// declared `optional`. The method name is preserved by the minifier — it is a class member called by
+// name from elsewhere in the class, like `toggleRemoteControl` and `closeChannel` — while its
+// parameter is not. Shared with EXPECTATIONS so the patch and the "did it vanish" check cannot drift.
+const CHANNEL_INITIALIZED = /channelInitialized\(([\w$]+)\)\{/;
+
 const PATCHES = [
     {
         // Was a plain literal until 2.1.245, which renamed every local in it: the nonce (`u` → `U`), the
@@ -448,6 +454,38 @@ const PATCHES = [
             `return[__ccxAt,`,
         where: 'replace',
     },
+    // --- Plugin channels: the session's own `enableChannel` control request ----------------------
+    {
+        // Claude Code's plugin channels (the Telegram bridge) are launched with `--channels
+        // plugin:telegram@claude-plugins-official`, and that flag is out of reach here for a reason
+        // worth writing down: the SDK's transport is built from an object literal that names every
+        // field it forwards — `new <T>({abortController:…,extraArgs:…,pathToClaudeCodeExecutable:…,
+        // env:…})` — and `channels` is not one of them, even though the argv builder it feeds does read
+        // `this.options.channels`. So the flag can never be reached from the options the extension
+        // hands the SDK. What is reachable is the runtime path, the same one Remote Control takes:
+        // the session's query object carries `enableChannel(serverName)`, which sends the
+        // `channel_enable` control request. The CLI resolves the server's pluginSource from it, insists
+        // on a marketplace plugin and applies the organization's policy, which is what the menu row
+        // reports back.
+        //
+        // `channelInitialized(ch)` is where the manager and the channel id meet after the record
+        // exists — `this.channels.get(ch)` already holds `{query,…}` at its first line, and it runs
+        // once per channel right after `system/init`. Both are handed over; the host cannot reach
+        // either from the webview it hooks.
+        //
+        // Optional on purpose: the three oldest releases on the verified list (2.1.274, 2.1.276,
+        // 2.1.278) are not installed on the machine this was written on, so the anchor could not be
+        // checked against them, and a miss there must not refuse the whole patch. A miss is not silent
+        // — EXPECTATIONS below prints a NOTE for it, and the menu row says so rather than pretending.
+        file: 'extension.js',
+        optional: true,
+        find: CHANNEL_INITIALIZED,
+        replace: (_found, channel) =>
+            `channelInitialized(${channel}){try{` +
+            HOST_REQUIRE +
+            `let __f=require(__p).onChannelReady;__f&&__f(this,${channel})}catch(__e){}`,
+        where: 'replace',
+    },
 ];
 
 // Things the injected code drives without patching them. Losing one is not an error — Vannevar
@@ -455,8 +493,11 @@ const PATCHES = [
 // disappearance is visible before a user notices the gesture stopped working.
 //
 // The retract gesture no longer depends on the stock Rewind action (it talks to the session object
-// that injection point #4 already hands over), so there are currently no expectations to check.
-const EXPECTATIONS = [];
+// that injection point #4 already hands over), so nothing is checked for it here.
+//
+// The channel hook is the other kind of entry: the anchor is optional, so a release without it is not
+// refused — and without this line that would be a patch that quietly does not do what it says.
+const EXPECTATIONS = [{ file: 'extension.js', find: CHANNEL_INITIALIZED, what: 'channelInitialized()' }];
 
 const MARKER = '__ccx';
 
@@ -630,12 +671,18 @@ function apply(dir) {
         for (const p of patches) {
             // A few anchors sit in code the bundle carries twice, and `hits` says so. Anything else
             // still has to match exactly once: a second hit there means the anchor stopped being unique.
+            //
+            // `optional` relaxes that in one direction only: nothing found is allowed — the feature goes
+            // off, and EXPECTATIONS says so out loud — while two hits is still a break. It is for the
+            // anchors a release can simply not have yet, never for one this file is unsure about.
             const expected = p.hits || 1;
             const hits = countHits(src, p.find);
-            if (hits !== expected)
+            if (hits !== expected && !(p.optional && hits === 0))
                 throw Error(`${rel}: signature matched ${hits} times (expected ${expected}) — bundle changed:\n  ${p.find}`);
-            const find = expected > 1 ? everyMatch(p.find) : p.find;
-            src = src.replace(find, (...match) => expand(p, match));
+            if (hits > 0) {
+                const find = hits > 1 ? everyMatch(p.find) : p.find;
+                src = src.replace(find, (...match) => expand(p, match));
+            }
         }
         written.push({ rel, file, src, hooks: patches.length });
     }

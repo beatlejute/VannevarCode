@@ -95,6 +95,12 @@ const S = (globalThis.__ccxState ||= {
     activeSessionByPanel: new Map(),
     profileByWebview: new Map(),
     pendingProfile: null,
+    // Plugin channels, keyed by the extension's channel id: the record the menu row draws from, the
+    // session manager that owns it, and a click that arrived before the channel said it was up.
+    channels: new Map(),
+    channelManagers: new Map(),
+    channelPendingStart: new Map(),
+    channelHookSeen: false,
     badges: new Map(),
     iconUris: new Map(),
     warnedOverrides: new Set(),
@@ -1419,6 +1425,113 @@ function startChatgptLogin() {
         });
 }
 
+// --- Plugin channels: the Telegram bridge, started from the menu -------------------------------------
+//
+// Claude Code's plugin channels are launched with `--channels plugin:telegram@claude-plugins-official`,
+// and that flag is out of reach from here: the SDK rebuilds the transport's options from a literal that
+// does not carry `channels`, so whatever the spawn options say, the CLI never sees the flag (the whole
+// of it is in the injection point that hands this file the session manager). Remote Control — the same
+// kind of thing, a live connection started by a control request rather than by a spawn flag — is the
+// shape followed instead: the session's query object takes `enableChannel(serverName)`, the CLI looks up
+// that server's plugin, and the answer is what the row reports.
+//
+// The server name, not the plugin spec: `channel_enable` names an MCP server the plugin declares
+// (`telegram` for `plugin:telegram@claude-plugins-official`), and it is the CLI that insists the server
+// is marketplace-sourced. One constant, because there is one row; a second channel would make this a
+// list and the row a submenu.
+const CHANNEL_SERVER = 'telegram';
+
+function channelOf(webview) {
+    const id = webview && webview.__ccxChannelId;
+    if (!id) return null;
+    return (S.channels ||= new Map()).get(id) || null;
+}
+
+// What the page's row draws from. Deliberately not the whole record: the page has no use for the
+// manager, and nothing that lives in this file belongs on the wire by accident.
+function channelPayload(webview) {
+    const rec = channelOf(webview);
+    if (!rec) return null;
+    return { status: rec.status, server: rec.server, error: rec.error, supported: rec.supported };
+}
+
+function setChannel(channelId, patch) {
+    const channels = (S.channels ||= new Map());
+    const rec = channels.get(channelId) || { status: 'idle', server: null, error: null, supported: false };
+    Object.assign(rec, patch);
+    channels.set(channelId, rec);
+    return rec;
+}
+
+// Called from the patched bundle once per channel, right after the session's own init — the one moment
+// this file can be handed both the session manager and that channel's id. The manager is kept because
+// the click comes later, from a page that can reach neither.
+function onChannelReady(manager, channelId) {
+    try {
+        if (!manager || !channelId || !manager.channels) return;
+        S.channelHookSeen = true;
+        (S.channelManagers ||= new Map()).set(channelId, manager);
+        // Whether this build can do it at all is decided here and not at the click: a release whose SDK
+        // predates `enableChannel` gets a row that says so, instead of a click that goes nowhere.
+        const record = manager.channels.get(channelId);
+        const query = record && record.query;
+        const supported = Boolean(query && typeof query.enableChannel === 'function');
+        const previous = (S.channels ||= new Map()).get(channelId);
+        setChannel(channelId, {
+            supported,
+            // A channel that was started stays started across a re-init of the same id; anything else
+            // falls back to what this build can do.
+            status: previous && previous.status === 'enabled' ? 'enabled' : supported ? 'idle' : 'unsupported',
+        });
+        dlog('channel ready', { channelId, supported });
+        if (supported && (S.channelPendingStart ||= new Map()).get(channelId)) {
+            S.channelPendingStart.delete(channelId);
+            startChannel(channelId);
+            return;
+        }
+    } catch (e) {
+        dlog('channel ready failed', e && e.message);
+        return;
+    }
+    broadcast();
+}
+
+function startChannel(channelId) {
+    const rec = (S.channels ||= new Map()).get(channelId);
+    if (!rec || rec.status === 'connecting' || rec.status === 'enabled') return;
+    let query = null;
+    try {
+        const manager = (S.channelManagers ||= new Map()).get(channelId);
+        const record = manager && manager.channels.get(channelId);
+        query = record && record.query;
+    } catch {}
+    if (!rec.supported || !query || typeof query.enableChannel !== 'function') {
+        setChannel(channelId, {
+            status: 'unsupported',
+            error: 'this build of Claude Code has no channel support',
+        });
+        broadcast();
+        return;
+    }
+    setChannel(channelId, { status: 'connecting', server: CHANNEL_SERVER, error: null });
+    broadcast();
+    // Called as a method on the query, never detached: the control request is sent through `this`.
+    // Resolving means the CLI accepted the request, which is why the row says "enabled" and not
+    // "connected" — whether the bridge behind it is up is not in this promise.
+    Promise.resolve(query.enableChannel(CHANNEL_SERVER))
+        .then(() => {
+            setChannel(channelId, { status: 'enabled' });
+            dlog('channel enabled', { channelId, server: CHANNEL_SERVER });
+            broadcast();
+        })
+        .catch((e) => {
+            const message = (e && e.message) || String(e);
+            setChannel(channelId, { status: 'error', error: message });
+            dlog('channel enable failed', { channelId, error: message });
+            broadcast();
+        });
+}
+
 function stateFor(sessionId, webview) {
     const profiles = listProfiles();
     const active = effectiveProfile(sessionId, webview);
@@ -1442,6 +1555,9 @@ function stateFor(sessionId, webview) {
         // Drawn on the "Sign in to ChatGPT" row in Settings. `signingIn` is host state, not file
         // state: a flow already running is what the row has to show instead of starting a second one.
         chatgpt: { ...(signin() ? signin().status(DIR) : { loggedIn: false }), signingIn: Boolean(S.chatgptSigningIn) },
+        // This tab's plugin channel, or null before a session exists (and on a build the channel hook
+        // never reached). The tag on the "Telegram channel" row is drawn from this.
+        channel: channelPayload(webview),
         models: active && active !== 'claude' ? modelsOf(active) : null,
         // `now` rather than a per-row Date.now(): every age in the panel is then measured from the
         // same instant, so two rows probed together never read as a minute apart.
@@ -2049,6 +2165,19 @@ function attachWebview(webview) {
 
         if (m.type === 'launch_claude') {
             if (m.resume) webview.__ccxSessionId = m.resume;
+            // The channel id was only ever logged before this. It is the key the session manager will
+            // hand over with, so it is kept — and the previous one dropped, unless another tab is still
+            // pointing at it, because a relaunch is a new channel with a new id.
+            if (typeof m.channelId === 'string' && m.channelId) {
+                const previous = webview.__ccxChannelId;
+                webview.__ccxChannelId = m.channelId;
+                setChannel(m.channelId, {});
+                if (previous && previous !== m.channelId && ![...S.webviews].some((w) => w !== webview && w.__ccxChannelId === previous)) {
+                    (S.channels ||= new Map()).delete(previous);
+                    (S.channelManagers ||= new Map()).delete(previous);
+                    (S.channelPendingStart ||= new Map()).delete(previous);
+                }
+            }
             S.pendingProfile = S.profileByWebview.get(webview) || getBinding(m.resume) || null;
             dlog('launch_claude', { channelId: m.channelId, resume: m.resume || null, profile: S.pendingProfile });
             // A default provider routes through the same local adapter as a picked one, so its proxy has
@@ -2186,6 +2315,26 @@ function attachWebview(webview) {
             openProfileFile(m.name);
         } else if (m.type === 'ccx:chatgptLogin') {
             startChatgptLogin();
+        } else if (m.type === 'ccx:channelStart') {
+            // The row is the only way in, and it can be clicked in three states that are not the same
+            // thing: a build where the hook never ran at all, a session whose channel has been launched
+            // but has not reported in yet, and a channel that is ready. Each gets its own answer.
+            const channelId = (typeof m.channelId === 'string' && m.channelId) || webview.__ccxChannelId;
+            if (channelId) {
+                if (!S.channelHookSeen) {
+                    setChannel(channelId, {
+                        status: 'unsupported',
+                        error: 'channel support is not patched into this build',
+                    });
+                } else if (!(S.channelManagers ||= new Map()).has(channelId)) {
+                    // Launched and not yet initialized: the click is remembered, and onChannelReady runs it.
+                    (S.channelPendingStart ||= new Map()).set(channelId, true);
+                    setChannel(channelId, { status: 'connecting', server: CHANNEL_SERVER, error: null });
+                } else {
+                    startChannel(channelId);
+                }
+                post(webview, { type: 'ccx:state', ...stateFor(sessionId, webview) });
+            }
         } else if (m.type === 'ccx:hideMessages') {
             const id = m.sessionId || sessionId;
             if (id) {
@@ -2229,6 +2378,7 @@ module.exports = {
     renderScript,
     attachPanel,
     envFor,
+    onChannelReady,
     profileIcons,
     agentRunsPayload,
     agentTranscript,
