@@ -16,8 +16,16 @@ documentation or an operator's reading — and it travels to the page as a diffe
 (`ttl: "declared"`), with a floor of 15 minutes so a short-lived cache is ignored rather than compacted
 between turns. `list_profiles` prints the declared lifetime beside each profile, and all three bundled
 templates declare 60 minutes. The declared lifetime is also counted down where the app draws its own
-indicator for the tiers it can measure — beside the model pill in the composer, marked `≈` and carrying
-the profile it came from in its tooltip, so an estimate never reads as a measurement.
+indicator for the tiers it can measure — in the composer footer, immediately after the context-usage
+chip, wearing the same classes the stock countdown wears (lifted off the live DOM and the stylesheet,
+since every name carries a per-build hash), marked `≈` and carrying the profile it came from in its
+tooltip, so an estimate never reads as a measurement.
+
+The agent map says when each subagent was called. A row's meta line was a duration and a token count —
+`5m 1s · 77.9k tokens` — which two runs of the same length share, and the hour the run started now
+leads it (`09:05 · 5m 1s · 77.9k tokens`), in the machine's own zone, 24-hour. It is the app's own row
+that carries it, so every subagent in the dialog gets it, not only the ones delegated through the
+bundled MCP server.
 
 ## 2.1.286
 

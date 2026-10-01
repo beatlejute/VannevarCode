@@ -228,11 +228,14 @@ const timeouts = [];
 // something to find and the assertion can check where it landed.
 const modelPill = new El('span');
 modelPill.className = 'modelPill_gGYT1w';
+const usageChip = new El('span');
+usageChip.className = 'usageButtonV2_gGYT1w';
 const pillHost = new El('div');
 pillHost.appendChild(modelPill);
 const footer = new El('div');
 footer.className = 'inputFooterV2_gGYT1w';
 footer.appendChild(pillHost);
+footer.appendChild(usageChip);
 pageDocument.body.appendChild(footer);
 const pageWindow = {
     document: pageDocument,
@@ -360,8 +363,13 @@ assert.deepEqual(sent, ['/compact'], 'a declared lifetime compacts exactly like 
 // would read as something this code had measured.
 fromHost({ type: 'ccx:cache', ttl: 'declared', ttlMinutes: 60, profile: 'deepseek', anchorAt: Date.now() });
 const cachePill = pageDocument.body.querySelector('.ccx-cache-pill');
-assert.ok(cachePill, 'a declared lifetime is drawn beside the model pill');
-assert.equal(cachePill.parentElement, pillHost, 'the countdown sits in the composer\'s own row');
+assert.ok(cachePill, 'a declared lifetime is drawn in the composer footer');
+assert.equal(cachePill.parentElement, footer, 'in the app\'s own footer row, not a badge of ours');
+assert.equal(
+    footer.children.indexOf(cachePill),
+    footer.children.indexOf(usageChip) + 1,
+    'immediately after the usage chip, which is where the app draws its own countdown',
+);
 assert.match(cachePill.textContent, /^≈60m$/, 'the countdown reads as an estimate of the declared window');
 assert.match(cachePill.title, /not measured/, 'the tooltip says the number is documentation, not a measurement');
 assert.match(cachePill.title, /deepseek/, 'and names the profile the number came from');

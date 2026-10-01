@@ -884,6 +884,23 @@ signature in the dialog, and every signature is required, so both are left as th
 entry's own `model`, and a Claude model the subagent's messages report, ahead of the call's — an opening
 for the model segment that a delegated run does not use yet, so its line reads the same on every release.
 
+### The row's meta line is a pure function of the entry, and one patch reaches all of it (2.1.286)
+
+`gF0(entry, now)` builds the `5m 1s · 77.9k tokens` line: the duration out of `Kz5` — the running clock
+while the run works, `usage.durationMs` once it is finished, nothing at all under a second — then the
+token count, joined with ` · `, with the stock filter dropping whichever half the entry has nothing for.
+Two call sites reach it, both through `uF0`: the row in the list (`Dz5`) and the `<div class=meta>` the
+card prints under "Spawned by". So one signature reaches every subagent the dialog draws — the app's own
+as much as a delegated one — and neither of them ever said when the run was called, which is the one
+thing two runs of the same length cannot be told apart without.
+
+Vannevar splices the call's clock time in as the first element of that array (`__ccx.callTime`,
+runtime/webview.js — local hours and minutes, zero-padded, 24-hour, the epoch in `startTime` being all
+an entry carries). The stock filter then drops it back out for an entry with no start time, so nothing
+else about the line changes. The signature is structural rather than named: the function's second `let`
+is the `usage?.totalTokens` read, which no other function in the bundle makes, and the duration local in
+front of it comes out of the match. It matched once in each of 2.1.280–2.1.286.
+
 ### A compaction hides history three times, and deletes none of it (2.1.274)
 
 `/compact` and auto-compaction only append. The transcript gets a `system`/`compact_boundary` line and a

@@ -46,7 +46,8 @@ another on DeepSeek, a third on your ChatGPT subscription.
   `cache.ttlMinutes` runs out; the second shows everything a `/compact` folded away when a session is
   reopened (a view only — the model's context is still the summary). Where the built-in countdown has
   nothing to count — it is drawn only for the tiers the Anthropic API reports — the declared lifetime
-  counts down beside the model pill, marked `≈` because it is an estimate from documentation.
+  counts down in the composer footer in the same place and the same classes, marked `≈` because it is
+  an estimate from documentation rather than a measurement.
 - **Switching back to Anthropic keeps working.** An id minted by another provider is rejected by
   Anthropic with a `400`, forever, because it is re-read from the transcript on every relaunch. Spawns
   going to Anthropic have those ids dropped first; ids Anthropic itself issued are left alone.
@@ -59,6 +60,9 @@ another on DeepSeek, a third on your ChatGPT subscription.
 - **Delegating a task to another provider** through a bundled MCP server, with a live frame under the
   subagent showing what it is doing while it does it, and a row of its own in Claude Code's agent map —
   with its transcript and a working *Stop agent*.
+- **The time a subagent was called** in Claude Code's agent map — every row (and the card it opens)
+  leads with the hour it started, so `09:05 · 5m 1s · 77.9k tokens` instead of a duration two runs can
+  share.
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
