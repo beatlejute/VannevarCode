@@ -1990,6 +1990,12 @@ function attachWebview(webview) {
             // waiting for the next line of that agent's transcript.
             S.agentRunsStamp = null;
             wakeAgentRuns();
+        } else if (m.type === 'ccx:cachePill') {
+            // Where the page managed to put the declared countdown and what the row actually held.
+            // Every class name in the composer carries a per-build hash, so when the pill lands in the
+            // wrong place the answer is in the markup the page is looking at, not in the pattern it
+            // was looking for — and a log line is cheaper than a session of guessing.
+            dlog('cache pill', { stage: m.stage, kids: String(m.kids || '').slice(0, 300) });
         } else if (m.type === 'ccx:session') {
             // The webview tracks the active channel itself, so this id is authoritative
             webview.__ccxSessionId = m.sessionId || null;
