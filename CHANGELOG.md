@@ -5,6 +5,26 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.286
+
+Verified against Claude Code **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**,
+**2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.286 cost one signature, and not to a rename. The spawn environment is no longer the
+result of the helper that adds the interrupted-turn resume marker: it is spread into an object literal
+together with a new 15th `spawnClaude` parameter, so `O.env={...Wl1(P,q===!0),...N}` where 2.1.285 had
+`F.env=xp1(_,q===!0)`. Injection point #3 stopped matching the leading `{`, and now takes either shape —
+the one-level object literal or the older identifier/call.
+
+- The environment it hands `envFor` is the whole merged object, not just the helper's half. That is what
+  keeps the per-tab profile in charge: `envFor` deletes the managed keys from the object it is given and
+  assigns its own over the top, so the new `...N` spread — last-wins if the CLI were left to it — cannot
+  put a provider back. The config probe's `{CLAUDE_CODE_CONFIG_PROBE:"1"}` is not a managed key and
+  survives the merge untouched.
+- Every other signature matched the shape it already matched: #2's icon pair stayed `light:G,dark:G` for
+  a fourth release, and the webview's eleven points were untouched. The settings schema is 2.1.285's
+  exactly but for its generation timestamp, and `package.json` differs only in its version string.
+
 ## 2.1.285
 
 Verified against Claude Code **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**,

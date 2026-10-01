@@ -78,15 +78,21 @@ const PATCHES = [
         //
         // 2.1.274 made the assigned env an *expression* rather than a local: `M.env=Ba$(E,H===!0)`, where that
         // helper adds CLAUDE_CODE_RESUME_INTERRUPTED_TURN=1 (max age 3600000) when spawnClaude's new 13th
-        // parameter says the turn is being resumed after an interrupt. So the env capture allows one trailing
-        // call — `[w$]+(?:([^()]*))?` — with no nesting, which is all any release has needed. envFor is
-        // handed the result, so those two variables are already in the env it filters.
+        // parameter says the turn is being resumed after an interrupt. That is why the env capture allows a
+        // trailing call — `[w$]+(?:([^()]*))?` — with no nesting.
+        //
+        // 2.1.286 spread that call into an object literal along with spawnClaude's 15th parameter (an env bag
+        // the caller may pass, `{CLAUDE_CODE_CONFIG_PROBE:"1"}` at the config probe): `O.env={...Wl1(P,q===!0),...N}`.
+        // A bare call capture stopped matching `{`, so the env half is now an alternation — a one-level object
+        // literal, or the older identifier/call. envFor is handed whichever it is, so the merge survives and
+        // the profile still outranks both halves: it deletes the managed keys from the whole object, N's copy
+        // included, before assigning its own over the top.
         //
         // The resume id is read off the options object (`resume:t`) instead of the parameter, which is renamed too.
         // The object itself goes along as the third argument: envFor clears its `resume` when no transcript exists
         // for that id, and the SDK builds `--resume=<id>` from that field after this expression has run.
         file: 'extension.js',
-        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=([\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)/,
+        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)/,
         replace: (_found, opts, bin, args, env, tail) =>
             `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=(()=>{try{` +
             HOST_REQUIRE +
