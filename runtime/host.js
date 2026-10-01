@@ -1903,9 +1903,18 @@ function interceptOutgoing(webview) {
                     // it exactly as it renews the tier, so the anchor moves on every cached turn.
                     // Nothing is sent for a profile that declares none — silence is the honest answer
                     // for a backend whose retention nobody wrote down.
-                    const ttlMinutes = declaredCacheTtl(effectiveProfile(webview.__ccxSessionId, webview));
-                    if (ttlMinutes)
+                    const name = effectiveProfile(webview.__ccxSessionId, webview);
+                    const ttlMinutes = declaredCacheTtl(name);
+                    if (ttlMinutes) {
+                        // Logged on change, like the tier above: a lifetime that never reaches the page
+                        // is otherwise indistinguishable from a profile that declares nothing at all,
+                        // and that is the question this line exists to answer.
+                        if (webview.__ccxDeclaredCache !== ttlMinutes) {
+                            webview.__ccxDeclaredCache = ttlMinutes;
+                            dlog('declared cache ttl', { ttlMinutes, profile: name });
+                        }
                         post(webview, { type: 'ccx:cache', ttl: 'declared', ttlMinutes, anchorAt: Date.now() });
+                    }
                 }
             }
         } catch {}
