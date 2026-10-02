@@ -7,6 +7,15 @@ does.
 
 ## Unreleased
 
+After **Switch provider…**, the model name beside **Switch model…** no longer names the provider the tab
+just left. It was cleared once, at the restart — but the resume replays the transcript *after* that, so
+the old provider's model went straight back in and stayed there until the new backend answered, while
+the row above it named the new provider: for as long as the tab then sat idle, the two rows contradicted
+each other, and the model name was the one that was wrong. The slot is held instead, for as long as the
+switch is unconfirmed: reads report nothing served yet — the state the row already names the selection
+from — and writes are kept, so nothing the page stored is lost. Only an assistant turn this transcript
+did not hold when the switch was made, which is the new backend's own answer, ends the hold.
+
 A profile may declare how long its provider keeps a prompt prefix alive: `"cache": { "ttlMinutes": 60,
 "source": "documented" }`. No provider returns a cache lifetime in a response, so a non-Anthropic
 backend reports hits and no expiry; the declared number is what **Auto-compact before the cache

@@ -73,6 +73,9 @@ const ccx = context.window.__ccx;
 assert.ok(ccx && typeof ccx.onRegistry === 'function', 'page did not install window.__ccx');
 assert.ok(listener, 'page did not register a message listener');
 const fromHost = (m) => listener({ data: m });
+// A message the app's own channel delivered. It is where a turn reaches the page, and so where the
+// answer that ends a provider switch is noticed.
+const byChannel = (message) => fromHost({ type: 'from-extension', message });
 
 // --- fake app: registry, connection, active session --------------------------------------------
 const launches = [];
@@ -128,6 +131,10 @@ assert.equal(posted.filter((m) => m.type === 'close_channel').length, 1, 'switch
 assert.equal(offerBar(), undefined, 'offer must be dismissed');
 assert.equal(session.lastServedModel.value, undefined, 'switch-as-is must forget the served model of the old provider');
 completeRestart();
+// The switched-to backend answers: a message this transcript did not hold when the switch was made.
+// That is what gives the indicator back — see step 9 for the rule itself.
+session.messages.value = [{ type: 'user', uuid: 'u1' }, { type: 'assistant', uuid: 'a1' }];
+byChannel({ type: 'io_message', channelId: 'ch1', message: { type: 'assistant' } });
 session.lastServedModel.value = 'deepseek-v4-pro';
 
 // 3. "Compact & switch" → /compact is sent through the session, restart waits for the boundary.
@@ -205,7 +212,38 @@ assert.equal(offerBar(), undefined, 'a fresh tab must not be offered compaction'
 assert.equal(posted.filter((m) => m.type === 'close_channel').length, 1);
 completeRestart('ch2');
 
-// 9. The wiring itself: the patcher must hand the session to onRegistry, and the page must take it
+// 9. The indicator is HELD across a switch, not merely cleared once. The old provider's model comes back
+//    while the transcript replays for the resume — after the restart has already cleared the slot — and
+//    a clear that already ran cannot undo that. So the slot must stay unreadable until the new backend
+//    answers, and only an ASSISTANT turn this transcript did not hold at the switch may end the hold: a
+//    user message ends nothing, because at that moment the replay's write is still the last one.
+reset();
+session.messages.value = [{ type: 'user', uuid: 'u-old' }, { type: 'assistant', uuid: 'a-old' }];
+session.lastServedModel.value = 'deepseek-v4-pro';
+// Back onto a tab with history: step 8 left the page on a channel that had nothing to resume.
+api.postMessage({ type: 'launch_claude', channelId: 'ch1', cwd: '/w', resume: 'sess-1', permissionMode: 'default', thinkingLevel: 'x' });
+fromHost({ type: 'ccx:applied', name: 'codex', sessionId: 'sess-1' });
+offerBar().children.find((c) => c.tagName === 'button' && /as is/.test(c.textContent)).onclick();
+assert.equal(session.lastServedModel.value, undefined, 'the switch clears the indicator');
+completeRestart();
+// … and the replay writes the old provider's model straight back into it, exactly as the app does.
+session.lastServedModel.value = 'deepseek-v4-pro';
+assert.equal(session.lastServedModel.value, undefined, 'a replayed model name must not be readable after a switch');
+// A state push for the same profile changes nothing about it.
+fromHost({ type: 'ccx:state', active: 'codex', profiles: [] });
+assert.equal(session.lastServedModel.value, undefined, 'a state push must not end the hold by itself');
+// The user's own turn on the new backend ends nothing either.
+session.messages.value = [{ type: 'user', uuid: 'u-old' }, { type: 'assistant', uuid: 'a-old' }, { type: 'user', uuid: 'u-new' }];
+session.lastServedModel.value = 'deepseek-v4-pro';
+byChannel({ type: 'io_message', channelId: 'ch1', message: { type: 'user' } });
+assert.equal(session.lastServedModel.value, undefined, 'a user turn is not an answer and must not end the hold');
+// The answer itself is: the app's own write is readable again, and it names the new provider's model.
+session.messages.value.push({ type: 'assistant', uuid: 'a-new' });
+session.lastServedModel.value = 'gpt-6-astra';
+byChannel({ type: 'io_message', channelId: 'ch1', message: { type: 'assistant' } });
+assert.equal(session.lastServedModel.value, 'gpt-6-astra', 'the new backend answer must end the hold');
+
+// 10. The wiring itself: the patcher must hand the session to onRegistry, and the page must take it
 //    from there rather than from the context object. Read off the sources, because a mismatch between
 //    the two is exactly the failure this file exists to catch and it is invisible at runtime — the
 //    offer just never appears.
