@@ -536,6 +536,10 @@
                     noteSession(msg.channelId, inner.session_id);
                 if (inner.type === 'system' && inner.subtype === 'compact_boundary')
                     onCompactBoundary(msg.channelId);
+                // The channel is where the new backend's first answer arrives, and the only moment the
+                // held indicator can be handed back: an assistant turn this transcript did not have when
+                // the switch was made.
+                releaseServedModelHold();
             } else if (msg.type === 'response' && msg.response && msg.response.type === 'get_session_response') {
                 noteCompactSummaries(msg.response.messages);
             } else if (msg.type === 'close_channel' && pendingRestart && msg.channelId === pendingRestart.channelId) {
@@ -587,6 +591,10 @@
             }
             syncAction();
             syncChip();
+            // Every push re-answers both questions: whether the profile the tab is on has moved under it
+            // (a switch to hold the model indicator for), and whether the held indicator has been earned
+            // back by an answer from the new backend.
+            trackServedProfile(state.active);
             if (overlayKind === 'health') openHealth();
             if (overlayKind === 'channels') openChannels();
             if (overlayKind === 'resources') openResources();
@@ -4459,6 +4467,83 @@
         }
     }
 
+    // Clearing it at the restart is not enough, and that is the whole bug: the replay that puts the old
+    // provider's model back runs AFTER this, one processMessage at a time, so the ghost returns within a
+    // second and then sits there for as long as the tab stays idle — which is exactly when the menu is
+    // read. So the slot is HELD for as long as the switch is unconfirmed, rather than cleared once: the
+    // read side reports "nothing served yet" — the state the stock itself uses before a first turn, and
+    // the one that makes the row name the selection, i.e. the new provider's model — while the write side
+    // keeps every value the app stores, so a release hands back what the app last wrote. The hold lifts
+    // at the first ASSISTANT message the transcript did not already hold when the switch was made: the
+    // new backend's own answer, and the only model name that is true again. User messages do not lift it
+    // — the replay's write is still the last one at that point, and nothing has been served yet.
+    var servedModelHold = null;
+    // The profile the last state push named, so a switch that arrives from anywhere else — a pick applied
+    // in another window, a binding that moved under this tab — holds the indicator too, and not only the
+    // restarts this page performs itself. First push only records where the tab starts: a load is not a
+    // switch, and arming there would blank an honest label on every page load.
+    var servedProfileSeen = null;
+
+    function sessionMessages() {
+        var s = activeSession();
+        var msgs = s && s.messages && s.messages.value;
+        return Array.isArray(msgs) ? msgs : [];
+    }
+
+    function armServedModelHold() {
+        var msgs = sessionMessages();
+        var seen = new Set();
+        for (var i = 0; i < msgs.length; i++) if (msgs[i] && msgs[i].uuid) seen.add(msgs[i].uuid);
+        var held = { seen: seen, real: null };
+        servedModelHold = held;
+        held.real = holdServedModelSlot(held);
+        forgetServedModel();
+    }
+
+    // The slot the app reads is turned into a pass-through: writes land in `real`, reads report nothing
+    // while this hold is the live one. Released by losing the identity check in the getter, so a hold
+    // that was dropped, or replaced by the next switch, gives the app its own value back untouched.
+    function holdServedModelSlot(held) {
+        var s = activeSession();
+        var slot = s && s.lastServedModel;
+        if (!slot) return null;
+        var real = { value: slot.value };
+        try {
+            Object.defineProperty(slot, 'value', {
+                configurable: true,
+                enumerable: true,
+                get: function () {
+                    return servedModelHold === held ? undefined : real.value;
+                },
+                set: function (v) {
+                    real.value = v;
+                },
+            });
+        } catch (err) {
+            /* a slot that cannot be redefined is a stale label, not a broken switch */
+        }
+        return real;
+    }
+
+    function releaseServedModelHold() {
+        var held = servedModelHold;
+        if (!held) return;
+        var msgs = sessionMessages();
+        for (var i = 0; i < msgs.length; i++) {
+            var m = msgs[i];
+            if (m && m.type === 'assistant' && typeof m.uuid === 'string' && !held.seen.has(m.uuid)) {
+                servedModelHold = null;
+                return;
+            }
+        }
+    }
+
+    function trackServedProfile(active) {
+        if (servedProfileSeen !== null && (active || null) !== servedProfileSeen) armServedModelHold();
+        servedProfileSeen = active || null;
+        releaseServedModelHold();
+    }
+
     function canCompact() {
         var s = activeSession();
         if (!s) return false;
@@ -4546,7 +4631,7 @@
             return;
         }
         if (pendingRestart) return;
-        forgetServedModel();
+        armServedModelHold();
         toast('Switching to "' + name + '" — ' + (resume ? 'restarting session…' : 'starting fresh…'));
         var job = {
             channelId: activeChannelId,
