@@ -2878,6 +2878,14 @@ function startChannelRelay(server) {
         // plugin that keeps dying quickly is not brought back for ever: five fast deaths in a row
         // stop the loop and say so, rather than quietly restarting every few seconds.
         const saved = readJson(RELAY_ON_FILE);
+        // Ownership is re-read on every death: if the toggle has moved to another window since, this
+        // one stands down instead of shooting the new owner's poller in rounds.
+        if (!saved || saved.server !== server || saved.windowKey !== relayWindowKey()) {
+            live.status = 'off';
+            live.error = null;
+            broadcast();
+            return;
+        }
         if (saved && saved.server === server) {
             live.restartStreak = Date.now() - startedAt < 60000 ? (live.restartStreak || 0) + 1 : 0;
             if (live.restartStreak >= 5) {
