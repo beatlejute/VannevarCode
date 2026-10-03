@@ -92,7 +92,9 @@ class ChannelRelay {
         this.command = options.command;
         this.args = (options.args || []).slice();
         this.cwd = options.cwd;
+        this.stateDir = options.stateDir;
         this.env = options.env || process.env;
+        this.botToken = null;
         this.log = options.log || function () {};
         this.child = null;
         this.started = null;
@@ -125,6 +127,16 @@ class ChannelRelay {
         this.started = new Promise((resolve, reject) => {
             sweepLeftovers(this.log);
             const args = this.args.map((arg) => expandRoot(arg, this.cwd)).concat([RELAY_FLAG]);
+            // The typing indicator is the one Bot API call the relay makes itself; the token is the
+            // plugin's own credential, read from the state directory the host was told about.
+            try {
+                const envFile = require('path').join(this.stateDir || '', '.env');
+                const text = require('fs').readFileSync(envFile, 'utf8');
+                const line = text.split(/\r?\n/).find((l) => l.startsWith('TELEGRAM_BOT_TOKEN='));
+                if (line) this.botToken = line.slice('TELEGRAM_BOT_TOKEN='.length).trim();
+            } catch (e) {
+                this.log('relay token not found', (e && e.message) || String(e));
+            }
             this.log('relay start', this.command, args.join(' '));
             let child;
             try {
@@ -140,6 +152,7 @@ class ChannelRelay {
             child.stderr.on('data', (chunk) => this.log('relay stderr', String(chunk).trim().slice(0, 400)));
             child.on('error', (e) => reject(e));
             child.on('exit', (code, signal) => {
+                this.stopTyping();
                 this.child = null;
                 this.started = null;
                 for (const [, entry] of this.pending) entry.reject(new Error('relay exited'));
@@ -161,7 +174,83 @@ class ChannelRelay {
         return this.started;
     }
 
+    // "typing…" while the addressed tab works. The indicator lives five seconds, so a loop refreshes
+    // it every four until told to stop. It calls the Bot API directly over HTTPS rather than through
+    // the plugin: sending is not exclusive the way polling is — the token holder keeps its getUpdates,
+    // and any process with the token may post actions. The token comes from the plugin's own state
+    // directory (the same `.env` the plugin loads), and never leaves this machine.
+    startTyping(chatId) {
+        this.stopTyping();
+        const token = this.botToken;
+        if (!token) return;
+        const call = () => this.botApi(`/bot${token}/sendChatAction`, { chat_id: String(chatId), action: 'typing' });
+        call();
+        this.typingTimer = setInterval(call, 4000);
+        this.typingTimer.unref?.();
+    }
+
+    // One POST to the Bot API. Direct when the environment has no proxy; through a CONNECT tunnel
+    // when it does — the corporate proxy is in this env, and an outbound TLS that ignores it dies
+    // on the firewall. A failed refresh is swallowed: the next tick retries in four seconds.
+    botApi(path, body) {
+        const https = require('https');
+        const http = require('http');
+        const tls = require('tls');
+        const payload = JSON.stringify(body);
+        const request = {
+            hostname: 'api.telegram.org',
+            path,
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) },
+        };
+        const proxy = this.env.HTTPS_PROXY || this.env.https_proxy || this.env.HTTP_PROXY || this.env.http_proxy;
+        if (!proxy) {
+            https.request(request, (res) => res.resume()).on('error', () => {}).end(payload);
+            return;
+        }
+        let proxyUrl;
+        try {
+            proxyUrl = new URL(proxy);
+        } catch {
+            return;
+        }
+        const headers = {};
+        if (proxyUrl.username)
+            headers['proxy-authorization'] =
+                'Basic ' +
+                Buffer.from(decodeURIComponent(proxyUrl.username) + ':' + decodeURIComponent(proxyUrl.password || '')).toString('base64');
+        const tunnel = http.request(
+            {
+                host: proxyUrl.hostname,
+                port: proxyUrl.port || 443,
+                method: 'CONNECT',
+                path: 'api.telegram.org:443',
+                headers,
+            },
+            (res) => {
+                if (res.statusCode !== 200) return;
+                const secure = tls.connect({ socket: res.socket, servername: 'api.telegram.org' }, () => {
+                    https
+                        .request(Object.assign(request, { createConnection: () => secure }), (apiRes) => apiRes.resume())
+                        .on('error', () => {})
+                        .end(payload);
+                });
+                secure.on('error', () => {});
+            },
+        );
+        tunnel.on('error', () => {});
+        tunnel.end();
+    }
+
+    stopTyping() {
+        if (this.typingTimer) {
+            clearInterval(this.typingTimer);
+            this.typingTimer = null;
+        }
+    }
+
     stop() {
+        this.stopTyping();
         const child = this.child;
         this.started = null;
         if (!child) return;
