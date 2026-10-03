@@ -5,34 +5,25 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## 2.1.287
+## 2.1.288
 
-Verified against Claude Code **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**,
-**2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+Verified against Claude Code **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**,
+**2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
 
-Claude Code 2.1.287 cost nothing at all: all twenty-one anchors matched the shape they already matched,
-and none of them has different code around it — the environment assignment, the icon pair,
-`getHtmlForWebview` and the page's session list, search, model section and login screen are byte-for-byte
-what 2.1.286 had once the minifier's names are blanked out. Nothing to adjust, then; the release is
-additions elsewhere.
-
-- **Auto mode is untouched.** `safeguard`, `autoModeUnavailable` and `CLAUDE_CODE_AUTO_MODE_SERVER` stand
-  where 2.1.286 left them, in the bundle and in the page, so the environment a profile away from
-  `api.anthropic.com` gets is the same one.
-- **A running task can be moved to the background** from the page — a `backgroundTasks` query on the
-  session's control object, a per-session switch it can be turned off with, and the page's own wording
-  for both. **The plugin marketplace can be added to from the editor**, with its own validation for a
-  source that is not a repository, a URL or a file. Neither is a surface this extension draws on, and
-  nothing was added to the manifest: `package.json` differs only in its version string, and the settings
-  schema is 2.1.286's 2,251 keys with one plugin `path` description reworded.
-- **A permission request whose stream died is now classified in the host rather than in the page.**
-  `Tool permission request failed` and `Tool permission stream closed before response received` are an
-  error-signature list in `extension.js`; 2.1.286 matched them in the webview. The callback they belong
-  to — `canUseTool:Q,onUserDialog:V` — did not move, and nothing here reads the new list.
-- Claude in Chrome's setting says what it now means: connected in this window's sessions and every new
-  session, or here only while `@browser` is being used.
-
-## Unreleased
+Claude Code 2.1.288 cost no signature: all twenty-two anchors — the optional `canUseTool` wrapper
+included — matched the shapes they already matched, and the only rename worth the env table is inside
+#3's spread, `q` → `U`. Between the two win32-x64 packages `extension.js` grew 3,725 bytes and the
+webview 571. The release adds one settings-schema key, and it is the one place Claude Code now reaches
+into ground this extension also works: a **per-model `autoCompactWindow`** (100,000–1,000,000 tokens,
+or `"auto"`), which `/autocompact` saves and which replaces the top-level window within one settings
+file. It tunes Claude's own token-window compaction and does not collide with the switch here —
+**Auto-compact before the cache expires** counts minutes against a measured or declared cache
+lifetime, not tokens against a window. The rest is one described field and one rewording: the MCP
+server config gains a `requestTimeout` ("Maximum time to wait for the server to answer a request
+(milliseconds). Defaults to 60000.", beside the startup and shutdown timeouts it had), and the
+coordinator card now reads "Activity in the bound conversation, not a new message from a person and
+never approval for a pending prompt:" where 2.1.287 read "The coordinator sent a message".
+`package.json` differs only in its version string.
 
 A channel is now **run by the window, not by a tab** (`runtime/channel-relay.js`). The extension starts
 the same plugin the Channels list already offers — from its own cache directory, exactly as installed —
@@ -197,6 +188,33 @@ actually registers (`plugin:telegram:telegram`), rather than the declaration's l
 The local key made a connected official plugin fail with `server telegram is not connected`. A server
 whose earlier startup failure is still in Claude Code's 15-minute cache is reconnected in the same live
 session before the channel is enabled, so fixing Bun, the proxy or its CA no longer requires a new tab.
+
+## 2.1.287
+
+Verified against Claude Code **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**,
+**2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.287 cost nothing at all: all twenty-one anchors matched the shape they already matched,
+and none of them has different code around it — the environment assignment, the icon pair,
+`getHtmlForWebview` and the page's session list, search, model section and login screen are byte-for-byte
+what 2.1.286 had once the minifier's names are blanked out. Nothing to adjust, then; the release is
+additions elsewhere.
+
+- **Auto mode is untouched.** `safeguard`, `autoModeUnavailable` and `CLAUDE_CODE_AUTO_MODE_SERVER` stand
+  where 2.1.286 left them, in the bundle and in the page, so the environment a profile away from
+  `api.anthropic.com` gets is the same one.
+- **A running task can be moved to the background** from the page — a `backgroundTasks` query on the
+  session's control object, a per-session switch it can be turned off with, and the page's own wording
+  for both. **The plugin marketplace can be added to from the editor**, with its own validation for a
+  source that is not a repository, a URL or a file. Neither is a surface this extension draws on, and
+  nothing was added to the manifest: `package.json` differs only in its version string, and the settings
+  schema is 2.1.286's 2,251 keys with one plugin `path` description reworded.
+- **A permission request whose stream died is now classified in the host rather than in the page.**
+  `Tool permission request failed` and `Tool permission stream closed before response received` are an
+  error-signature list in `extension.js`; 2.1.286 matched them in the webview. The callback they belong
+  to — `canUseTool:Q,onUserDialog:V` — did not move, and nothing here reads the new list.
+- Claude in Chrome's setting says what it now means: connected in this window's sessions and every new
+  session, or here only while `@browser` is being used.
 
 ## 2.1.286
 
