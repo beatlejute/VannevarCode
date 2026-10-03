@@ -243,7 +243,7 @@ try {
         await new Promise((go) => setTimeout(go, 20));
     const add = spawns.find((s) => s.args.includes('add'));
     assert.ok(add, `the MCP server was never registered: ${JSON.stringify(spawns.map((s) => s.args))}`);
-    assert.ok(add.args.includes('vannevar-agents'), 'the server was registered under another name');
+    assert.ok(add.args.includes('vannevar'), 'the server was registered under another name');
     assert.equal(
         add.args[add.args.indexOf('-e') + 1],
         'ELECTRON_RUN_AS_NODE=1',

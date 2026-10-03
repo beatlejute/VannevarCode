@@ -63,13 +63,16 @@ another on DeepSeek, a third on your ChatGPT subscription.
 - **The time a subagent was called** in Claude Code's agent map — every row (and the card it opens)
   leads with the hour it started, so `09:05 · 5m 1s · 77.9k tokens` instead of a duration two runs can
   share; a run from another day says which day (`18 Sep 14:32`).
-- **Plugin channels** ("Channels…" in *Settings*) — the Telegram bridge today, anything a plugin
-  declares tomorrow. The row lists the MCP servers the installed plugins declare and starts the one
-  clicked in the session that is already running, the way Remote Control opens its own connection:
-  through the session's `enableChannel` control request, so no restart and no `--channels` on the
-  command line. Each row carries its own outcome — `starting…`, `enabled`, `failed` with the CLI's own
-  reason in the tooltip — and nothing is started until it is clicked. Install a channel plugin first
-  (`claude plugin install telegram@claude-plugins-official`).
+- **Plugin channels, owned by the window** ("Channels…" in *Settings*) — the Telegram bridge today,
+  anything a plugin declares tomorrow. The window starts the plugin itself, as an MCP client of its
+  own, and becomes the one consumer of its bot token; sessions neither load the plugin nor fight over
+  it. Inbound messages are handed to the tab the conversation is addressed to (chosen in ⚙, remembered
+  across reloads; without a choice — the tab you last typed in), the model answers with the session's
+  own tools, and a **permission question the IDE dialog is holding is mirrored into the channel** —
+  the plugin renders its own card with Allow/Deny buttons, and whichever answer arrives first, from the
+  dialog or from the channel, wins. The relay comes back on its own after a window reload and stops
+  restarting a plugin that keeps dying. Works on any provider, Anthropic or not. Install a channel
+  plugin first (`claude plugin install telegram@claude-plugins-official`).
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).

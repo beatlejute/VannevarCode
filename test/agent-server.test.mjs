@@ -91,7 +91,7 @@ async function main() {
     assert.strictEqual(out[0].id, 1);
     assert.strictEqual(out[0].result.protocolVersion, '2024-11-05', 'client protocol echoed');
     assert.ok(out[0].result.capabilities.tools, 'tools capability advertised');
-    assert.strictEqual(out[0].result.serverInfo.name, 'vannevar-agents');
+    assert.strictEqual(out[0].result.serverInfo.name, 'vannevar');
 
     // --- a notification carries no id and must never be answered
     out = await capture(() => handle({ jsonrpc: '2.0', method: 'notifications/initialized' }));

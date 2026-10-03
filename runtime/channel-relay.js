@@ -230,6 +230,7 @@ class ChannelRelay {
         }
         if (message.method === 'notifications/claude/channel/permission') {
             const params = message.params || {};
+            this.log('relay got button answer', params.request_id, params.behavior);
             this.emit('permission', { requestId: params.request_id, behavior: params.behavior });
             return;
         }
@@ -286,6 +287,19 @@ class ChannelRelay {
 
     send(chatId, text, extra) {
         return this.callTool('reply', Object.assign({ chat_id: String(chatId), text: String(text) }, extra || {}));
+    }
+
+    // A permission question, phrased in the channel plugins' own contract: the server renders it —
+    // buttons and all — to the chats its allowlist admits, and the answer comes back as a
+    // `notifications/claude/channel/permission` with the same request id. The relay only carries the
+    // question; what "allow" means is decided on this side, one outstanding request at a time.
+    sendPermissionRequest(requestId, toolName, description, inputPreview) {
+        this.notify('notifications/claude/channel/permission_request', {
+            request_id: String(requestId),
+            tool_name: String(toolName),
+            description: String(description || ''),
+            input_preview: String(inputPreview || ''),
+        });
     }
 }
 

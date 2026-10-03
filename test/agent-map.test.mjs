@@ -253,7 +253,7 @@ const call = (id, input, extra = {}) => ({
     sdkParentToolUseId: extra.parent,
     content: [
         {
-            content: { type: 'tool_use', id, name: 'mcp__vannevar-agents__run_agent', input },
+            content: { type: 'tool_use', id, name: 'mcp__vannevar__run_agent', input },
             toolResult: { value: extra.result },
         },
     ],

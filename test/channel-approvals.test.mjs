@@ -51,6 +51,11 @@ process.stdin.on('data', (chunk) => {
             fs.appendFileSync(${JSON.stringify(sentFile)}, JSON.stringify(args.text) + '\\n');
             process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'ok' }] } }) + '\\n');
             if (String(args.text).includes('🔐')) notify({ content: 'y', meta: { chat_id: '777', message_id: '2', user: 'owner', user_id: '777' } });
+        } else if (message.method === 'notifications/claude/channel/permission_request') {
+            // The card the plugin would render, recorded so the test can assert the question arrived;
+            // then the plugin's own button answer, under the request id the question carried.
+            fs.appendFileSync(${JSON.stringify(sentFile)}, JSON.stringify(['🔐 ' + message.params.tool_name, message.params.input_preview, message.params.request_id]) + '\\n');
+            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/claude/channel/permission', params: { request_id: message.params.request_id, behavior: 'allow' } }) + '\\n');
         }
     }
 });
@@ -107,8 +112,14 @@ const decision = await wrapped('Bash', { command: 'curl https://example.com' }, 
 assert.deepEqual(decision, { behavior: 'allow' }, 'the channel answered, so that is the decision');
 await wait(200);
 const sent = readFileSync(sentFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
-assert.ok(sent.some((t) => t.includes('🔐 Bash')), 'the question was mirrored with the tool it is about');
-assert.ok(sent.some((t) => t.includes('curl https://example.com')), 'and with what it would run');
+assert.ok(
+    sent.some((t) => Array.isArray(t) && t[0] === '🔐 Bash' && /^[a-km-z]{5}$/.test(t[2])),
+    'the question carries a contract-shaped short id the buttons can echo',
+);
+assert.ok(
+    sent.some((t) => Array.isArray(t) && String(t[1]).includes('curl https://example.com')),
+    'and carrying what it would run',
+);
 
 // 4. An answer is matched to one question: a second "y" with nothing outstanding does nothing, and the
 //    dialog still owns the next question.

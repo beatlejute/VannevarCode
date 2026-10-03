@@ -7,7 +7,7 @@
 // does per tab. This server does the same for a delegated task: it spawns `claude -p` with the env
 // of a profile from ~/.claude/profiles and hands the answer back as a tool result.
 //
-//   claude mcp add --scope user vannevar-agents -- node <abs path to this file>
+//   claude mcp add --scope user vannevar -- node <abs path to this file>
 //
 // The profile/env logic below mirrors host.js rather than importing it: host.js is CommonJS and
 // requires("vscode"), so it cannot be loaded outside the extension host. Two deliberate divergences
@@ -40,7 +40,7 @@ const RUNS_DIR = path.join(RUNTIME, 'agent-runs');
 const PROXY_SCRIPT = path.join(RUNTIME, 'proxy', 'server.mjs');
 const LOG_FILE = path.join(RUNTIME, 'agent-server.log');
 
-const SERVER_NAME = 'vannevar-agents';
+const SERVER_NAME = 'vannevar';
 const SERVER_VERSION = '1.1.0';
 const PROTOCOL_VERSION = '2025-06-18';
 

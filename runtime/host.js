@@ -2460,37 +2460,6 @@ function attachWebview(webview) {
                 dlog('relay refused', result.error);
             }
             broadcast();
-        } else if (m.type === 'ccx:channelSetting') {
-            // Model and effort are slash commands in a session, so they are sent as one; anything else
-            // is refused rather than guessed, because there is no other way to change it from here.
-            const value = typeof m.value === 'string' ? m.value.trim() : '';
-            // A provider is not a slash command: it is the environment a process is born with, so the
-            // tab has to be relaunched, and only its own page can do that — it is the one holding the
-            // session. The menu asks that tab to switch, which is the same path its own picker takes.
-            if (m.kind === 'profile' && value) {
-                const bound = findWebviewBySession(loadRelayTarget() || '') || S.lastActiveWebview;
-                let sent = false;
-                try {
-                    if (bound) {
-                        bound.postMessage({ type: 'ccx:switchProfile', name: value });
-                        sent = true;
-                    }
-                } catch (e) {
-                    dlog('profile switch failed', (e && e.message) || String(e));
-                }
-                dlog('channel setting', 'profile', value, sent ? 'sent' : 'no tab');
-                broadcast();
-                return;
-            }
-            const allowed = m.kind === 'model' || m.kind === 'effort';
-            // One line only: the value is typed into a session as a command, and a newline in it would
-            // make the rest of the setting a second command.
-            const single = value.indexOf('\n') === -1 && value.indexOf('\r') === -1;
-            if (allowed && value && single) {
-                const ok = askBoundTab(`/${m.kind} ${value}`);
-                dlog('channel setting', m.kind, value, ok ? 'sent' : 'no tab');
-            }
-            broadcast();
         } else if (m.type === 'ccx:relayTarget') {
             // The answer to "who is this conversation with": a session id, or nothing to go back to the
             // fallback. Kept on disk because a reload must not silently change who is being talked to.
@@ -2760,23 +2729,8 @@ function relayRememberChat(message) {
     }
 }
 
-// A setting picked in the Channels menu is applied by the tab it belongs to, and the way a tab changes
-// its own model or effort is the way a user does it there: a slash command, typed. The window cannot
-// call those itself — they live on the session — so it asks the tab to type them, which is the same
-// thing and leaves one code path instead of two.
-function askBoundTab(command) {
-    const bound = loadRelayTarget();
-    const target = bound ? findWebviewBySession(bound) : S.lastActiveWebview;
-    if (!target) return false;
-    try {
-        target.postMessage({ type: 'ccx:sessionCommand', command });
-        return true;
-    } catch (e) {
-        dlog('session command failed', (e && e.message) || String(e));
-        return false;
-    }
-}
-
+// The webview a bound session id points at, or none: a session that has closed its tab no longer
+// has a webview, and the message then falls to the last active one.
 function findWebviewBySession(sessionId) {
     for (const webview of S.webviews || []) if (webview.__ccxSessionId === sessionId) return webview;
     return null;
@@ -2785,6 +2739,7 @@ function findWebviewBySession(sessionId) {
 // The tab a message belongs to is the one the user last typed in — the host has no other notion of
 // "current", and guessing by session id would need a choice nobody made.
 function deliverToTabs(message) {
+    dlog('relay inbound', String(message && message.text || '').slice(0, 60));
     // A chosen session wins; without one the last tab the user typed in is still better than dropping
     // the message, but it is a fallback and the menu says so.
     const bound = loadRelayTarget();
@@ -2799,8 +2754,11 @@ function deliverToTabs(message) {
             messageId: message.messageId,
             user: message.user,
             userId: message.userId,
+            imagePath: message.imagePath,
+            attachmentId: message.attachmentId,
             server: relayState().mcpServer || relayState().server,
         });
+        dlog('relay deliver target', bound ? 'bound' : 'last-active', target ? 'found' : 'missing');
     } catch (e) {
         dlog('relay deliver failed', (e && e.message) || String(e));
     }
@@ -2831,14 +2789,25 @@ function relayInbound(message) {
     entry.settle({ behavior: allow ? 'allow' : 'deny', viaChannel: true });
 }
 
-// Whether the relay was on the last time this window ran. A window reload kills the process it
-// started, and the one thing that must not happen is a channel the user is relying on disappearing
-// because an update, a reload or a crash-restart happened while they were away from the machine.
+// Whether the relay was on the last time this window ran — and in *which* window. The key is the
+// workspace folder, because the alternative (a global flag) had two windows both auto-resuming the
+// channel after a reload, each spawning a poller and each convinced the messages were its own. With
+// the key, a reload brings the channel back in the window that had it; another window only gets it
+// by an explicit toggle there, and the toggle moves the key with it.
 const RELAY_ON_FILE = path.join(DIR, 'relay-on.json');
+
+function relayWindowKey() {
+    try {
+        const folders = vscode.workspace.workspaceFolders;
+        return (folders && folders[0] && folders[0].uri.fsPath) || process.cwd();
+    } catch {
+        return process.cwd();
+    }
+}
 
 function rememberRelayOn(server) {
     try {
-        fs.writeFileSync(RELAY_ON_FILE, JSON.stringify({ server }, null, 2));
+        fs.writeFileSync(RELAY_ON_FILE, JSON.stringify({ server, windowKey: relayWindowKey() }, null, 2));
     } catch (e) {
         dlog('relay state save failed', (e && e.message) || String(e));
     }
@@ -2856,6 +2825,12 @@ function resumeRelayIfNeeded() {
     if (!S.lastActiveWebview) return;
     const saved = readJson(RELAY_ON_FILE);
     if (!saved || typeof saved.server !== 'string') return;
+    // A flag from another window is not this window's job: that window is the channel's home until
+    // the user moves it, and two homes is what the round of dead pollers was about.
+    if (saved.windowKey && saved.windowKey !== relayWindowKey()) {
+        dlog('relay belongs to another window', saved.windowKey);
+        return;
+    }
     dlog('relay resuming', saved.server);
     startChannelRelay(saved.server);
 }
@@ -2877,6 +2852,21 @@ function startChannelRelay(server) {
         log: (...parts) => dlog('relay', ...parts),
     });
     relay.on('inbound', relayInbound);
+    // The button answer from the plugin's own card: matched to the question by its id, exactly like
+    // the text answer.
+    relay.on('permission', ({ requestId, behavior }) => {
+        const live = relayState();
+        const id = String(requestId);
+        const entry = live.pending && live.pending.get(id);
+        if (!entry) {
+            dlog('relay button answer has no waiting question', id, behavior,
+                'waiting:', live.pending ? Array.from(live.pending.keys()).join(',') : 'none');
+            return;
+        }
+        live.pending.delete(id);
+        dlog('relay permission answer', id, behavior);
+        entry.settle({ behavior: behavior === 'allow' ? 'allow' : 'deny', viaChannel: true });
+    });
     const startedAt = Date.now();
     relay.on('exit', () => {
         const live = relayState();
@@ -2977,18 +2967,30 @@ function wrapCanUseTool(inner, context) {
             return inner(toolName, input, options);
         }
         dlog('canUseTool mirrored', toolName);
-        const key = String((options && options.toolUseID) || toolName + ':' + Date.now());
+        // The plugins' contract caps a request id at five letters (a-k, m-z — no 'l', for phone
+        // autocorrect), because the answer rides a Telegram button whose callback data is capped at
+        // 64 bytes. So the question gets a short id of its own; the toolUseID stays with the dialog.
+        const shortId = Array.from(crypto.randomBytes(5))
+            .map((b) => 'abcdefghijkmnopqrstuvwxyz'[b % 25])
+            .join('');
         let settle;
         const fromChannel = new Promise((resolve) => {
             settle = resolve;
         });
-        state.pending.set(key, { settle });
-        const preview = describeForChannel(toolName, input);
-        state.relay
-            .send(chat, '🔐 ' + toolName + '\n' + preview + '\n\nReply y to allow, n to deny.')
-            .catch((e) => dlog('relay send failed', (e && e.message) || String(e)));
+        state.pending.set(shortId, { settle });
+        // The question goes in the channel plugins' own contract: the plugin renders the card itself —
+        // with Allow/Deny buttons, to the chats its allowlist admits — and answers with a
+        // `notifications/claude/channel/permission` carrying this short id, which the relay's
+        // permission event settles below. The text reply (y/n) keeps working beside the buttons
+        // through the inbound path, so either shape of answer lands in the same queue.
+        // The card the plugin draws has room for one line and an expansion, and both should read like
+        // the action, not like its JSON: Bash reads as "$ <command>", everything else as "field: value"
+        // lines. The full object stays in the debug log for when the difference matters.
+        const human = readableInput(toolName, input);
+        dlog('canUseTool input', toolName, human);
+        state.relay.sendPermissionRequest(shortId, toolName, human, human);
         const answer = await Promise.race([inner(toolName, input, options), fromChannel]);
-        state.pending.delete(key);
+        state.pending.delete(shortId);
         // A deny needs words of its own — the SDK rejects a bare one, and "invalid permission result"
         // reaching the model is the failure mode that costs a whole round trip to notice.
         if (answer && answer.viaChannel) {
@@ -3003,6 +3005,25 @@ function wrapCanUseTool(inner, context) {
             .catch(() => {});
         return answer;
     };
+}
+
+// The input as a person would say it: the shell command as a command line, other tools as
+// "field: value" over the meaningful fields. Flags and bookkeeping (timeouts, background switches)
+// carry no vote in an approval and are left to the debug log.
+function readableInput(toolName, input) {
+    const obj = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+    if (toolName === 'Bash' && typeof obj.command === 'string') {
+        const lines = ['$ ' + obj.command];
+        if (typeof obj.description === 'string' && obj.description) lines.push(obj.description);
+        return lines.join('\n');
+    }
+    const lines = [];
+    for (const [field, value] of Object.entries(obj)) {
+        if (value == null || value === '' || value === false) continue;
+        const text = typeof value === 'string' ? value : JSON.stringify(value);
+        lines.push(field + ': ' + (text.length > 200 ? text.slice(0, 200) + '…' : text));
+    }
+    return lines.join('\n') || toolName;
 }
 
 function describeForChannel(toolName, input) {

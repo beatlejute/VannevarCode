@@ -201,4 +201,31 @@ pillNow().remove();
 observerPass();
 assert.ok(pillNow(), 'the observer pass draws it again after a re-render');
 
+// 7. The row and its gear: with a channel actually listed, openChannels builds a switch row, and the
+//    gear opens the per-channel settings popup — which carries only the tab choice, because provider,
+//    model and effort are set by the composer's own controls on the tab itself.
+fromHost({ type: 'ccx:state', sessionId: 's-1', channel: { supported: true, servers: [{ server: 'telegram', status: 'idle' }] }, relay: { status: 'on', server: 'telegram', chatId: '777', target: 's-1', targets: [{ sessionId: 's-1', channelId: 'c-1' }], pending: 1 }, profiles: [{ name: 'deepseek' }], models: { a: 'm1' } });
+pillNow().onclick();
+const gear = pageDocument.querySelectorAll('.ccx-gear');
+assert.equal(gear.length, 1, 'one gear on the channel row');
+gear[0].onclick({ stopPropagation() {} });
+assert.ok(pageDocument.body.textContent.includes('Tab'), 'the popup carries the tab section');
+assert.ok(!pageDocument.body.textContent.includes('Provider'), 'provider is set in the tab itself, not here');
+const tabRow = pageDocument.querySelectorAll('.ccx-prov-row')[0];
+tabRow.onclick();
+assert.equal(posted[posted.length - 1].type, 'ccx:relayTarget', 'a click hands the conversation to the chosen tab');
+
+// 9. An attachment rides with the message as metadata the model resolves itself — the plugin has
+//    already downloaded the image into its inbox, or holds a file_id its download tool fetches — the
+//    same contract the CLI's channel messages use. What is observable here: with no session in the
+//    tab the page says the message was dropped instead of swallowing it, and what the model receives
+//    (the tag with both pointers) is pinned by source, since no app session runs in a stub.
+withRelay({ status: 'on', server: 'telegram', chatId: '777', target: 's-1', targets: [{ sessionId: 's-1', channelId: 'c-1' }], pending: 0 }, 's-1');
+fromHost({ type: 'ccx:channelMessage', text: '(photo)', chatId: '777', messageId: '9', user: 'owner', imagePath: 'C:/inbox/photo.jpg', attachmentId: 'AQACAgIAAx0CApiZ', server: 'vannevar' });
+const drop = pageDocument.querySelector('.ccx-toast');
+assert.ok(drop && /No active session/.test(drop.textContent), 'with no session the page says the message was dropped');
+const page = readFileSync(new URL('../runtime/webview.js', import.meta.url), 'utf8');
+assert.match(page, /\[image_path="' \+ d\.imagePath/, 'the downloaded image path travels in the tag');
+assert.match(page, /\[attachment_file_id="' \+ d\.attachmentId/, 'and the file id for deferred download');
+
 console.log('\nOK — the channel is shown in the tab it is addressed to, and nowhere else');

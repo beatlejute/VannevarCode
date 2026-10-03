@@ -295,35 +295,6 @@
     // The switch row of one channel. Nothing here knows what network the plugin carries: the
     // name is the server key its own manifest declares, the state is the window's relay, and the
     // gear is the same settings popup whatever the plugin.
-    // One setting for the addressed tab: applied on click, marked when it is already the value.
-    function settingRow(kind, value, current) {
-        var row = document.createElement('div');
-        row.className = 'ccx-prov-row';
-        if (current) row.setAttribute('data-ccx-prov', 'ok');
-        row.title = kind === 'profile'
-            ? 'Relaunches the chosen tab on provider ' + value
-            : 'Types into the chosen tab: /' + kind + ' ' + value;
-        row.onclick = function () {
-            send({ type: 'ccx:channelSetting', kind: kind, value: value });
-        };
-        var head = document.createElement('div');
-        head.className = 'ccx-prov-head';
-        var mark = document.createElement('span');
-        mark.className = 'ccx-prov-icon ' + (current ? '' : 'ccx-prov-icon-blank');
-        mark.textContent = current ? '●' : '';
-        var name = document.createElement('span');
-        name.className = 'ccx-prov-name';
-        name.textContent = value;
-        var status = document.createElement('span');
-        status.className = 'ccx-prov-age';
-        status.textContent = current ? 'current' : '';
-        head.appendChild(mark);
-        head.appendChild(name);
-        head.appendChild(status);
-        row.appendChild(head);
-        return row;
-    }
-
     function channelControlRow(r) {
         var live = state.relay;
         var mine = Boolean(live && live.server === r.server && live.status !== 'off');
@@ -421,54 +392,8 @@
         }
         box.appendChild(tabList);
 
-        // — Provider / Model / Effort — what the addressed tab answers on.
-        var providerHead = document.createElement('div');
-        providerHead.className = 'ccx-title';
-        providerHead.textContent = 'Provider';
-        box.appendChild(providerHead);
-        box.appendChild(settingsHeadRow('Switch provider', state.active || 'subscription'));
-        var provList = document.createElement('div');
-        provList.className = 'ccx-prov-list';
-        var profiles = state.profiles || [];
-        for (var p2 = 0; p2 < profiles.length; p2++)
-            provList.appendChild(settingRow('profile', profiles[p2].name, profiles[p2].name === state.active));
-        box.appendChild(provList);
-
-        var modelIds = [];
-        var seenModel = {};
-        var models = state.models || null;
-        if (models) {
-            var keys = Object.keys(models);
-            for (var k2 = 0; k2 < keys.length; k2++) {
-                var id = models[keys[k2]];
-                if (typeof id === 'string' && id && !seenModel[id]) {
-                    seenModel[id] = true;
-                    modelIds.push(id);
-                }
-            }
-        }
-        if (modelIds.length) {
-            var modelHead = document.createElement('div');
-            modelHead.className = 'ccx-title';
-            modelHead.textContent = 'Model';
-            box.appendChild(modelHead);
-            box.appendChild(settingsHeadRow('Switch model', modelIds.length === 1 ? modelIds[0] : ''));
-            var modelList = document.createElement('div');
-            modelList.className = 'ccx-prov-list';
-            for (var m2 = 0; m2 < modelIds.length; m2++) modelList.appendChild(settingRow('model', modelIds[m2], false));
-            box.appendChild(modelList);
-        }
-
-        var effHead = document.createElement('div');
-        effHead.className = 'ccx-title';
-        effHead.textContent = 'Effort';
-        box.appendChild(effHead);
-        box.appendChild(settingsHeadRow('Effort', ''));
-        var effList = document.createElement('div');
-        effList.className = 'ccx-prov-list';
-        var levels = ['low', 'medium', 'high', 'xhigh', 'max'];
-        for (var e2 = 0; e2 < levels.length; e2++) effList.appendChild(settingRow('effort', levels[e2], false));
-        box.appendChild(effList);
+        // Provider, model and effort are deliberately not here: the composer's own controls set them
+        // on the tab, and a second path to the same setting would only drift from it.
 
         overlay.appendChild(box);
         document.body.appendChild(overlay);
@@ -747,39 +672,24 @@
         // A message that arrived at the plugin this window runs goes into the session the way the CLI
         // delivers its own channel messages: same shape, same metadata, so the model can reply to the
         // chat it came from with the plugin's own tools.
-        // A setting the Channels menu picked for this tab. It is typed into the session the way a user
-        // would type it, because that is the only path a session's own model and effort have.
-        // The Channels menu can switch the provider of the tab a conversation is addressed to. That is
-        // this tab's own relaunch — the same two steps its provider picker takes — so all this does is
-        // start it on the menu's behalf instead of the user's click.
-        if (d.type === 'ccx:switchProfile') {
-            if (typeof d.name === 'string' && d.name) {
-                send({ type: 'ccx:apply', sessionId: state.sessionId, channelId: activeChannelId, name: d.name });
-            }
-            return;
-        }
-
-        if (d.type === 'ccx:sessionCommand') {
-            var target = activeSession();
-            if (target && typeof target.send === 'function' && typeof d.command === 'string') {
-                try {
-                    target.send(d.command);
-                } catch (e) {
-                    toast('Could not type the command into the session.');
-                }
-            }
-            return;
-        }
-
         if (d.type === 'ccx:channelMessage') {
             var session = activeSession();
-            if (!session || typeof session.send !== 'function') return;
+            if (!session || typeof session.send !== 'function') {
+                toast('No active session in this tab — the channel message was dropped.');
+                return;
+            }
             var attrs = ['source="' + (d.server || 'channel') + '"'];
             if (d.chatId) attrs.push('chat_id="' + d.chatId + '"');
             if (d.messageId) attrs.push('message_id="' + d.messageId + '"');
             if (d.user) attrs.push('user="' + d.user + '"');
+            // An attachment rides as metadata the model resolves itself: the plugin has already
+            // downloaded the file into its inbox (image_path), or holds a file_id the session's own
+            // download_attachment tool fetches. Same contract the CLI's channel messages use.
+            var body = d.text || '';
+            if (d.imagePath) body += '\n[image_path="' + d.imagePath + '"]';
+            if (d.attachmentId) body += '\n[attachment_file_id="' + d.attachmentId + '"]';
             try {
-                session.send('<channel ' + attrs.join(' ') + '>\n' + d.text + '\n</channel>');
+                session.send('<channel ' + attrs.join(' ') + '>\n' + body + '\n</channel>');
             } catch (e) {
                 toast('Could not hand the channel message to the session.');
             }
@@ -1335,7 +1245,7 @@
     // Neither path feeds anything back: a frame is an inert sibling node inside the tool-call block,
     // built from data the page already has or was handed, and the parent turn never learns it exists.
     var TASK_TOOLS = { Task: 1, Agent: 1 };
-    var MCP_AGENT_TOOL = 'mcp__vannevar-agents__run_agent';
+    var MCP_AGENT_TOOL = 'mcp__vannevar__run_agent';
 
     // The tool_use block is not in the DOM either — the div only carries a hashed class name. It is a
     // prop of the component that renders it (`content`, a wrapper whose own `.content` is the raw

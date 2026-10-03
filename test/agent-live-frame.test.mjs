@@ -353,7 +353,7 @@ subagentTasks.value = new Map();
 const mcpBlock = {
     type: 'tool_use',
     id: 'toolu_mcp_1',
-    name: 'mcp__vannevar-agents__run_agent',
+    name: 'mcp__vannevar__run_agent',
     input: { profile: 'deepseek', prompt: 'review src/host.js' },
 };
 const mcpNode = toolNode(mcpBlock, false);
@@ -419,7 +419,7 @@ const dispatcher = {
     startedAt: Date.now() - 60000,
     events: [
         { k: 'prompt', t: 'start the full run' },
-        { k: 'tool', n: 'mcp__vannevar-agents__run_agent', t: 'do the actual work' },
+        { k: 'tool', n: 'mcp__vannevar__run_agent', t: 'do the actual work' },
     ],
 };
 const worker = {
@@ -443,7 +443,7 @@ assert.deepStrictEqual(
     linesOf(dispatchNode),
     [
         'ccx-agent-prompt:start the full run',
-        'ccx-agent-tool:mcp__vannevar-agents__run_agent do the actual work',
+        'ccx-agent-tool:mcp__vannevar__run_agent do the actual work',
         // the child's own header stays plain: its lines follow immediately, so a count would only repeat them
         'ccx-agent-child:codex · sonnet — running · 55s',
         'ccx-agent-tool:Bash node run-all.mjs',
