@@ -1435,10 +1435,10 @@ function startChatgptLogin() {
 // shape followed instead: the session's query object takes `enableChannel(serverName)`, the CLI looks up
 // that server's plugin, and the answer is what the row reports.
 //
-// Nothing here knows about Telegram. `channel_enable` takes the name of an MCP server a plugin
-// declares, and the CLI is what insists the server is marketplace-sourced — so the candidates are
-// whatever the installed plugins declare, read off disk, and a channel is enabled by naming one of
-// them. Whether a server actually pushes channel notifications is not in any manifest: the MCP server
+// Nothing here knows about Telegram. `channel_enable` takes the plugin-qualified name of an MCP
+// server, and the CLI is what insists the server is marketplace-sourced — so the candidates are whatever
+// the installed plugins declare, read off disk, qualified with the plugin name, and enabled by naming
+// one of them. Whether a server actually pushes channel notifications is not in any manifest: the MCP server
 // declares that capability in its own handshake, which is why the list can only offer the servers and
 // the CLI has the last word ("server did not declare claude/channel capability").
 const PLUGINS_FILE = path.join(HOME, '.claude', 'plugins', 'installed_plugins.json');
@@ -1478,7 +1478,14 @@ function channelCandidates() {
             for (const server of readMcpServers(entry.installPath)) {
                 if (seen.has(server)) continue;
                 seen.add(server);
-                list.push({ server, plugin: spec });
+                // The control protocol does not take the declaration's local key. MCP registers plugin
+                // servers under `plugin:<plugin name>:<server key>`; handing channel_enable only `server`
+                // makes it look for an unrelated user server and answer "server … is not connected".
+                const separator = spec.lastIndexOf('@');
+                const pluginName = separator > 0 ? spec.slice(0, separator) : spec;
+                // The directory travels with the row: starting a plugin as a relay means reading the
+                // same `.mcp.json` the CLI reads, and the list is the only place that knows where it is.
+                list.push({ server, plugin: spec, mcpServer: `plugin:${pluginName}:${server}`, dir: entry.installPath });
             }
         }
     }
@@ -1591,17 +1598,38 @@ function startChannel(channelId, server) {
     }
     Object.assign(state, { status: 'connecting', error: null });
     broadcast();
-    // Called as a method on the query, never detached: the control request is sent through `this`.
-    // Resolving means the CLI accepted the request, which is why the list says "enabled" and not
-    // "connected" — whether the bridge behind it is up is not in this promise.
-    Promise.resolve(query.enableChannel(server))
+    const candidate = channelCandidates().find((item) => item.server === server);
+    const mcpServer = candidate ? candidate.mcpServer : server;
+    // Called as methods on the query, never detached: each control request is sent through `this`.
+    // A server that failed before its environment was fixed remains behind the CLI's 15-minute failure
+    // cache. The same live query can reconnect it; without that, every click can only repeat "not
+    // connected" until a new session happens to start after the cache expires.
+    Promise.resolve()
+        .then(async () => {
+            if (typeof query.mcpServerStatus === 'function' && typeof query.reconnectMcpServer === 'function') {
+                const servers = await query.mcpServerStatus();
+                const current = Array.isArray(servers) ? servers.find((item) => item && item.name === mcpServer) : null;
+                // A server the CLI never managed to register is not in the list at all, so an absent
+                // entry is a server to reconnect, not one to leave alone — and the reconnect is
+                // best-effort either way: the answer that matters is the one enableChannel gives, so a
+                // refusal here must not take the click down with it.
+                if (!current || current.status !== 'connected') {
+                    try {
+                        await query.reconnectMcpServer(mcpServer);
+                    } catch (e) {
+                        dlog('channel reconnect failed', { channelId, mcpServer, error: (e && e.message) || String(e) });
+                    }
+                }
+            }
+            await query.enableChannel(mcpServer);
+        })
         .then(() => {
             // Looked up again rather than closed over: the answer can arrive after a relaunch has
             // dropped this record, and the state it would write is one nobody is drawing any more.
             const s = channelStateOf(channelId, server);
             if (!s) return;
             Object.assign(s, { status: 'enabled', error: null });
-            dlog('channel enabled', { channelId, server });
+            dlog('channel enabled', { channelId, server, mcpServer });
             broadcast();
         })
         .catch((e) => {
@@ -1640,6 +1668,21 @@ function stateFor(sessionId, webview) {
         // This tab's plugin channel, or null before a session exists (and on a build the channel hook
         // never reached). The tag on the "Telegram channel" row is drawn from this.
         channel: channelPayload(webview),
+        // This window's own client of a channel plugin, when one is running: it is what answers a
+        // permission question from the channel, so whether it is up is a fact about the window rather
+        // than about any tab.
+        relay: (() => {
+            const state = relayState();
+            return {
+                status: state.relay ? state.status : state.status === 'error' ? 'error' : 'off',
+                server: state.server,
+                chatId: state.chatId,
+                target: loadRelayTarget(),
+                targets: relayTargets(),
+                pending: state.pending ? state.pending.size : 0,
+                error: state.error,
+            };
+        })(),
         models: active && active !== 'claude' ? modelsOf(active) : null,
         // `now` rather than a per-row Date.now(): every age in the panel is then measured from the
         // same instant, so two rows probed together never read as a minute apart.
@@ -2244,6 +2287,14 @@ function attachWebview(webview) {
 
     webview.onDidReceiveMessage((m) => {
         if (!m || typeof m.type !== 'string') return;
+        // The tab the user is last in is the only notion of "current" this host has, and it is where a
+        // message that arrives from outside belongs.
+        S.lastActiveWebview = webview;
+        // The tab's own title, as the page renames it — the only human-readable name a tab has, and
+        // the one the Channels picker shows instead of a session id.
+        if (m.type === 'request' && m.request && m.request.type === 'rename_tab' && typeof m.request.title === 'string') {
+            webview.__ccxTitle = m.request.title;
+        }
 
         if (m.type === 'launch_claude') {
             if (m.resume) webview.__ccxSessionId = m.resume;
@@ -2396,6 +2447,57 @@ function attachWebview(webview) {
             openProfileFile(m.name);
         } else if (m.type === 'ccx:chatgptLogin') {
             startChatgptLogin();
+        } else if (m.type === 'ccx:relay') {
+            // The relay is this window's own client of a channel plugin, and it is what makes a
+            // permission question answerable away from the editor. One at a time, for the same reason a
+            // bot may be polled once.
+            const server = typeof m.server === 'string' ? m.server : '';
+            const result = m.on ? startChannelRelay(server) : stopChannelRelay();
+            if (!result.ok) {
+                // The row is where a refusal belongs: the page draws it from the same state the rest of
+                // the list comes from, so an error here is visible without a second surface.
+                Object.assign(relayState(), { status: 'error', error: result.error });
+                dlog('relay refused', result.error);
+            }
+            broadcast();
+        } else if (m.type === 'ccx:channelSetting') {
+            // Model and effort are slash commands in a session, so they are sent as one; anything else
+            // is refused rather than guessed, because there is no other way to change it from here.
+            const value = typeof m.value === 'string' ? m.value.trim() : '';
+            // A provider is not a slash command: it is the environment a process is born with, so the
+            // tab has to be relaunched, and only its own page can do that — it is the one holding the
+            // session. The menu asks that tab to switch, which is the same path its own picker takes.
+            if (m.kind === 'profile' && value) {
+                const bound = findWebviewBySession(loadRelayTarget() || '') || S.lastActiveWebview;
+                let sent = false;
+                try {
+                    if (bound) {
+                        bound.postMessage({ type: 'ccx:switchProfile', name: value });
+                        sent = true;
+                    }
+                } catch (e) {
+                    dlog('profile switch failed', (e && e.message) || String(e));
+                }
+                dlog('channel setting', 'profile', value, sent ? 'sent' : 'no tab');
+                broadcast();
+                return;
+            }
+            const allowed = m.kind === 'model' || m.kind === 'effort';
+            // One line only: the value is typed into a session as a command, and a newline in it would
+            // make the rest of the setting a second command.
+            const single = value.indexOf('\n') === -1 && value.indexOf('\r') === -1;
+            if (allowed && value && single) {
+                const ok = askBoundTab(`/${m.kind} ${value}`);
+                dlog('channel setting', m.kind, value, ok ? 'sent' : 'no tab');
+            }
+            broadcast();
+        } else if (m.type === 'ccx:relayTarget') {
+            // The answer to "who is this conversation with": a session id, or nothing to go back to the
+            // fallback. Kept on disk because a reload must not silently change who is being talked to.
+            const sessionId = typeof m.sessionId === 'string' && m.sessionId ? m.sessionId : null;
+            saveRelayTarget(sessionId);
+            dlog('relay target', sessionId || 'last active tab');
+            broadcast();
         } else if (m.type === 'ccx:channelStart') {
             // The list is the only way in, and a click can land in three situations that are not the
             // same thing: a build where the hook never ran, a channel that is launched but has not
@@ -2441,7 +2543,489 @@ function renderScript(webview, nonce) {
     return `<script nonce="${nonce}">\n${code.replace(/<\/script>/gi, '<\\/script>')}\n</script>`;
 }
 
+// --- A channel answering for the tabs ----------------------------------------------------------
+//
+// A channel plugin is transport and can be spoken to by anybody who can start it — the session is one
+// client, not the only one. This host is another: it starts the same plugin the Channels list offers,
+// speaks MCP to it, and can then ask the question a tab is already waiting on. The question is here
+// because the CLI asks the host for permission decisions (that is what `--permission-prompt-tool
+// stdio` means, and why the IDE draws the dialog at all); nothing needs to be reimplemented, only
+// mirrored, and the first answer wins.
+//
+// What this is not: a way for a message to give itself permission. The sender is whoever the plugin
+// already accepted (its own allowlist gate runs before a notification is ever emitted), the answer is
+// matched to one outstanding request by its own id, and an unanswered question falls through to the
+// dialog exactly as before. Nothing here approves anything by itself.
+//
+// One plugin may poll its network once, so this is a singleton by construction: starting a second one
+// takes the channel away from whoever holds it — which is what the relay's marker on the command line
+// settles between this host and the tabs.
+const RELAY_MODULE = path.join(DIR, 'channel-relay.js');
+
+function relayModule() {
+    try {
+        return require(RELAY_MODULE);
+    } catch (e) {
+        dlog('channel relay module missing', (e && e.message) || String(e));
+        return null;
+    }
+}
+
+function relayCommandFor(dir) {
+    const mcp = readJson(path.join(dir, '.mcp.json'));
+    const servers = mcp && mcp.mcpServers;
+    if (!servers || typeof servers !== 'object') return null;
+    for (const spec of Object.values(servers)) {
+        if (spec && typeof spec.command === 'string') {
+            return { command: spec.command, args: Array.isArray(spec.args) ? spec.args : [], env: spec.env };
+        }
+    }
+    return null;
+}
+
+// Sending a message is the one thing a session cannot do by itself once the plugin is no longer
+// loaded there: the bot belongs to this window. So the sessions ask the window. The request is a file
+// because both ends are processes that can disappear, and a file is either there or not — the tool
+// writes it whole, this side reads it, sends, and answers with a result file the tool is waiting for.
+// Nothing about a bot token crosses this boundary: a session names a chat and some text.
+const OUTBOX_DIR = path.join(DIR, 'outbox');
+const RELAY_PING = path.join(DIR, 'relay.ping');
+
+function relayOutboxDir() {
+    fs.mkdirSync(OUTBOX_DIR, { recursive: true });
+    return OUTBOX_DIR;
+}
+
+function relayTouchPing() {
+    try {
+        fs.mkdirSync(DIR, { recursive: true });
+        const now = new Date();
+        try {
+            fs.utimesSync(RELAY_PING, now, now);
+        } catch {
+            fs.writeFileSync(RELAY_PING, String(process.pid));
+        }
+    } catch (e) {
+        dlog('relay ping failed', (e && e.message) || String(e));
+    }
+}
+
+function relayDropPing() {
+    try {
+        fs.rmSync(RELAY_PING, { force: true });
+    } catch {}
+}
+
+// Which tab a conversation belongs to. The channel is owned by the window, and a window has several
+// sessions, so "the last one the user typed in" is a guess — this is the answer instead: a chosen
+// session, remembered by its id (which survives a reload) rather than by the channel id (which does
+// not, because a relaunch is a new channel).
+const RELAY_TARGET_FILE = path.join(DIR, 'relay-target.json');
+
+function loadRelayTarget() {
+    const saved = readJson(RELAY_TARGET_FILE);
+    return saved && typeof saved.sessionId === 'string' ? saved.sessionId : null;
+}
+
+function saveRelayTarget(sessionId) {
+    try {
+        if (sessionId) fs.writeFileSync(RELAY_TARGET_FILE, JSON.stringify({ sessionId }, null, 2));
+        else fs.rmSync(RELAY_TARGET_FILE, { force: true });
+    } catch (e) {
+        dlog('relay target save failed', (e && e.message) || String(e));
+    }
+}
+
+// Every tab this window currently has, as the page needs them: the id to bind by, and the channel
+// that is live right now for delivery.
+function relayTargets() {
+    const list = [];
+    for (const webview of S.webviews || []) {
+        const sessionId = webview.__ccxSessionId;
+        if (!sessionId) continue;
+        list.push({ sessionId, channelId: webview.__ccxChannelId || null, title: webview.__ccxTitle || null });
+    }
+    return list;
+}
+
+// The heartbeat is how the tool tells "the window is here" from "the window is gone": a stale file is
+// the only signal a session can get, and a message written into a queue nobody reads is worse than a
+// refusal the model can report.
+function relayHeartbeatFresh() {
+    try {
+        return Date.now() - fs.statSync(RELAY_PING).mtimeMs < 3000;
+    } catch {
+        return false;
+    }
+}
+
+function relayDrainOutbox() {
+    const state = relayState();
+    let files;
+    try {
+        files = fs
+            .readdirSync(relayOutboxDir())
+            // A result file is the answer to a request, not one: reading it as a request would send the
+            // same message twice.
+            .filter((name) => name.endsWith('.json') && !name.endsWith('.result.json'));
+    } catch {
+        return;
+    }
+    for (const name of files) {
+        const file = path.join(OUTBOX_DIR, name);
+        let request;
+        try {
+            request = JSON.parse(fs.readFileSync(file, 'utf8'));
+        } catch {
+            try {
+                fs.rmSync(file, { force: true });
+            } catch {}
+            continue;
+        }
+        const answer = (payload) => {
+            try {
+                fs.writeFileSync(file.replace(/\.json$/, '.result.json'), JSON.stringify(payload));
+            } catch (e) {
+                dlog('relay result write failed', (e && e.message) || String(e));
+            }
+            try {
+                fs.rmSync(file, { force: true });
+            } catch {}
+        };
+        if (!state.relay || state.status !== 'on') {
+            answer({ ok: false, error: 'the channel is not up in this window' });
+            continue;
+        }
+        const chatId = String(request.chatId || state.chatId || '');
+        if (!chatId) {
+            answer({ ok: false, error: 'no conversation yet: message the bot once and I will know where to reply' });
+            continue;
+        }
+        const extra = {};
+        if (request.replyTo) extra.reply_to = String(request.replyTo);
+        if (request.format) extra.format = request.format;
+        state.relay
+            .send(chatId, request.text, extra)
+            .then((result) => answer({ ok: true, text: result && result.text ? result.text : 'sent' }))
+            .catch((e) => answer({ ok: false, error: (e && e.message) || String(e) }));
+    }
+}
+
+let relayTimersStarted = false;
+
+function ensureRelayTimers() {
+    if (relayTimersStarted) return;
+    relayTimersStarted = true;
+    setInterval(() => {
+        const state = relayState();
+        if (state.relay && state.status === 'on') {
+            relayTouchPing();
+            relayDrainOutbox();
+        }
+    }, 2000).unref?.();
+}
+
+function relayState() {
+    return (S.relay ||= { relay: null, server: null, chatId: null, status: 'off', error: null });
+}
+
+// The conversation a question is sent to is remembered across reloads: it is a fact about the machine
+// the user already settled when they paired the bot, and asking for it again after every window reload
+// would mean the first question of every session goes nowhere.
+const RELAY_CHAT_FILE = path.join(DIR, 'relay-chat.json');
+
+function loadRelayChat(server) {
+    const saved = readJson(RELAY_CHAT_FILE);
+    if (saved && saved.server === server && saved.chatId) return String(saved.chatId);
+    return null;
+}
+
+function saveRelayChat(server, chatId) {
+    try {
+        fs.writeFileSync(RELAY_CHAT_FILE, JSON.stringify({ server, chatId }, null, 2));
+    } catch (e) {
+        dlog('relay chat save failed', (e && e.message) || String(e));
+    }
+}
+
+// The conversation to answer in: whichever chat last wrote to the bot. It is learned rather than
+// configured because the plugin's allowlist is the plugin's business — a message that reached this
+// handler already passed it.
+function relayRememberChat(message) {
+    const state = relayState();
+    if (message && message.chatId && state.chatId !== String(message.chatId)) {
+        state.chatId = String(message.chatId);
+        saveRelayChat(state.server, state.chatId);
+        dlog('relay chat learned', state.chatId);
+    }
+}
+
+// A setting picked in the Channels menu is applied by the tab it belongs to, and the way a tab changes
+// its own model or effort is the way a user does it there: a slash command, typed. The window cannot
+// call those itself — they live on the session — so it asks the tab to type them, which is the same
+// thing and leaves one code path instead of two.
+function askBoundTab(command) {
+    const bound = loadRelayTarget();
+    const target = bound ? findWebviewBySession(bound) : S.lastActiveWebview;
+    if (!target) return false;
+    try {
+        target.postMessage({ type: 'ccx:sessionCommand', command });
+        return true;
+    } catch (e) {
+        dlog('session command failed', (e && e.message) || String(e));
+        return false;
+    }
+}
+
+function findWebviewBySession(sessionId) {
+    for (const webview of S.webviews || []) if (webview.__ccxSessionId === sessionId) return webview;
+    return null;
+}
+
+// The tab a message belongs to is the one the user last typed in — the host has no other notion of
+// "current", and guessing by session id would need a choice nobody made.
+function deliverToTabs(message) {
+    // A chosen session wins; without one the last tab the user typed in is still better than dropping
+    // the message, but it is a fallback and the menu says so.
+    const bound = loadRelayTarget();
+    let target = bound ? findWebviewBySession(bound) : null;
+    if (!target) target = S.lastActiveWebview;
+    if (!target || !message || !String(message.text || '').trim()) return;
+    try {
+        target.postMessage({
+            type: 'ccx:channelMessage',
+            text: message.text,
+            chatId: message.chatId,
+            messageId: message.messageId,
+            user: message.user,
+            userId: message.userId,
+            server: relayState().mcpServer || relayState().server,
+        });
+    } catch (e) {
+        dlog('relay deliver failed', (e && e.message) || String(e));
+    }
+}
+
+const RELAY_YES = /^(y|yes|да|\+)$/i;
+const RELAY_NO = /^(n|no|нет|-)$/i;
+
+function relayInbound(message) {
+    relayRememberChat(message);
+    const state = relayState();
+    const text = String((message && message.text) || '').trim();
+    // A `y` or `n` with a question outstanding is an answer, and nothing else. Anything else is a
+    // message for the session: it is handed to the open tab exactly as the CLI would have delivered
+    // it had the session's own plugin been the one polling — which, while this relay runs, it is not.
+    if (!state.pending || state.pending.size === 0 || (!RELAY_YES.test(text) && !RELAY_NO.test(text))) {
+        deliverToTabs(message);
+        return;
+    }
+    const allow = RELAY_YES.test(text);
+    const deny = RELAY_NO.test(text);
+    if (!allow && !deny) return;
+    // One outstanding question is answered by one message: the oldest, so a burst of answers cannot
+    // silently approve something that was asked afterwards.
+    const [key, entry] = state.pending.entries().next().value;
+    state.pending.delete(key);
+    dlog('relay answer', key, allow ? 'allow' : 'deny');
+    entry.settle({ behavior: allow ? 'allow' : 'deny', viaChannel: true });
+}
+
+// Whether the relay was on the last time this window ran. A window reload kills the process it
+// started, and the one thing that must not happen is a channel the user is relying on disappearing
+// because an update, a reload or a crash-restart happened while they were away from the machine.
+const RELAY_ON_FILE = path.join(DIR, 'relay-on.json');
+
+function rememberRelayOn(server) {
+    try {
+        fs.writeFileSync(RELAY_ON_FILE, JSON.stringify({ server }, null, 2));
+    } catch (e) {
+        dlog('relay state save failed', (e && e.message) || String(e));
+    }
+}
+
+function forgetRelayOn() {
+    try {
+        fs.rmSync(RELAY_ON_FILE, { force: true });
+    } catch {}
+}
+
+function resumeRelayIfNeeded() {
+    const state = relayState();
+    if (state.relay) return;
+    if (!S.lastActiveWebview) return;
+    const saved = readJson(RELAY_ON_FILE);
+    if (!saved || typeof saved.server !== 'string') return;
+    dlog('relay resuming', saved.server);
+    startChannelRelay(saved.server);
+}
+
+function startChannelRelay(server) {
+    const state = relayState();
+    const module_ = relayModule();
+    if (!module_) return { ok: false, error: 'the relay runtime is missing' };
+    if (state.relay) return { ok: false, error: 'a channel is already answering for this window' };
+    const candidate = channelCandidates().find((item) => item.server === server && item.dir);
+    if (!candidate) return { ok: false, error: 'no installed plugin declares ' + server };
+    const command = relayCommandFor(candidate.dir);
+    if (!command) return { ok: false, error: 'the plugin declares no command to start' };
+    const relay = new module_.ChannelRelay({
+        command: command.command,
+        args: command.args,
+        cwd: candidate.dir,
+        env: process.env,
+        log: (...parts) => dlog('relay', ...parts),
+    });
+    relay.on('inbound', relayInbound);
+    const startedAt = Date.now();
+    relay.on('exit', () => {
+        const live = relayState();
+        if (live.relay !== relay) return;
+        live.relay = null;
+        live.pending = new Map();
+        // A plugin that dies while the switch says on is brought back, because the channel is meant
+        // to outlive any single plugin process — and the sweep at start clears whatever it left. A
+        // plugin that keeps dying quickly is not brought back for ever: five fast deaths in a row
+        // stop the loop and say so, rather than quietly restarting every few seconds.
+        const saved = readJson(RELAY_ON_FILE);
+        if (saved && saved.server === server) {
+            live.restartStreak = Date.now() - startedAt < 60000 ? (live.restartStreak || 0) + 1 : 0;
+            if (live.restartStreak >= 5) {
+                live.status = 'error';
+                live.error = 'the channel plugin keeps crashing; restarts stopped';
+                broadcast();
+                return;
+            }
+            live.status = 'starting';
+            broadcast();
+            setTimeout(() => {
+                if (relayState().relay) return;
+                startChannelRelay(server);
+            }, 3000);
+            return;
+        }
+        live.status = 'stopped';
+        broadcast();
+    });
+    ensureRelayTimers();
+    relayTouchPing();
+    state.relay = relay;
+    state.server = server;
+    // The qualified name is what the CLI uses for the same server, and the model reads it in the tag.
+    state.mcpServer = candidate.mcpServer;
+    // A chat learned in an earlier window is the same chat: reloads must not deafen the first question.
+    state.chatId = loadRelayChat(server);
+    state.status = 'starting';
+    state.error = null;
+    rememberRelayOn(server);
+    state.pending = new Map();
+    relay
+        .start()
+        .then(() => {
+            const live = relayState();
+            if (live.relay !== relay) return;
+            live.status = 'on';
+            broadcast();
+        })
+        .catch((e) => {
+            const live = relayState();
+            if (live.relay !== relay) return;
+            live.relay = null;
+            live.status = 'error';
+            live.error = (e && e.message) || String(e);
+            dlog('relay start failed', live.error);
+            broadcast();
+        });
+    return { ok: true };
+}
+
+function stopChannelRelay() {
+    const state = relayState();
+    if (!state.relay) return { ok: false, error: 'no relay is running' };
+    const relay = state.relay;
+    state.relay = null;
+    state.status = 'off';
+    state.error = null;
+    forgetRelayOn();
+    if (state.pending) {
+        for (const entry of state.pending.values()) entry.settle(null);
+        state.pending.clear();
+    }
+    relay.stop();
+    relayDropPing();
+    broadcast();
+    return { ok: true };
+}
+
+// What the patched bundle wraps the host's permission callback with. The inner callback is the one
+// that draws the dialog; this only adds a second place the same question can be answered from, and
+// resolves with whichever answers first.
+function wrapCanUseTool(inner, context) {
+    return async function (toolName, input, options) {
+        const state = relayState();
+        const chat = state.chatId;
+        if (!state.relay || state.status !== 'on' || !chat || typeof inner !== 'function') {
+            // Why a question was not mirrored is a fact about this window, and the only place it can be
+            // said is here: the dialog is the fallback either way, so nothing else would look wrong.
+            dlog('canUseTool not mirrored', {
+                tool: toolName,
+                relay: Boolean(state.relay),
+                status: state.status,
+                chat: chat ? 'known' : 'unknown',
+                inner: typeof inner,
+            });
+            return inner(toolName, input, options);
+        }
+        dlog('canUseTool mirrored', toolName);
+        const key = String((options && options.toolUseID) || toolName + ':' + Date.now());
+        let settle;
+        const fromChannel = new Promise((resolve) => {
+            settle = resolve;
+        });
+        state.pending.set(key, { settle });
+        const preview = describeForChannel(toolName, input);
+        state.relay
+            .send(chat, '🔐 ' + toolName + '\n' + preview + '\n\nReply y to allow, n to deny.')
+            .catch((e) => dlog('relay send failed', (e && e.message) || String(e)));
+        const answer = await Promise.race([inner(toolName, input, options), fromChannel]);
+        state.pending.delete(key);
+        // A deny needs words of its own — the SDK rejects a bare one, and "invalid permission result"
+        // reaching the model is the failure mode that costs a whole round trip to notice.
+        if (answer && answer.viaChannel) {
+            return answer.behavior === 'allow'
+                ? { behavior: 'allow' }
+                : { behavior: 'deny', message: 'Denied via channel' };
+        }
+        // The dialog answered first: the channel message is left as it is, with one line saying so, so
+        // that an answer nobody is waiting for any more is not mistaken for a live question.
+        state.relay
+            .send(chat, '↩︎ ' + toolName + ': decided in the IDE')
+            .catch(() => {});
+        return answer;
+    };
+}
+
+function describeForChannel(toolName, input) {
+    let text = '';
+    try {
+        text = typeof input === 'string' ? input : JSON.stringify(input);
+    } catch {
+        text = String(input);
+    }
+    text = text.replace(/\s+/g, ' ').trim();
+    return text.length > 300 ? toolName + ': ' + text.slice(0, 300) + '…' : text;
+}
+
 function attachPanel(panel) {
+    // A panel is the first thing this window does with a session, which makes it the moment a channel
+    // that was on before the reload is put back.
+    setTimeout(() => {
+        try {
+            resumeRelayIfNeeded();
+        } catch (e) {
+            dlog('relay resume failed', (e && e.message) || String(e));
+        }
+    }, 3000);
     if (!S.panels.has(panel)) {
         S.panels.set(panel, true);
         try {
@@ -2460,6 +3044,9 @@ module.exports = {
     attachPanel,
     envFor,
     onChannelReady,
+    wrapCanUseTool,
+    startChannelRelay,
+    stopChannelRelay,
     profileIcons,
     agentRunsPayload,
     agentTranscript,

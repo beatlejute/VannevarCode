@@ -486,6 +486,21 @@ const PATCHES = [
             `let __f=require(__p).onChannelReady;__f&&__f(this,${channel})}catch(__e){}`,
         where: 'replace',
     },
+    {
+        // The permission question is the host's to answer — the CLI asks over this callback, which is
+        // why the dialog exists at all — so wrapping it is what lets the same question also be answered
+        // from a channel. The callback itself is handed back untouched, and the wrapper falls through
+        // to it whenever no relay is running or nothing is listening: this adds a second place an answer
+        // may come from, never a second decision.
+        file: 'extension.js',
+        optional: true,
+        find: /canUseTool:([\w$]+),onUserDialog:([\w$]+)/,
+        replace: (_found, canUse, dialog) =>
+            `canUseTool:(()=>{try{` +
+            HOST_REQUIRE +
+            `let __w=require(__p).wrapCanUseTool;return __w?__w(${canUse},{}):${canUse}}catch(__e){return ${canUse}}})(),onUserDialog:${dialog}`,
+        where: 'replace',
+    },
 ];
 
 // Things the injected code drives without patching them. Losing one is not an error — Vannevar
