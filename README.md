@@ -72,7 +72,10 @@ another on DeepSeek, a third on your ChatGPT subscription.
   the plugin renders its own card with Allow/Deny buttons, and whichever answer arrives first, from the
   dialog or from the channel, wins. The relay comes back on its own after a window reload and stops
   restarting a plugin that keeps dying. Works on any provider, Anthropic or not. Install a channel
-  plugin first (`claude plugin install telegram@claude-plugins-official`).
+  plugin first (`claude plugin install telegram@claude-plugins-official`), then disable it for
+  sessions so only the window runs it: `"enabledPlugins": { "telegram@claude-plugins-official": false }`
+  in `~/.claude/settings.json`. A plugin loaded by a session polls the bot on its own — Telegram allows
+  one such consumer, and two loaders take the token from each other in rounds.
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
