@@ -2460,6 +2460,15 @@ function attachWebview(webview) {
                 dlog('relay refused', result.error);
             }
             broadcast();
+        } else if (m.type === 'ccx:relayBusy') {
+            // The addressed tab reports whether it is working; the relay refreshes Telegram's
+            // "typing…" while it is. Only transitions matter — the page checks on every pass.
+            const state = relayState();
+            if (state.relay && state.chatId) {
+                if (m.busy) state.relay.startTyping(state.chatId);
+                else state.relay.stopTyping();
+            }
+            broadcast();
         } else if (m.type === 'ccx:relayTarget') {
             // The answer to "who is this conversation with": a session id, or nothing to go back to the
             // fallback. Kept on disk because a reload must not silently change who is being talked to.
@@ -2844,11 +2853,29 @@ function startChannelRelay(server) {
     if (!candidate) return { ok: false, error: 'no installed plugin declares ' + server };
     const command = relayCommandFor(candidate.dir);
     if (!command) return { ok: false, error: 'the plugin declares no command to start' };
+    // The editor's own env is what everything here inherits — plus the variables the user set for
+    // Claude Code in VSCodium's settings (`claudeCode.environmentVariables`): a corporate proxy lives
+    // there, and a relay posting to a chat API without it posts into a network that eats the packets.
+    let relayEnv = process.env;
+    try {
+        const configured = vscode.workspace.getConfiguration('claudeCode').get('environmentVariables');
+        if (Array.isArray(configured)) {
+            relayEnv = Object.assign({}, process.env);
+            for (const entry of configured) {
+                if (entry && typeof entry.name === 'string') relayEnv[entry.name] = entry.value == null ? '' : String(entry.value);
+            }
+        }
+    } catch (e) {
+        dlog('relay env from settings failed', (e && e.message) || String(e));
+    }
     const relay = new module_.ChannelRelay({
         command: command.command,
         args: command.args,
         cwd: candidate.dir,
-        env: process.env,
+        env: relayEnv,
+        // The channel family keeps its state (token `.env`, inbox) beside the plugin, under the
+        // server's own name — the same directory the plugin itself defaults to.
+        stateDir: path.join(HOME, '.claude', 'channels', candidate.server),
         log: (...parts) => dlog('relay', ...parts),
     });
     relay.on('inbound', relayInbound);

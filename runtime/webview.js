@@ -46,6 +46,8 @@
     var sessionByChannel = {};
     var activeChannelId = null;
     var pendingRestart = null;
+    var relayBusySent = null;
+    var relayBusyValue = null;
     // The last 1h cache signal the host reported for the active session ({ ttl, anchorAt }), and the
     // timer that fires the pre-expiry compaction. Both are page-local: a reload drops the signal, and
     // the next message_delta restores it; the enabled flag survives in localStorage.
@@ -672,6 +674,20 @@
         // A message that arrived at the plugin this window runs goes into the session the way the CLI
         // delivers its own channel messages: same shape, same metadata, so the model can reply to the
         // chat it came from with the plugin's own tools.
+        // While the conversation's tab is working, Telegram is told "typing…" — the window refreshes
+        // it for as long as this lasts. Only transitions are sent; the relay holds the chat id.
+        if (d.type === 'ccx:state') {
+            var live = d.relay;
+            var session = activeSession();
+            var busy = Boolean(session && session.busy && session.busy.value);
+            var mine = Boolean(live && live.status === 'on' && (live.target ? live.target === d.sessionId : (live.targets || []).length === 1));
+            if (mine !== relayBusySent || busy !== relayBusyValue) {
+                relayBusySent = mine;
+                relayBusyValue = mine && busy;
+                send({ type: 'ccx:relayBusy', busy: relayBusyValue });
+            }
+        }
+
         if (d.type === 'ccx:channelMessage') {
             var session = activeSession();
             if (!session || typeof session.send !== 'function') {
