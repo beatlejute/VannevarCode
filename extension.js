@@ -32,7 +32,7 @@ const MCP_RECEIPT = path.join(RUNTIME, 'mcp-registered.json');
 const LOG_FILE = path.join(RUNTIME, 'extension.log');
 
 const CLAUDE_EXTENSION_ID = 'anthropic.claude-code';
-const MCP_SERVER_NAME = 'vannevar-agents';
+const MCP_SERVER_NAME = 'vannevar';
 
 function log(text) {
     try {
