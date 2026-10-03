@@ -71,14 +71,45 @@ another on DeepSeek, a third on your ChatGPT subscription.
   own tools, and a **permission question the IDE dialog is holding is mirrored into the channel** —
   the plugin renders its own card with Allow/Deny buttons, and whichever answer arrives first, from the
   dialog or from the channel, wins. The relay comes back on its own after a window reload and stops
-  restarting a plugin that keeps dying. Works on any provider, Anthropic or not. Install a channel
-  plugin first (`claude plugin install telegram@claude-plugins-official`), then disable it for
-  sessions so only the window runs it: `"enabledPlugins": { "telegram@claude-plugins-official": false }`
-  in `~/.claude/settings.json`. A plugin loaded by a session polls the bot on its own — Telegram allows
-  one such consumer, and two loaders take the token from each other in rounds.
+  restarting a plugin that keeps dying. Works on any provider, Anthropic or not.
 - **Non-Anthropic providers** through a bundled protocol adapter: OpenAI, Gemini, OpenRouter, DeepSeek,
   Groq, Together, Ollama — and the ChatGPT Plus/Pro subscription.
 - **The patch survives Claude Code updates** — see [below](#after-a-claude-code-update).
+
+## Setting up a channel (Telegram as the example)
+
+The channel is owned by the editor window, not by a session: the window runs the plugin, holds the
+bot token, and delivers what arrives to the tab you choose. Sessions never load the plugin — that is
+why nothing fights over the bot. Setup, once per machine:
+
+1. **Create a bot** — in Telegram, talk to [@BotFather](https://t.me/BotFather): `/newbot`, take the
+   token (`123456:ABC-DEF…`).
+2. **Install the plugin** — in a Claude session:
+   `claude plugin install telegram@claude-plugins-official`.
+3. **Disable the plugin for sessions** — in `~/.claude/settings.json`:
+   `"enabledPlugins": { "telegram@claude-plugins-official": false }`. A plugin loaded by a session
+   polls the bot on its own, and Telegram allows one such consumer — two loaders take the token from
+   each other in rounds and messages land in whatever session grabbed them. With the plugin disabled,
+   only the window polls, and there is nothing to fight.
+4. **Save the token and pair your phone** — in any Claude session run
+   `/telegram:configure <token>`, then DM the bot anything and run
+   `/telegram:access pair <code>` with the code it sends back. Your Telegram id is now the allowlist;
+   nobody else reaches the session.
+5. **Switch the channel on** — in the editor, *Settings → Channels…*, click the channel row. The
+   window spawns the plugin and holds the token from then on; the row turns green when it polls.
+6. **Choose the tab** — ⚙ beside the row lists the open tabs; click one and the conversation is
+   addressed to it (remembered across reloads; with a single tab there is nothing to choose).
+
+From then on: DM the bot — the message arrives in the chosen tab and the model answers back into
+Telegram (the "typing…" indicator runs while it works). When a tool needs approval and the tab is in
+*Ask* mode, the question comes to the channel as a card with **Allow / Deny** buttons — or reply
+`y` / `n` as text; whichever answers first, the IDE dialog or the channel, wins. Photos and files
+arrive too: the model reads them from the plugin's inbox.
+
+Limits: the channel lives while the window is open, and the addressed tab must be running to answer.
+Voice messages are delivered as notices, not transcribed, and slash commands do not run from the
+channel. To move the channel to another window, switch it on there — the toggle moves the ownership,
+and the old window's poller stands down.
 
 ## Install
 
