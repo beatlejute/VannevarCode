@@ -254,22 +254,31 @@
 
         var hint = document.createElement('div');
         hint.className = 'ccx-hint';
-        hint.textContent = state.sessionId
-            ? 'Servers the installed plugins declare — a channel is started in this session, and stays on it'
-            : 'No active session yet — a channel starts with the session';
+        hint.textContent = 'The channel is owned by the window, not by a tab; below — who answers, and on what';
         box.appendChild(hint);
 
         var rows = channelServers();
-        var list = document.createElement('div');
-        list.className = 'ccx-prov-list';
+        // The per-session rows are gone with the scheme they served: a session no longer loads the
+        // plugin, so "start this channel in this session" could only answer with an error. What is
+        // left is the window's channel, which the rows below start.
+        // One row per channel the installed plugins offer: any of them, not one named here. The
+        // row's click is the switch — the window either runs this channel or does not — and the
+        // gear beside it is where the conversation it carries is set up: which tab it is addressed
+        // to, and on what that tab answers. A second channel plugin simply adds a second row.
+        var relayHead = document.createElement('div');
+        relayHead.className = 'ccx-title';
+        relayHead.textContent = 'Channels';
+        box.appendChild(relayHead);
         if (!rows.length) {
             var empty = document.createElement('div');
             empty.className = 'ccx-hint';
-            empty.textContent = 'No plugin on this machine declares an MCP server, so there is no channel to start.';
-            list.appendChild(empty);
+            empty.textContent = 'No channel plugin installed — get one from the marketplace.';
+            box.appendChild(empty);
         }
-        for (var i = 0; i < rows.length; i++) list.appendChild(channelRow(rows[i]));
-        box.appendChild(list);
+        var relayList = document.createElement('div');
+        relayList.className = 'ccx-prov-list';
+        for (var r2 = 0; r2 < rows.length; r2++) relayList.appendChild(channelControlRow(rows[r2]));
+        box.appendChild(relayList);
 
         overlay.appendChild(box);
         document.body.appendChild(overlay);
@@ -283,33 +292,31 @@
         window.addEventListener('keydown', onKey, true);
     }
 
-    function channelRow(r) {
+    // The switch row of one channel. Nothing here knows what network the plugin carries: the
+    // name is the server key its own manifest declares, the state is the window's relay, and the
+    // gear is the same settings popup whatever the plugin.
+    // One setting for the addressed tab: applied on click, marked when it is already the value.
+    function settingRow(kind, value, current) {
         var row = document.createElement('div');
         row.className = 'ccx-prov-row';
-        // The same three colours the provider list uses, for the same three meanings: answered, refused,
-        // and still working on it. Nothing else here is shared with that list.
-        row.setAttribute('data-ccx-prov', r.status === 'enabled' ? 'ok' : r.status === 'connecting' ? 'silent' : r.status === 'idle' ? '' : 'failed');
-        row.title = [r.plugin ? r.server + ' · ' + r.plugin : r.server, channelStatusText(r), r.error]
-            .filter(Boolean)
-            .join('\n');
+        if (current) row.setAttribute('data-ccx-prov', 'ok');
+        row.title = kind === 'profile'
+            ? 'Relaunches the chosen tab on provider ' + value
+            : 'Types into the chosen tab: /' + kind + ' ' + value;
         row.onclick = function () {
-            var ch = state.channel;
-            if (r.status === 'connecting' || r.status === 'enabled') return;
-            if (r.status === 'unsupported') return toast(r.error || 'This Claude Code build has no channel support.');
-            if (!activeChannelId) return toast('No session yet — the channel starts with the session.');
-            send({ type: 'ccx:channelStart', channelId: activeChannelId, server: r.server });
+            send({ type: 'ccx:channelSetting', kind: kind, value: value });
         };
-
         var head = document.createElement('div');
         head.className = 'ccx-prov-head';
         var mark = document.createElement('span');
-        mark.className = 'ccx-prov-icon ccx-prov-icon-blank';
+        mark.className = 'ccx-prov-icon ' + (current ? '' : 'ccx-prov-icon-blank');
+        mark.textContent = current ? '●' : '';
         var name = document.createElement('span');
         name.className = 'ccx-prov-name';
-        name.textContent = r.server;
+        name.textContent = value;
         var status = document.createElement('span');
         status.className = 'ccx-prov-age';
-        status.textContent = channelStatusText(r);
+        status.textContent = current ? 'current' : '';
         head.appendChild(mark);
         head.appendChild(name);
         head.appendChild(status);
@@ -317,15 +324,201 @@
         return row;
     }
 
-    function channelStatusText(r) {
-        if (!state.channel || state.channel.supported === false) return 'unavailable';
-        return r.status === 'connecting'
-            ? 'starting…'
-            : r.status === 'enabled'
-              ? 'enabled'
-              : r.status === 'error'
-                ? 'failed'
-                : 'click to start';
+    function channelControlRow(r) {
+        var live = state.relay;
+        var mine = Boolean(live && live.server === r.server && live.status !== 'off');
+        var row = document.createElement('div');
+        row.className = 'ccx-prov-row';
+        row.setAttribute('data-ccx-prov', mine ? (live.status === 'error' ? 'failed' : 'ok') : '');
+        row.title = mine
+            ? (live.error ? live.error : 'Channel is on — click to turn off, the gear configures it')
+            : 'Click to start the channel — the window spawns the plugin';
+        row.onclick = function () {
+            send({ type: 'ccx:relay', server: r.server, on: !mine });
+        };
+        var head = document.createElement('div');
+        head.className = 'ccx-prov-head';
+        var mark = document.createElement('span');
+        mark.className = 'ccx-prov-icon ' + (mine ? '' : 'ccx-prov-icon-blank');
+        mark.textContent = mine ? '\u25CF' : '';
+        var name = document.createElement('span');
+        name.className = 'ccx-prov-name';
+        name.textContent = r.server;
+        var status = document.createElement('span');
+        status.className = 'ccx-prov-age';
+        status.textContent = !mine
+            ? 'off'
+            : live.status === 'error'
+              ? 'error'
+              : live.status === 'starting'
+                ? 'starting'
+                : live.pending
+                  ? live.pending + ' awaiting an answer'
+                  : live.chatId
+                    ? 'on'
+                    : 'waiting for the first message';
+        var gear = document.createElement('span');
+        gear.className = 'ccx-gear';
+        gear.textContent = '\u2699';
+        gear.title = 'Channel settings';
+        gear.onclick = function (e) {
+            e.stopPropagation();
+            openChannelSettings(r.server);
+        };
+        head.appendChild(mark);
+        head.appendChild(name);
+        head.appendChild(gear);
+        head.appendChild(status);
+        row.appendChild(head);
+        return row;
+    }
+
+    // The settings popup of one channel: the tab its conversation is addressed to, and what that
+    // tab answers on. Shaped like the composer's own model section — a row with the value on the
+    // right, the choices under it — because that is the shape the editor already taught.
+    function openChannelSettings(server) {
+        closePicker();
+        overlay = document.createElement('div');
+        overlay.className = 'ccx-overlay';
+        overlay.onclick = function (e) {
+            if (e.target === overlay) closePicker();
+        };
+        overlayKind = 'channels';
+
+        var box = document.createElement('div');
+        box.className = 'ccx-box';
+
+        var title = document.createElement('div');
+        title.className = 'ccx-title';
+        title.textContent = server;
+        box.appendChild(title);
+
+        var live = state.relay;
+        var targets = (live && live.targets) || [];
+
+        // — Tab — the conversation's addressee. The row shows the current answer the way the
+        // composer shows a model: a name on the left, the value on the right.
+        var tabHead = document.createElement('div');
+        tabHead.className = 'ccx-title';
+        tabHead.textContent = 'Tab';
+        box.appendChild(tabHead);
+        var single = targets.length === 1 ? targets[0] : null;
+        var currentName = live && live.target
+            ? (live.target === state.sessionId ? 'this tab' : 'session ' + String(live.target).slice(0, 8))
+            : single
+              ? (single.sessionId === state.sessionId ? 'this tab (the only one)' : 'session ' + String(single.sessionId).slice(0, 8))
+              : 'last active';
+        var tabRow = settingsHeadRow('Channel messages arrive in', currentName);
+        box.appendChild(tabRow);
+        var tabList = document.createElement('div');
+        tabList.className = 'ccx-prov-list';
+        if (targets.length > 1) tabList.appendChild(tabPickRow(null, 'last active', !live.target));
+        for (var t2 = 0; t2 < targets.length; t2++) {
+            var chosen = Boolean(live && live.target === targets[t2].sessionId);
+            var label = targets[t2].title
+                || (targets[t2].sessionId === state.sessionId ? 'this tab' : 'session ' + String(targets[t2].sessionId).slice(0, 8));
+            tabList.appendChild(tabPickRow(targets[t2].sessionId, label, chosen));
+        }
+        box.appendChild(tabList);
+
+        // — Provider / Model / Effort — what the addressed tab answers on.
+        var providerHead = document.createElement('div');
+        providerHead.className = 'ccx-title';
+        providerHead.textContent = 'Provider';
+        box.appendChild(providerHead);
+        box.appendChild(settingsHeadRow('Switch provider', state.active || 'subscription'));
+        var provList = document.createElement('div');
+        provList.className = 'ccx-prov-list';
+        var profiles = state.profiles || [];
+        for (var p2 = 0; p2 < profiles.length; p2++)
+            provList.appendChild(settingRow('profile', profiles[p2].name, profiles[p2].name === state.active));
+        box.appendChild(provList);
+
+        var modelIds = [];
+        var seenModel = {};
+        var models = state.models || null;
+        if (models) {
+            var keys = Object.keys(models);
+            for (var k2 = 0; k2 < keys.length; k2++) {
+                var id = models[keys[k2]];
+                if (typeof id === 'string' && id && !seenModel[id]) {
+                    seenModel[id] = true;
+                    modelIds.push(id);
+                }
+            }
+        }
+        if (modelIds.length) {
+            var modelHead = document.createElement('div');
+            modelHead.className = 'ccx-title';
+            modelHead.textContent = 'Model';
+            box.appendChild(modelHead);
+            box.appendChild(settingsHeadRow('Switch model', modelIds.length === 1 ? modelIds[0] : ''));
+            var modelList = document.createElement('div');
+            modelList.className = 'ccx-prov-list';
+            for (var m2 = 0; m2 < modelIds.length; m2++) modelList.appendChild(settingRow('model', modelIds[m2], false));
+            box.appendChild(modelList);
+        }
+
+        var effHead = document.createElement('div');
+        effHead.className = 'ccx-title';
+        effHead.textContent = 'Effort';
+        box.appendChild(effHead);
+        box.appendChild(settingsHeadRow('Effort', ''));
+        var effList = document.createElement('div');
+        effList.className = 'ccx-prov-list';
+        var levels = ['low', 'medium', 'high', 'xhigh', 'max'];
+        for (var e2 = 0; e2 < levels.length; e2++) effList.appendChild(settingRow('effort', levels[e2], false));
+        box.appendChild(effList);
+
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        var onKey = function (e) {
+            if (e.key === 'Escape') {
+                closePicker();
+                window.removeEventListener('keydown', onKey, true);
+            }
+        };
+        window.addEventListener('keydown', onKey, true);
+    }
+
+    // A section's own row: the label on the left, the current value on the right — the composer's
+    // Model section is the shape being copied, so the popup reads as part of the editor.
+    function settingsHeadRow(label, value) {
+        var row = document.createElement('div');
+        row.className = 'ccx-set-head';
+        var name = document.createElement('span');
+        name.textContent = label + '…';
+        var current = document.createElement('span');
+        current.className = 'ccx-set-value';
+        current.textContent = value || '';
+        row.appendChild(name);
+        row.appendChild(current);
+        return row;
+    }
+
+    // One choice under a section: applied on click, marked when current.
+    function tabPickRow(sessionId, label, chosen) {
+        var row = document.createElement('div');
+        row.className = 'ccx-prov-row';
+        if (chosen) row.setAttribute('data-ccx-prov', 'ok');
+        row.title = chosen ? 'Chosen — click to clear' : 'Deliver channel messages to this tab';
+        row.onclick = function () {
+            send({ type: 'ccx:relayTarget', sessionId: chosen ? null : sessionId });
+            closePicker();
+        };
+        var head = document.createElement('div');
+        head.className = 'ccx-prov-head';
+        var mark = document.createElement('span');
+        mark.className = 'ccx-prov-icon ' + (chosen ? '' : 'ccx-prov-icon-blank');
+        mark.textContent = chosen ? '\u25CF' : '';
+        var name = document.createElement('span');
+        name.className = 'ccx-prov-name';
+        name.textContent = label;
+        head.appendChild(mark);
+        head.appendChild(name);
+        row.appendChild(head);
+        return row;
     }
 
     // What the sign-in row says on its right: the state of the tokens on disk, as the host reads them.
@@ -551,6 +744,48 @@
             return;
         }
 
+        // A message that arrived at the plugin this window runs goes into the session the way the CLI
+        // delivers its own channel messages: same shape, same metadata, so the model can reply to the
+        // chat it came from with the plugin's own tools.
+        // A setting the Channels menu picked for this tab. It is typed into the session the way a user
+        // would type it, because that is the only path a session's own model and effort have.
+        // The Channels menu can switch the provider of the tab a conversation is addressed to. That is
+        // this tab's own relaunch — the same two steps its provider picker takes — so all this does is
+        // start it on the menu's behalf instead of the user's click.
+        if (d.type === 'ccx:switchProfile') {
+            if (typeof d.name === 'string' && d.name) {
+                send({ type: 'ccx:apply', sessionId: state.sessionId, channelId: activeChannelId, name: d.name });
+            }
+            return;
+        }
+
+        if (d.type === 'ccx:sessionCommand') {
+            var target = activeSession();
+            if (target && typeof target.send === 'function' && typeof d.command === 'string') {
+                try {
+                    target.send(d.command);
+                } catch (e) {
+                    toast('Could not type the command into the session.');
+                }
+            }
+            return;
+        }
+
+        if (d.type === 'ccx:channelMessage') {
+            var session = activeSession();
+            if (!session || typeof session.send !== 'function') return;
+            var attrs = ['source="' + (d.server || 'channel') + '"'];
+            if (d.chatId) attrs.push('chat_id="' + d.chatId + '"');
+            if (d.messageId) attrs.push('message_id="' + d.messageId + '"');
+            if (d.user) attrs.push('user="' + d.user + '"');
+            try {
+                session.send('<channel ' + attrs.join(' ') + '>\n' + d.text + '\n</channel>');
+            } catch (e) {
+                toast('Could not hand the channel message to the session.');
+            }
+            return;
+        }
+
         if (d.type === 'ccx:state') {
             state = {
                 profiles: d.profiles || [],
@@ -567,6 +802,7 @@
                 historyBeforeCompaction: d.historyBeforeCompaction === true,
                 chatgpt: d.chatgpt || null,
                 channel: d.channel || null,
+                relay: d.relay || null,
             };
             rememberHistoryBeforeCompaction(state.historyBeforeCompaction);
             adoptAttachmentPrompts(d.attachmentPrompts);
@@ -603,6 +839,7 @@
             decorateAgentFrames();
             decorateSidebar();
             decorateResourcePill();
+            decorateChannelPill();
             applyHidden();
         } else if (d.type === 'ccx:icons') {
             icons = d.icons || {};
@@ -2816,6 +3053,65 @@
         if (pill.parentElement !== footer) footer.appendChild(pill);
     }
 
+    // A channel this window runs, shown in the one tab it is addressed to. The channel belongs to the
+    // window — the bot token and the poller are there, not in any session — so this is not "the tab has
+    // a channel" but "the conversation is with this tab", which is exactly what the choice in the
+    // Channels menu decides. Nothing is drawn in the other tabs: they cannot answer, and a pill that
+    // said otherwise would be a promise nothing keeps.
+    function decorateChannelPill() {
+        try {
+            var live = state.relay;
+            var one = live && (live.targets || []).length === 1 && live.targets[0].sessionId === state.sessionId;
+            var mine = Boolean(live && live.status === 'on' && ((live.target && live.target === state.sessionId) || (!live.target && one)));
+            var pill = document.querySelector('.ccx-channel-pill');
+            if (!mine) {
+                if (pill) pill.remove();
+                return;
+            }
+            var footer = document.querySelector('[class*="inputFooterV2_"]');
+            if (!pill) {
+                if (!footer) return;
+                pill = document.createElement('button');
+                pill.type = 'button';
+                // The same stock class the model and resource pills wear: the row's look is the row's.
+                pill.className = ['ccx-channel-pill', stockClass('modelPill', footer)].filter(Boolean).join(' ');
+                var dot = document.createElement('span');
+                dot.className = 'ccx-channel-dot';
+                var label = document.createElement('span');
+                label.className = 'ccx-channel-label';
+                pill.appendChild(dot);
+                pill.appendChild(label);
+                pill.onclick = openChannels;
+            }
+            placeChannelPill(pill);
+            // The light says whether a question is waiting, because that is the one thing about a
+            // channel anybody has to act on.
+            pill.setAttribute('data-ccx-channel-state', live.pending ? 'busy' : 'on');
+            var text = live.chatId ? live.server || 'channel' : (live.server || 'channel') + ' · waiting for the first message';
+            var labelEl = pill.querySelector('.ccx-channel-label');
+            if (labelEl) {
+                if (labelEl.textContent !== text) labelEl.textContent = text;
+            }
+            pill.title = live.pending
+                ? 'A permission question is waiting in the channel · click for the list'
+                : 'Channel messages arrive in this tab · click for the list';
+            pill.setAttribute('aria-label', pill.title);
+        } catch (e) {
+            /* a footer that cannot take the pill is a lost indicator, not a broken composer */
+        }
+    }
+
+    // After the resource pill when it is there — the row's per-session pills read as a pair — and
+    // otherwise the same walk that pill uses.
+    function placeChannelPill(pill) {
+        var resource = document.querySelector('.ccx-resource-pill');
+        if (resource && resource.parentElement) {
+            if (resource.nextSibling !== pill) resource.parentElement.insertBefore(pill, resource.nextSibling);
+            return;
+        }
+        placeResourcePill(pill);
+    }
+
     // The nodes the transcript draws a turn in, the ones both this and applyHidden are about.
     function drawnMessages(assistantFirst) {
         var nodes = [];
@@ -3512,6 +3808,7 @@
                 syncResumePrompt();
                 decorateCachePill();
                 decorateResourcePill();
+                decorateChannelPill();
             }, 60);
         }).observe(document.body, { childList: true, subtree: true });
         watchRunningFrames();
@@ -4737,6 +5034,14 @@
         // The pill itself borrows the stock model-pill classes, so only its pointer is ours; the
         // dialog below it follows the picker's own box.
         '.ccx-resource-pill{cursor:pointer}',
+        '.ccx-gear{margin-left:auto;cursor:pointer;opacity:.7;padding:0 6px}',
+        '.ccx-gear:hover{opacity:1}',
+        '.ccx-set-head{display:flex;justify-content:space-between;align-items:baseline;padding:5px 10px;cursor:pointer}',
+        '.ccx-set-head:hover{background:var(--vscode-list-hoverBackground)}',
+        '.ccx-set-value{opacity:.6;font-size:11px}',
+        '.ccx-channel-pill{cursor:pointer;display:inline-flex;align-items:center;gap:5px}',
+        '.ccx-channel-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--vscode-charts-green, #3fb950)}',
+        '.ccx-channel-pill[data-ccx-channel-state="busy"] .ccx-channel-dot{background:var(--vscode-charts-yellow, #d7a12c)}',
         '.ccx-resources-box{min-width:420px;max-width:min(760px,80vw)}',
         '.ccx-res-tally{float:right;font-size:10px;font-weight:400;letter-spacing:0;text-transform:none;opacity:.55}',
         '.ccx-res-head{display:flex;align-items:center;gap:5px;padding:8px 10px 2px;font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;opacity:.5;cursor:pointer;user-select:none}',

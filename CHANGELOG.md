@@ -34,6 +34,44 @@ additions elsewhere.
 
 ## Unreleased
 
+A channel is now **run by the window, not by a tab** (`runtime/channel-relay.js`). The extension starts
+the same plugin the Channels list already offers — from its own cache directory, exactly as installed —
+speaks MCP to it, and becomes the one consumer of its bot token, so a message can be answered while the
+session that shows it has no channel of its own. A plugin polls its network once, which makes the relay
+a singleton by construction: it is marked on its command line, sweeps its own leftover processes before
+spawning (a crashed host leaves an orphan holding the bot token, and a pristine plugin cannot clear one
+on Windows), kills its child tree on stop — the plugin is a wrapper around a grandchild, and killing
+only the wrapper leaves the grandchild holding the token — and restarts a plugin that dies while the
+channel is on, capped at five fast deaths. The manifest's bare `bun` is resolved by the relay itself,
+since the CLI's PATH is not this process's. The relay resumes itself after a window reload
+(`relay-on.json`), and the conversation it answers in is learned from the plugin's first message and
+kept (`relay-chat.json`) — that message reached the relay only through the plugin's own allowlist, and
+nothing here sees the token or the allowlist.
+
+A permission question can now be answered **from a channel**. The CLI asks the host for permission
+decisions — that is why the IDE draws the dialog at all — so the injected `canUseTool` wrapper (the
+second optional anchor in the patcher: a release without the callback takes the rest of the patch and
+says so in a `NOTE`) mirrors the question the dialog is holding, and applies whichever answer arrives
+first, in the dialog or in the channel. A channel's answers are text — `y`/`yes`/`да` allow,
+`n`/`no`/`нет` deny — the oldest outstanding question is answered first, so a burst of answers cannot
+silently approve something that was asked afterwards, and a deny carries words of its own, because the
+SDK rejects a bare one. An answer is matched to one outstanding request and nothing else; a question
+nobody answers falls through to the dialog unchanged, and one the dialog settled first leaves a line in
+the channel saying so. The waiting is visible where the channel lives: the row in **Channels…** counts
+the questions that wait, and the pill in the tab the conversation is addressed to lights for them.
+
+The conversation has an owner. The gear beside the channel's row opens its settings: the tab the
+conversation is addressed to (remembered across reloads), the model and the effort applied to that tab
+by typing the same slash commands a user would, and the provider that tab is relaunched on. A channel
+with no tab chosen still delivers — to the tab the user last typed in — and the list says so rather
+than pretending. A tab the conversation is **not** addressed to draws nothing.
+
+Sending **from** a session goes through a tool of Vannevar's own (`channel_send` in
+`runtime/mcp/agent-server.mjs`) over a file handover with a heartbeat: the bot belongs to the window,
+so a session writes its message into an outbox only the window polls, and is told "the window is not
+running the channel" instead of writing a message nobody reads. A request whose confirmation is late
+stays queued — deleting it would be the one way to lose a message that was about to go out.
+
 After **Switch provider…**, the model name beside **Switch model…** no longer names the provider the tab
 just left. It was cleared once, at the restart — but the resume replays the transcript *after* that, so
 the old provider's model went straight back in and stayed there until the new backend answered, while
@@ -146,24 +184,19 @@ directory to be resolved against, a scheme that is not http(s) never reaches the
 attachment past a dozen megabytes is refused instead of being moved. A row naming a folder — a search
 tool names one with its `path` — is revealed in the explorer rather than fed to the editor as a file.
 
-A session can now be given a plugin channel — the Telegram bridge, launched in the terminal with
-`--channels plugin:telegram@claude-plugins-official`, is the one that exists today — from a **Channels…**
-row in the command menu's *Settings* section, beside *Sign in to ChatGPT…*. The row opens the list of
-MCP servers the installed plugins declare, one row each, and starting one of them opens the channel in
-the session that is already running, the way Remote Control opens its own connection: through the
-session's `enableChannel(server)` control request, never a launch flag, which the CLI cannot see from
-this spawn — the SDK rebuilds the transport's options object without the `channels` field, though its
-argument builder reads it. Nothing here names a channel: install a plugin that declares one and it is
-in the list on the next state push, so a second channel costs no code. Nothing is started on its own,
-and a click on a channel that is already up does nothing. Each row says where it got to — `starting…`,
-then `enabled` once the CLI has taken the request, not `connected`, since whether the bridge behind it
-is live is not in that answer — or `failed` with the CLI's own words in the tooltip, which is where an
-organization's policy (`channelsEnabled`, `allowedChannelPlugins`) and a plugin that was never
-installed both show up. Channels are independent of each other: one can be running while another is
-refused. There is no way back within a session, because the CLI has no control request that turns a
-channel off, so a new session is what ends one. The anchor this rides on is the one signature in the
-patcher declared optional — a release that does not have the method the hook hangs off takes the rest of
-the patch and says so in a `NOTE`, and the list reports itself unavailable rather than doing nothing.
+**Channels…** — the row in the command menu's *Settings* section, beside *Sign in to ChatGPT…* — is
+where all of this lives, and the per-session rows are gone from it with the scheme they served: a
+session no longer loads the plugin, so "start this channel in this session" could only answer with an
+error. The list is still whatever the installed plugins declare, read off disk: nothing here names a
+channel, so installing one that declares an MCP server puts a row in the list on the next state push,
+and a second channel costs no code. Nothing is started on its own, and a click on a running channel is
+what turns it off — the switch belongs to the window, and unlike the old per-session request there is a
+way back. The host's control-request path stays, for a session that does carry a channel, and it is
+fixed: **Channels…** now sends the plugin-qualified MCP server name that Claude Code's control protocol
+actually registers (`plugin:telegram:telegram`), rather than the declaration's local key (`telegram`).
+The local key made a connected official plugin fail with `server telegram is not connected`. A server
+whose earlier startup failure is still in Claude Code's 15-minute cache is reconnected in the same live
+session before the channel is enabled, so fixing Bun, the proxy or its CA no longer requires a new tab.
 
 ## 2.1.286
 

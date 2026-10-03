@@ -1177,6 +1177,74 @@ async function prepare(params) {
     return { profile, prompt, description, mode, cwd, timeout, model, session, liveSession, bin, env, args, depth };
 }
 
+// The channel belongs to the editor window: the bot token and the poller live in the extension host,
+// and this server is a different process, so a message is handed over as a file. That is the whole
+// protocol — one request file with a name nobody else can pick, one result file this call waits for.
+// Nothing about the token crosses it, and a window that is not running is reported as such rather
+// than swallowed, because a caller that cannot tell the difference will keep writing into silence.
+const VANNEVAR_DIR = path.join(os.homedir(), '.claude', 'vannevar');
+const CHANNEL_OUTBOX = path.join(VANNEVAR_DIR, 'outbox');
+const CHANNEL_PING = path.join(VANNEVAR_DIR, 'relay.ping');
+const CHANNEL_PING_FRESH_MS = 3000;
+const CHANNEL_WAIT_MS = 15000;
+
+function channelWindowIsUp() {
+    try {
+        return Date.now() - fs.statSync(CHANNEL_PING).mtimeMs < CHANNEL_PING_FRESH_MS;
+    } catch {
+        return false;
+    }
+}
+
+async function channelSend(params) {
+    const text = typeof params?.text === 'string' ? params.text : '';
+    if (!text.trim()) throw new Error('text is required');
+    if (!channelWindowIsUp()) {
+        throw new Error(
+            'the channel is not up: no Vannevar window is running it, so nothing would deliver this. ' +
+                'Ask the user to open the editor and switch the channel on in the Channels menu.',
+        );
+    }
+    fs.mkdirSync(CHANNEL_OUTBOX, { recursive: true });
+    const id = `${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const file = path.join(CHANNEL_OUTBOX, `${id}.json`);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(
+        tmp,
+        JSON.stringify({
+            text,
+            chatId: typeof params?.chat_id === 'string' ? params.chat_id : undefined,
+            replyTo: typeof params?.reply_to === 'string' ? params.reply_to : undefined,
+            at: new Date().toISOString(),
+        }),
+        { mode: 0o600 },
+    );
+    // The rename is what makes the request visible: a half-written file never appears under the name
+    // the host polls for.
+    fs.renameSync(tmp, file);
+    const resultFile = path.join(CHANNEL_OUTBOX, `${id}.result.json`);
+    const deadline = Date.now() + CHANNEL_WAIT_MS;
+    while (Date.now() < deadline) {
+        if (fs.existsSync(resultFile)) {
+            let answer;
+            try {
+                answer = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+            } catch {
+                answer = { ok: false, error: 'unreadable answer from the window' };
+            }
+            try {
+                fs.rmSync(resultFile, { force: true });
+            } catch {}
+            if (answer.ok) return `sent: ${answer.text || 'ok'}`;
+            throw new Error(answer.error || 'the window refused the message');
+        }
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    // The request itself is left where it is: a slow send is still a send, and deleting it here would
+    // be the one way to lose a message that was about to go out.
+    return 'handed to the window, but no confirmation within 15s — check the channel is on';
+}
+
 async function execute(ctx, task) {
     const { profile, mode, cwd, timeout, model, session, bin, env, args } = ctx;
     log('run', { profile, mode, model, session: session || null, cwd, depth: ctx.depth, background: !!task });
@@ -1427,6 +1495,28 @@ async function runAgent(params) {
 
 const TOOLS = [
     {
+        name: 'channel_send',
+        description:
+            "Send a message into the channel this session is reachable through (Telegram and the like). Use it to answer whoever wrote in — the sender reads the channel, never this transcript. The channel is owned by the editor window, not by this session, so this works only while that window is open: with it closed the call reports that instead of pretending to send. Pass `chat_id` from the inbound tag; leaving it out uses the conversation the window last heard from.",
+        inputSchema: {
+            type: 'object',
+            properties: {
+                text: { type: 'string', description: 'The message body, as plain text.' },
+                chat_id: {
+                    type: 'string',
+                    description:
+                        'The chat to send to, taken from the inbound message tag. Omit to answer the conversation the window last heard from.',
+                },
+                reply_to: {
+                    type: 'string',
+                    description: 'Message id to thread under, when answering an earlier message.',
+                },
+            },
+            required: ['text'],
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'list_profiles',
         description:
             'List the provider profiles a delegated agent can run under: name, endpoint, the model each family alias maps to, the prefix cache lifetime it declares, and how the provider answered the last time it was called — including when a spent quota resets. Call this before run_agent when unsure which profile names exist, or when one has been refusing.',
@@ -1557,6 +1647,7 @@ async function callTool(name, args) {
         const health = readJson(HEALTH_FILE) || {};
         return names.map((p) => describeProfile(p, now, health)).join('\n');
     }
+    if (name === 'channel_send') return channelSend(params);
     if (name === 'run_agent') return runAgent(params);
     if (name === 'check_agent') return checkAgent(params);
     if (name === 'stop_agent') return stopAgent(params);
