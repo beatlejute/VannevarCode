@@ -416,6 +416,28 @@ function crossesProvider(profile) {
     return CREDENTIAL_KEYS.some((k) => k in env);
 }
 
+// The editor's own process.env is not the whole environment: the corporate proxy usually lives in
+// VSCodium's `claudeCode.environmentVariables`, which the CLI's spawn applies (Dm() in the bundle)
+// and nothing else does. Everything this host starts whose connections leave the machine — the local
+// provider adapter and the channel relay — is spawned here, so the setting is merged the same way
+// the CLI merges it: a null value is an empty one, and anything that is not a name/value entry is
+// skipped. With no readable setting the environment passes through by identity.
+function editorEnv() {
+    let env = process.env;
+    try {
+        const configured = vscode.workspace.getConfiguration('claudeCode').get('environmentVariables');
+        if (Array.isArray(configured)) {
+            env = Object.assign({}, process.env);
+            for (const entry of configured) {
+                if (entry && typeof entry.name === 'string') env[entry.name] = entry.value == null ? '' : String(entry.value);
+            }
+        }
+    } catch (e) {
+        dlog('editor env from settings failed', (e && e.message) || String(e));
+    }
+    return env;
+}
+
 const PROXY_SCRIPT = path.join(DIR, 'proxy', 'server.mjs');
 
 function localProxyPort(profile) {
@@ -450,7 +472,7 @@ async function ensureProxy(profile) {
         const child = spawn(process.execPath, ['--use-env-proxy', PROXY_SCRIPT, '--port', String(port)], {
             detached: true,
             stdio: 'ignore',
-            env: { ...process.env, ...extraEnv, ELECTRON_RUN_AS_NODE: '1' },
+            env: { ...editorEnv(), ...extraEnv, ELECTRON_RUN_AS_NODE: '1' },
         });
         child.unref();
         dlog('proxy spawned', { port, profile });
@@ -2853,21 +2875,10 @@ function startChannelRelay(server) {
     if (!candidate) return { ok: false, error: 'no installed plugin declares ' + server };
     const command = relayCommandFor(candidate.dir);
     if (!command) return { ok: false, error: 'the plugin declares no command to start' };
-    // The editor's own env is what everything here inherits — plus the variables the user set for
-    // Claude Code in VSCodium's settings (`claudeCode.environmentVariables`): a corporate proxy lives
-    // there, and a relay posting to a chat API without it posts into a network that eats the packets.
-    let relayEnv = process.env;
-    try {
-        const configured = vscode.workspace.getConfiguration('claudeCode').get('environmentVariables');
-        if (Array.isArray(configured)) {
-            relayEnv = Object.assign({}, process.env);
-            for (const entry of configured) {
-                if (entry && typeof entry.name === 'string') relayEnv[entry.name] = entry.value == null ? '' : String(entry.value);
-            }
-        }
-    } catch (e) {
-        dlog('relay env from settings failed', (e && e.message) || String(e));
-    }
+    // The editor's own env plus `claudeCode.environmentVariables` (see editorEnv): a corporate proxy
+    // lives in the setting, and a relay posting to a chat API without it posts into a network that
+    // eats the packets.
+    const relayEnv = editorEnv();
     const relay = new module_.ChannelRelay({
         command: command.command,
         args: command.args,
@@ -3099,6 +3110,7 @@ module.exports = {
     renderScript,
     attachPanel,
     envFor,
+    editorEnv,
     onChannelReady,
     wrapCanUseTool,
     startChannelRelay,

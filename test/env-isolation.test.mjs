@@ -44,21 +44,22 @@ process.env.USERPROFILE = home;
 const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const warnings = [];
+// Mutable on purpose: the workspace half is filled in later, when the editorEnv section needs it —
+// host.js keeps the object this returns, so a late property still reaches it.
+const vscodeStub = {
+    Uri: { file: (p) => ({ fsPath: p }) },
+    window: { showWarningMessage: (m) => warnings.push(m), showErrorMessage: () => {} },
+};
 const load = Module._load;
-Module._load = (request, ...rest) =>
-    request === 'vscode'
-        ? {
-              Uri: { file: (p) => ({ fsPath: p }) },
-              window: { showWarningMessage: (m) => warnings.push(m), showErrorMessage: () => {} },
-          }
-        : load(request, ...rest);
+Module._load = (request, ...rest) => (request === 'vscode' ? vscodeStub : load(request, ...rest));
 
 const copy = join(tmpdir(), `ccx-host-env-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
 
 let envFor;
+let editorEnv;
 try {
-    ({ envFor } = require(copy));
+    ({ envFor, editorEnv } = require(copy));
 } finally {
     rmSync(copy, { force: true });
 }
@@ -156,6 +157,40 @@ assert.equal(envFor(ambient, 'sess-second').ANTHROPIC_AUTH_TOKEN, 'sk-ant-second
 // A default that names a profile nobody has any more is dropped, and the environment passes through.
 writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'gone' }));
 assert.strictEqual(envFor(ambient, 'sess-other'), ambient, 'a stale default must not be applied');
+
+// editorEnv() is what the host's own network children are spawned with — the local provider adapter
+// and the channel relay. The CLI gets `claudeCode.environmentVariables` from its own spawn (Dm()), but
+// a child of the extension host sees only process.env, so the setting has to be merged here: without
+// it the adapter's calls to the provider go out directly, which is exactly what a corporate proxy or
+// a blocked address makes unusable. With nothing readable, the environment passes through untouched.
+assert.strictEqual(editorEnv(), process.env, 'with no readable setting the environment must pass through by identity');
+
+let configuredEnv;
+vscodeStub.workspace = {
+    getConfiguration: () => ({ get: (key) => (key === 'environmentVariables' ? configuredEnv : undefined) }),
+};
+configuredEnv = [
+    { name: 'HTTPS_PROXY', value: 'http://proxyuser:secret@132.243.28.193:45871' },
+    { name: 'ALL_PROXY', value: '' },
+    { name: 42, value: 'garbage' },
+    null,
+];
+// A machine may legitimately carry HTTPS_PROXY of its own — the merge must leave that value alone.
+const ambientProxy = process.env.HTTPS_PROXY;
+const merged = editorEnv();
+assert.equal(merged.HTTPS_PROXY, 'http://proxyuser:secret@132.243.28.193:45871', 'the proxy from settings must reach the host’s spawned children');
+assert.equal(merged.ALL_PROXY, '', 'an empty value in settings is a real empty value, not a skip');
+assert.ok(!('garbage' in merged), 'an entry without a string name is not a variable');
+assert.ok(merged !== process.env, 'the merge must copy, never mutate the editor’s own environment');
+assert.equal(process.env.HTTPS_PROXY, ambientProxy, 'the merge must not leak back into the extension host’s environment');
+
+// The wiring: both spawn sites that talk to the network go through the helper, and the ChatGPT
+// sign-in — which reads its proxy variables once at startup — merges the setting itself.
+const hostSource = readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8');
+assert.match(hostSource, /\{\s*\.\.\.editorEnv\(\),\s*\.\.\.extraEnv,/, 'the local adapter must be spawned with the merged environment');
+assert.match(hostSource, /const relayEnv = editorEnv\(\);/, 'the channel relay must be started with the merged environment');
+const signinSource = readFileSync(new URL('../runtime/chatgpt-signin.js', import.meta.url), 'utf8');
+assert.match(signinSource, /getConfiguration\('claudeCode'\)\.get\('environmentVariables'\)/, 'the ChatGPT sign-in must see the setting as well');
 
 rmSync(home, { recursive: true, force: true });
 console.log('\nOK — credentials do not cross a provider change');

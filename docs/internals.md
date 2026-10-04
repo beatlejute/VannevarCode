@@ -40,6 +40,8 @@ The extension embeds **Claude Agent SDK 0.3.232** (the same version published on
 
 The environment comes from `Dm()` (line 139477): `process.env` plus the `claudeCode.environmentVariables` setting. **It is frozen at spawn time** — a provider cannot be swapped inside a live process, the channel has to restart.
 
+The host's own network children read the same setting: the local provider adapter and the channel relay are spawned from the extension host, whose `process.env` the setting is not part of, so `editorEnv()` in `runtime/host.js` merges it for them (and the ChatGPT sign-in merges it itself) — otherwise the adapter's calls to the provider go out directly, which is what a corporate proxy exists to prevent.
+
 The assignment, minified, is injection point #3 (line 138215 formatted):
 
 ```js
