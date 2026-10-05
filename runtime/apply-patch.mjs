@@ -494,11 +494,11 @@ const PATCHES = [
         // may come from, never a second decision.
         file: 'extension.js',
         optional: true,
-        find: /canUseTool:([\w$]+),onUserDialog:([\w$]+)/,
-        replace: (_found, canUse, dialog) =>
-            `canUseTool:(()=>{try{` +
+        find: /async spawnClaude\(([\w$]+),([\w$]+),([\s\S]{0,6000}?)canUseTool:([\w$]+),onUserDialog:([\w$]+)/,
+        replace: (_found, channel, resume, middle, canUse, dialog) =>
+            `async spawnClaude(${channel},${resume},${middle}canUseTool:(()=>{try{` +
             HOST_REQUIRE +
-            `let __w=require(__p).wrapCanUseTool;return __w?__w(${canUse},{}):${canUse}}catch(__e){return ${canUse}}})(),onUserDialog:${dialog}`,
+            `let __w=require(__p).wrapCanUseTool;return __w?__w(${canUse},{channelId:${channel}}):${canUse}}catch(__e){return ${canUse}}})(),onUserDialog:${dialog}`,
         where: 'replace',
     },
 ];

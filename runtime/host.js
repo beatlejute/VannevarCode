@@ -2762,6 +2762,12 @@ function relayRememberChat(message) {
 
 // The webview a bound session id points at, or none: a session that has closed its tab no longer
 // has a webview, and the message then falls to the last active one.
+function findWebviewByChannel(channelId) {
+    if (!channelId) return null;
+    for (const webview of S.webviews || []) if (webview.__ccxChannelId === channelId) return webview;
+    return null;
+}
+
 function findWebviewBySession(sessionId) {
     for (const webview of S.webviews || []) if (webview.__ccxSessionId === sessionId) return webview;
     return null;
@@ -2997,6 +3003,7 @@ function stopChannelRelay() {
 // that draws the dialog; this only adds a second place the same question can be answered from, and
 // resolves with whichever answers first.
 function wrapCanUseTool(inner, context) {
+    const channelId = context && typeof context.channelId === 'string' ? context.channelId : null;
     return async function (toolName, input, options) {
         const state = relayState();
         const chat = state.chatId;
@@ -3034,7 +3041,16 @@ function wrapCanUseTool(inner, context) {
         // lines. The full object stays in the debug log for when the difference matters.
         const human = readableInput(toolName, input);
         dlog('canUseTool input', toolName, human);
-        state.relay.sendPermissionRequest(shortId, toolName, human, human);
+        // The card names the tab the question came from — with several tabs asking, "Bash" alone
+        // does not say which conversation is waiting.
+        const askedIn = findWebviewByChannel(channelId);
+        const tabName = askedIn && askedIn.__ccxTitle ? askedIn.__ccxTitle : null;
+        state.relay.sendPermissionRequest(
+            shortId,
+            tabName ? `${toolName} · ${tabName}` : toolName,
+            human,
+            human,
+        );
         const answer = await Promise.race([inner(toolName, input, options), fromChannel]);
         state.pending.delete(shortId);
         // A deny needs words of its own — the SDK rejects a bare one, and "invalid permission result"
