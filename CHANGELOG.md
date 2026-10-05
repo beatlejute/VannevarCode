@@ -5,28 +5,6 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## 2.1.289
-
-Verified against Claude Code **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**,
-**2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
-
-The held model indicator lost it in two places, and both put the old provider's model back beside the
-new provider's badge. The first is the restart itself: it re-mounts the conversation, and the page's
-next look at the command registry hands over a fresh session object — with a plain, readable
-`lastServedModel` of its own — while the hold still guards the slot of the object that was just
-discarded. The resume replay writes straight into the unguarded slot. A hold now moves across with the
-swap: same identity, same seen-set, a fresh bag taken off the new slot and emptied of whatever the
-replay had already written there.
-
-The second is the window. A switch made while the page was closed or reloaded leaves nothing behind —
-the hold died with the page — so the very first state push finds the transcript already naming the
-previous provider's model, and the label sits there for as long as the tab then sits idle. The page
-cannot know a switch happened, but it can compare the model the replay wrote against the active
-profile's own list: a model the profile never offered makes the load the tail end of a switch, and the
-indicator is held until the active backend answers for itself. A tier alias resolves against whichever
-profile is active and can never be foreign, `<synthetic>` is a notice rather than a model, and where
-the host sends no model list — the stock claude profile — there is no verdict and no hold.
-
 ## 2.1.288
 
 Verified against Claude Code **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**,
