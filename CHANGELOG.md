@@ -5,6 +5,18 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.289
+
+Verified against Claude Code **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**,
+**2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.289 takes all twenty-two current hooks unchanged: seven in `extension.js` and fifteen
+in the webview. Both patched bundles pass the syntax check.
+
+The model picker resolves family aliases against the active profile instead of displaying the previous
+provider's cached label. Delegated-agent rows also name the model, using the served model once known
+and the requested alias before the first response.
+
 ## 2.1.288
 
 Verified against Claude Code **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**,

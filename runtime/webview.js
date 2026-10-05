@@ -116,8 +116,36 @@
         }
     }
 
+    // The stock label reads config and history, both of which may still belong to the old provider.
+    // Resolve the displayed model against the active profile without changing the CLI's selection.
+    function modelLabel(stock, session) {
+        if (!state.models) return stock;
+        var selected = session && session.modelSelection && session.modelSelection.value;
+        var key = typeof selected === 'string' ? selected.toLowerCase().replace(/\[1m\]$/i, '') : 'opus';
+        if (key === 'default' || key === 'auto') key = 'opus';
+        if (state.models[key]) return state.models[key];
+        // An explicit model need not belong to the profile's four family aliases.
+        if (selected && !/^claude-/i.test(selected)) return selected;
+        return state.models.opus || undefined;
+    }
+
+    function syncModelAction() {
+        if (!registry || !registry.sections || !jsx || !state.models) return;
+        var rows = registry.sections.get('Model') || [];
+        var row = rows.find(function (r) { return r.id === 'model'; });
+        var handler = registry.commandActions && registry.commandActions.get('model');
+        if (!row || !handler) return;
+        var label = modelLabel(undefined, sessionObj);
+        var props = row.trailingComponent && row.trailingComponent.props;
+        var updated = Object.assign({}, row, {
+            trailingComponent: label ? jsx('span', Object.assign({}, props || {}, { children: label })) : undefined,
+        });
+        registry.registerAction(updated, 'Model', handler);
+    }
+
     function syncAction() {
         if (!registry) return;
+        syncModelAction();
         var trailing = jsx && state.active
             ? jsx('span', { className: 'ccx-prov-tag', children: state.active })
             : undefined;
@@ -1748,15 +1776,15 @@
         return { text: text, isError: value.is_error === true };
     }
 
-    // The row says which provider a run went out on; the app's own rows have no need to.
-    function mapLabel(profile, description, prompt) {
+    // The row names the provider and model; once answered, the transcript's model replaces the alias.
+    function mapLabel(profile, model, description, prompt) {
         var text = typeof description === 'string' ? description.trim() : '';
         if (!text && typeof prompt === 'string') {
             var lines = prompt.split('\n');
             for (var i = 0; i < lines.length && !text; i++) text = lines[i].trim();
             if (text.length > 80) text = text.slice(0, 79) + '…';
         }
-        return (profile ? profile + ' · ' : '') + (text || 'agent');
+        return [profile, model, text || 'agent'].filter(Boolean).join(' · ');
     }
 
     function mapStatus(state) {
@@ -1806,7 +1834,7 @@
             taskId: taskId,
             toolUseId: toolUseId,
             parentToolUseId: parentToolUseId,
-            description: mapLabel(run.profile, run.description, run.prompt),
+            description: mapLabel(run.profile, run.servedModel || run.model, run.description, run.prompt),
             prompt: run.prompt || undefined,
             // The card prints this beside the status. The model the transcript says answered, not the
             // alias the run asked for — the profile decides what `sonnet` means.
@@ -1844,7 +1872,7 @@
             taskId: MAP_PREFIX + call.block.id,
             toolUseId: call.block.id,
             parentToolUseId: call.parent,
-            description: mapLabel(input.profile, input.description, input.prompt),
+            description: mapLabel(input.profile, typeof input.model === 'string' ? input.model : undefined, input.description, input.prompt),
             prompt: typeof input.prompt === 'string' ? input.prompt : undefined,
             subagentType: typeof input.model === 'string' ? input.model : undefined,
             isBackgrounded: input.background === true,
@@ -4954,6 +4982,7 @@
     }
 
     window.__ccx = {
+        modelLabel: modelLabel,
         onRegistry: function (host, jsxFactory, session) {
             // The session is refreshed even when the rest is already wired: this hook fires on every
             // re-registration, and only the first one gets past the guard below. A refresh that swaps

@@ -129,10 +129,11 @@ const PATCHES = [
         // and a minified expression cannot contain a `;`, so the anchor after it cannot be overshot.
         file: 'webview/index.js',
         find: /let ([\w$]+)=([\w$]+)\.modelSelection\.value,([\w$]+)=[\w$]+\(\2\.claudeConfig\.value\),([\w$]+)=[\w$]+\([^;]*?,\2\.lastServedModel\.value,\3\);([\w$]+)\.commandRegistry\.registerAction\(\{id:"model",label:"Switch model…",description:"Change the AI model",trailingComponent:\4\?([\w$]+)\("span"/,
-        replace: (found, _sel, session, _cfg, _label, ctx, jsx) =>
+        replace: (found, _sel, session, _cfg, label, ctx, jsx) =>
             found.replace(
                 `${ctx}.commandRegistry.registerAction({id:"model"`,
                 `(globalThis.__ccx&&globalThis.__ccx.onRegistry&&globalThis.__ccx.onRegistry(${ctx},${jsx},${session})),` +
+                    `${label}=globalThis.__ccx&&globalThis.__ccx.modelLabel?globalThis.__ccx.modelLabel(${label},${session}):${label},` +
                     `${ctx}.commandRegistry.registerAction({id:"model"`,
             ),
         where: 'replace',

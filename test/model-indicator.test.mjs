@@ -75,13 +75,32 @@ function makePage(session) {
     vm.runInContext(source, context);
     const ccx = context.window.__ccx;
     assert.ok(typeof ccx.onRegistry === 'function', 'page did not install window.__ccx');
+    const handler = () => {};
+    const modelRow = { id: 'model', label: 'Switch model…', trailingComponent: { props: { className: 'stock-model', children: 'stale' } } };
+    const registry = {
+        sections: new Map([['Model', [modelRow]]]),
+        commandActions: new Map([['model', handler]]),
+        registerAction(row, section, action) {
+            const rows = this.sections.get(section) || [];
+            const index = rows.findIndex((r) => r.id === row.id);
+            if (index < 0) rows.push(row);
+            else rows[index] = row;
+            this.sections.set(section, rows);
+            this.commandActions.set(row.id, action);
+        },
+        subscribe() {}, executeCommand() {},
+    };
     const host = {
-        commandRegistry: { registerAction() {}, subscribe() {}, executeCommand() {}, commandActions: new Map() },
+        commandRegistry: registry,
         comms: { connection: { value: {} } },
     };
-    ccx.onRegistry(host, () => null, session);
+    ccx.onRegistry(host, (type, props) => ({ type, props }), session);
     return {
         pushState: (d) => listener({ data: { type: 'ccx:state', ...d } }),
+        modelLabel: (stock) => ccx.modelLabel(stock, session),
+        modelRow: () => registry.sections.get('Model').find((r) => r.id === 'model'),
+        modelHandler: () => registry.commandActions.get('model'),
+        originalHandler: handler,
         ioMessage: () => listener({ data: { type: 'from-extension', message: { type: 'io_message', channelId: 'ch1', message: { type: 'assistant' } } } }),
     };
 }
@@ -164,4 +183,26 @@ const CODEX_MODELS = { opus: 'gpt-6.1-sol', sonnet: 'gpt-6-luna', haiku: 'gpt-6-
     }
 }
 
-console.log('\nOK — a load replaying a foreign model holds the indicator until the active backend answers');
+// A stale config label must not survive a profile switch, even with an empty served slot.
+{
+    const session = {
+        messages: { value: [] }, busy: { value: false },
+        modelSelection: { value: 'sonnet' }, lastServedModel: { value: undefined }, send() {},
+    };
+    const page = makePage(session);
+    page.pushState({ active: 'codex', models: CODEX_MODELS });
+    assert.equal(page.modelLabel('GLM-5.3-Flash[1m]'), 'gpt-6-luna');
+    assert.equal(page.modelRow().trailingComponent.props.children, 'gpt-6-luna');
+    assert.equal(page.modelRow().trailingComponent.props.className, 'stock-model');
+    assert.equal(page.modelHandler(), page.originalHandler, 'the model picker handler must stay unchanged');
+    session.modelSelection.value = 'fable';
+    assert.equal(page.modelLabel('GLM-5.3-Flash[1m]'), 'gpt-6.1-sol');
+    page.pushState({ active: 'glm', models: GLM_MODELS });
+    assert.equal(page.modelLabel('gpt-6.1-sol'), 'glm-5.3[1m]');
+    session.modelSelection.value = 'custom-model';
+    assert.equal(page.modelLabel('old-model'), 'custom-model');
+    page.pushState({ active: 'claude', models: null });
+    assert.equal(page.modelLabel('Claude Opus'), 'Claude Opus');
+}
+
+console.log('\nOK — the model indicator resolves aliases against the active profile');

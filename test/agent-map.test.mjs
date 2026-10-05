@@ -330,7 +330,7 @@ const mine = entry('ccx:toolu_live');
 assert.ok(mine, 'a run_agent call with a live run gets an entry, keyed by its call');
 assert.equal(mine.toolUseId, 'toolu_live', 'the tool_use id is what the map selects an agent by');
 assert.equal(mine.parentToolUseId, null, 'a call the main agent made sits at the top');
-assert.equal(mine.description, 'deepseek · Review host', 'the row names the provider and the label');
+assert.equal(mine.description, 'deepseek · deepseek-v4-pro · Review host', 'the row names the provider, served model and label');
 assert.equal(mine.status, 'working');
 assert.equal(mine.subagentType, 'deepseek-v4-pro', 'the card names the model that answered, not the alias');
 assert.equal(mine.usage.totalTokens, 41000);
@@ -338,7 +338,7 @@ assert.equal(mine.startTime, liveRun.startedAt);
 assert.equal(mine.endTime, undefined, 'a working run has no end yet');
 
 assert.equal(entry('ccx:toolu_under_native').parentToolUseId, 'toolu_native', 'a call a subagent made hangs under that subagent');
-assert.equal(entry('ccx:toolu_under_native').description, 'codex · count the tests', 'with no label the first line of the prompt stands in');
+assert.equal(entry('ccx:toolu_under_native').description, 'codex · deepseek-v4-pro · count the tests', 'with no label the first line of the prompt stands in');
 
 const orphanEntry = entry('ccx:run:' + orphan.session);
 assert.ok(orphanEntry, "a run this tab's session owns is shown even with no call to explain it");
@@ -351,6 +351,7 @@ assert.equal(old.status, 'finished', 'a call with no run left is built from its 
 assert.equal(old.result, 'the old answer', "the answer, without the server's report under it");
 assert.equal(old.ccxSession, '12345678-aaaa-bbbb-cccc-1234567890ab', 'the report still names the transcript');
 assert.equal(old.subagentType, 'opus');
+assert.equal(old.description, 'gemini · opus · an old question', 'without a manifest the row keeps the model from the call');
 
 // Nothing changed, nothing written: a write re-renders, and a re-render is the next pass.
 const before = writes;
@@ -381,6 +382,12 @@ assert.ok(!entry('ccx:run:' + orphan.session), 'a run whose manifest is gone and
 fromHost({ type: 'ccx:agentRuns', runs: [{ ...liveRun, state: 'timeout', finishedAt: now, error: null }] });
 assert.equal(entry('ccx:toolu_live').status, 'failed', 'a run killed on its timeout failed');
 assert.match(entry('ccx:toolu_live').error, /time ran out/);
+
+// Before the first answer only the requested model is known; an unknown model is left out.
+fromHost({ type: 'ccx:agentRuns', runs: [{ ...liveRun, servedModel: undefined }] });
+assert.equal(entry('ccx:toolu_live').description, 'deepseek · sonnet · Review host');
+fromHost({ type: 'ccx:agentRuns', runs: [] });
+assert.equal(entry('ccx:toolu_live').description, 'deepseek · Review host');
 
 // --- the card's buttons ----------------------------------------------------------------------------
 
