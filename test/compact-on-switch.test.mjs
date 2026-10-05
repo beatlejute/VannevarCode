@@ -243,6 +243,31 @@ session.lastServedModel.value = 'gpt-6-astra';
 byChannel({ type: 'io_message', channelId: 'ch1', message: { type: 'assistant' } });
 assert.equal(session.lastServedModel.value, 'gpt-6-astra', 'the new backend answer must end the hold');
 
+// 9b. The relaunch re-mounts the conversation: onRegistry hands over a NEW session object, and the
+//     replay writes the old provider's model into THAT object's slot while the hold still guards the
+//     discarded one. The hold has to move across with the swap, and the new backend's answer must end
+//     it through the slot it guards now.
+reset();
+session.messages.value = [{ type: 'user', uuid: 'u-old' }, { type: 'assistant', uuid: 'a-old' }];
+session.lastServedModel.value = 'deepseek-v4-pro';
+fromHost({ type: 'ccx:applied', name: 'openai', sessionId: 'sess-1' });
+offerBar().children.find((c) => c.tagName === 'button' && /as is/.test(c.textContent)).onclick();
+completeRestart();
+const session2 = {
+    messages: { value: [{ type: 'user', uuid: 'u-old' }, { type: 'assistant', uuid: 'a-old' }] },
+    busy: { value: false },
+    lastServedModel: { value: undefined },
+    send: (text) => sends.push(text),
+};
+ccx.onRegistry(host, () => null, session2);
+// the resume replay writes the previous provider's model into the fresh slot, exactly as the app does
+session2.lastServedModel.value = 'deepseek-v4-pro';
+assert.equal(session2.lastServedModel.value, undefined, 'a live hold must follow the session object the relaunch swapped in');
+session2.messages.value.push({ type: 'assistant', uuid: 'a-new' });
+session2.lastServedModel.value = 'gpt-6.1-sol';
+byChannel({ type: 'io_message', channelId: 'ch1', message: { type: 'assistant' } });
+assert.equal(session2.lastServedModel.value, 'gpt-6.1-sol', 'the new backend answer must end the hold on the replaced session');
+
 // 10. The wiring itself: the patcher must hand the session to onRegistry, and the page must take it
 //    from there rather than from the context object. Read off the sources, because a mismatch between
 //    the two is exactly the failure this file exists to catch and it is invisible at runtime — the

@@ -4761,10 +4761,52 @@
         }
     }
 
+    // The hold belongs to the switch, not to the session it was installed on. A relaunch re-mounts the
+    // conversation, and a fresh session object — a plain, readable lastServedModel included — takes the
+    // old one's place, straight into which the resume replay then writes the previous provider's model;
+    // the held slot by then guards an object nothing reads any more. So a live hold moves across: the
+    // same identity and seen-set, a fresh bag taken off the new slot and emptied of whatever the replay
+    // had already written there.
+    function reholdServedModelSlot() {
+        var held = servedModelHold;
+        if (!held) return;
+        var real = holdServedModelSlot(held);
+        if (real) held.real = real;
+        forgetServedModel();
+    }
+
     function trackServedProfile(active) {
-        if (servedProfileSeen !== null && (active || null) !== servedProfileSeen) armServedModelHold();
+        var first = servedProfileSeen === null;
+        if (!first && (active || null) !== servedProfileSeen) armServedModelHold();
         servedProfileSeen = active || null;
+        // A first push is a load, not a switch — but a load whose replay already names a model this
+        // profile never served is the tail end of one: the switch happened while this page was closed
+        // or reloaded, and the hold died with it. Arm it again, so the label waits for a model the
+        // active profile could actually have served instead of naming the previous one all day.
+        if (first && servedModelIsForeign()) armServedModelHold();
         releaseServedModelHold();
+    }
+
+    // The one fact the page has to go on: the model the replay wrote, against the active profile's own
+    // list. The comparison folds case and the [1m] window suffix, because the transcript records what
+    // the backend answered ("GLM-5.3-Flash") while the profile names what is requested
+    // ("GLM-5.3-Flash[1m]"). A tier alias resolves against whichever profile is active and cannot be
+    // foreign; "<synthetic>" is a notice, not a model; with no list from the host there is no verdict.
+    function servedModelIsForeign() {
+        var s = activeSession();
+        var slot = s && s.lastServedModel;
+        var served = slot && 'value' in slot ? slot.value : undefined;
+        if (typeof served !== 'string' || !served) return false;
+        if (/^(opus|sonnet|haiku|fable)$|^<synthetic>$/i.test(served)) return false;
+        var models = state.models;
+        if (!models) return false;
+        var norm = function (m) { return String(m).replace(/\[1m\]$/i, '').toLowerCase(); };
+        var target = norm(served);
+        var tiers = ['opus', 'sonnet', 'haiku', 'fable'];
+        for (var i = 0; i < tiers.length; i++) {
+            if (models[tiers[i]] && norm(models[tiers[i]]) === target) return false;
+        }
+        return true;
     }
 
     function canCompact() {
@@ -4914,8 +4956,12 @@
     window.__ccx = {
         onRegistry: function (host, jsxFactory, session) {
             // The session is refreshed even when the rest is already wired: this hook fires on every
-            // re-registration, and only the first one gets past the guard below.
+            // re-registration, and only the first one gets past the guard below. A refresh that swaps
+            // in a different object is a relaunch re-mounting the conversation, and a live hold has to
+            // move across with it — the fresh session brought an unguarded slot with it.
+            var swapped = !!(session && sessionObj && session !== sessionObj);
             if (session) sessionObj = session;
+            if (swapped) reholdServedModelSlot();
             if (registry || !host || !host.commandRegistry) return;
             ctx = host;
             registry = host.commandRegistry;
