@@ -33,6 +33,7 @@ const LOG_FILE = path.join(RUNTIME, 'extension.log');
 
 const CLAUDE_EXTENSION_ID = 'anthropic.claude-code';
 const MCP_SERVER_NAME = 'vannevar';
+const LEGACY_MCP_SERVER_NAME = 'vannevar-agents';
 
 function log(text) {
     try {
@@ -228,17 +229,45 @@ function runClaude(bundle, args) {
     });
 }
 
-async function mcpRegistered(bundle) {
+async function mcpRegistrations(bundle) {
     const list = await runClaude(bundle, ['mcp', 'list']);
-    return new RegExp(`^${MCP_SERVER_NAME}\\b`, 'm').test(list.out);
+    if (!list.ok) {
+        log(`mcp list → FAILED\n${list.out}`);
+        return null;
+    }
+    return {
+        current: new RegExp(`^${MCP_SERVER_NAME}:`, 'm').test(list.out),
+        legacy: new RegExp(`^${LEGACY_MCP_SERVER_NAME}:`, 'm').test(list.out),
+    };
+}
+
+async function finishMcpRegistration(bundle, registrations) {
+    if (registrations.legacy) {
+        const removed = await runClaude(bundle, ['mcp', 'remove', LEGACY_MCP_SERVER_NAME, '--scope', 'user']);
+        log(`mcp legacy remove → ${removed.ok ? 'ok' : 'FAILED'}\n${removed.out}`);
+        if (!removed.ok) {
+            // Even an explicit repair may have started with a current receipt. Leave activation a
+            // reason to retry instead of recording a completed migration with both entries still live.
+            fs.rmSync(MCP_RECEIPT, { force: true });
+            return false;
+        }
+    }
+    writeJson(MCP_RECEIPT, { server: MCP_SERVER_NAME, registeredAt: new Date().toISOString() });
+    return true;
 }
 
 // `mcp add` refuses a name that already exists, so a re-register drops the old entry first. A missing
 // entry makes remove fail, which is the normal first-install path and not an error.
-async function registerMcp(bundle, { explicit }) {
+async function registerMcp(bundle, { explicit, registrations }) {
     const server = mcpServerPath();
     if (!fs.existsSync(server)) {
         if (explicit) vscode.window.showWarningMessage(`Vannevar: the runtime is not installed — no ${server}.`);
+        return false;
+    }
+
+    registrations = registrations || (await mcpRegistrations(bundle));
+    if (!registrations) {
+        if (explicit) vscode.window.showWarningMessage('Vannevar: listing MCP registrations failed.');
         return false;
     }
 
@@ -267,6 +296,12 @@ async function registerMcp(bundle, { explicit }) {
             vscode.window
                 .showWarningMessage(`Vannevar: registering "${MCP_SERVER_NAME}" failed.`, 'Show log')
                 .then((choice) => choice === 'Show log' && showLog());
+        return false;
+    }
+
+    if (!(await finishMcpRegistration(bundle, registrations))) {
+        if (explicit)
+            vscode.window.showWarningMessage(`Vannevar: registered "${MCP_SERVER_NAME}", but removing "${LEGACY_MCP_SERVER_NAME}" failed.`);
         return false;
     }
 
@@ -385,14 +420,16 @@ function loginChatgpt() {
 // "run this on another provider" tool is, the extension is what the user installed to get it, and a
 // dialog about a registration nobody can act on without reading the README is worse than the fact.
 //
-// The receipt beside the runtime is what keeps this from spawning the CLI on every window: the answer
-// only ever changes when someone unregisters the server by hand, and the command is there for that.
+// The receipt beside the runtime keeps this from spawning the CLI on every window. An old server
+// name is not a completed registration: add the current entry before removing the legacy one.
 async function ensureMcp(bundle) {
-    if (fs.existsSync(MCP_RECEIPT)) return;
+    const receipt = readJson(MCP_RECEIPT);
+    if (receipt && receipt.server === MCP_SERVER_NAME) return;
     try {
-        const already = await mcpRegistered(bundle);
-        const ok = already || (await registerMcp(bundle, { explicit: false }));
-        if (ok) writeJson(MCP_RECEIPT, { server: MCP_SERVER_NAME, registeredAt: new Date().toISOString() });
+        const registrations = await mcpRegistrations(bundle);
+        if (!registrations) return;
+        if (registrations.current) await finishMcpRegistration(bundle, registrations);
+        else await registerMcp(bundle, { explicit: false, registrations });
     } catch (e) {
         log(`mcp registration failed: ${e && e.message}`);
     }
@@ -489,5 +526,5 @@ module.exports = {
     activate,
     deactivate,
     // The activation test drives these directly, with `vscode` and $HOME both stubbed
-    __test: { sync, syncRuntime, claudeBundle, runPatcher, RUNTIME },
+    __test: { sync, syncRuntime, claudeBundle, runPatcher, ensureMcp, RUNTIME },
 };

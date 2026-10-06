@@ -31,6 +31,7 @@ const SELF = path.join(EXTENSIONS, `beatlejute.vannevarcode-${PKG.version}`);
 const RUNTIME = path.join(HOME, '.claude', 'vannevar');
 const PROFILES = path.join(HOME, '.claude', 'profiles');
 const STAMP = path.join(RUNTIME, 'patch-version.json');
+const MCP_RECEIPT = path.join(RUNTIME, 'mcp-registered.json');
 
 rmSync(HOME, { recursive: true, force: true });
 
@@ -120,7 +121,7 @@ function execFileStub(file, args, options, callback) {
         stampReady: existsSync(STAMP),
         asNode: options && options.env ? options.env.ELECTRON_RUN_AS_NODE : undefined,
     });
-    const result = isPatcher ? patcherResult : claudeResult;
+    const result = isPatcher ? patcherResult : typeof claudeResult === 'function' ? claudeResult(args) : claudeResult;
     setImmediate(() => done(result.code ? Object.assign(Error('exit'), { code: result.code }) : null, result.stdout || '', ''));
     return { on() {} };
 }
@@ -253,6 +254,76 @@ try {
     assert.ok(add.args.at(-1).endsWith('agent-server.mjs'), 'the registration does not point at the server');
     assert.ok(add.args.includes('user'), 'the server was not registered at user scope');
     console.log('OK — the MCP entry carries ELECTRON_RUN_AS_NODE, at user scope, pointing at the runtime copy');
+
+    // --- legacy registrations migrate without risking the working entry ---------------------------
+    // Await the same helper activation calls, with the CLI and home directory still stubbed.
+    const syncMcp = { run: () => extension.__test.ensureMcp(BUNDLE) };
+    const installMcp = context.subscriptions.find((s) => s.id === 'vannevar.installMcp');
+    const mcpCalls = () => spawns.filter((s) => s.args[0] === 'mcp').map((s) => s.args);
+    const receiptServer = () => JSON.parse(readFileSync(MCP_RECEIPT, 'utf8')).server;
+    patcherResult = { code: 0, stdout: 'ccx-result: up-to-date\n' };
+
+    for (const receipt of [JSON.stringify({ server: 'vannevar-agents' }), null, '{broken']) {
+        reset();
+        if (receipt === null) rmSync(MCP_RECEIPT, { force: true });
+        else writeFileSync(MCP_RECEIPT, receipt);
+        claudeResult = (args) => ({ code: 0, stdout: args[1] === 'list' ? 'vannevar-agents: node server - Connected\n' : '' });
+        await syncMcp.run();
+        const calls = mcpCalls();
+        const addedAt = calls.findIndex((args) => args[1] === 'add' && args[2] === 'vannevar');
+        const removedAt = calls.findIndex((args) => args[1] === 'remove' && args[2] === 'vannevar-agents');
+        assert.ok(addedAt >= 0, 'the legacy name was mistaken for the current registration');
+        assert.ok(removedAt > addedAt, 'the working legacy entry was removed before its replacement was added');
+        assert.deepEqual(calls[removedAt], ['mcp', 'remove', 'vannevar-agents', '--scope', 'user']);
+        assert.equal(receiptServer(), 'vannevar');
+    }
+    console.log('OK — legacy, absent and malformed receipts migrate only after the replacement is registered');
+
+    reset();
+    await syncMcp.run();
+    assert.deepEqual(mcpCalls(), [], 'a current receipt did not keep the no-CLI fast path');
+    console.log('OK — a current MCP receipt skips the CLI');
+
+    reset();
+    writeFileSync(MCP_RECEIPT, JSON.stringify({ server: 'vannevar-agents' }));
+    claudeResult = (args) => ({
+        code: args[1] === 'add' ? 1 : 0,
+        stdout: args[1] === 'list' ? 'vannevar-agents: node server - Connected\n' : '',
+    });
+    await syncMcp.run();
+    assert.ok(!mcpCalls().some((args) => args[1] === 'remove' && args[2] === 'vannevar-agents'));
+    assert.equal(receiptServer(), 'vannevar-agents', 'a failed add recorded migration success');
+    console.log('OK — failed registration preserves the legacy entry and its retryable receipt');
+
+    reset();
+    claudeResult = { code: 1, stdout: 'vannevar: partial output\n' };
+    await syncMcp.run();
+    assert.deepEqual(mcpCalls(), [['mcp', 'list']], 'a failed list led to registration changes');
+    assert.equal(receiptServer(), 'vannevar-agents');
+    console.log('OK — a failed list cannot confirm a registration or remove an entry');
+
+    reset();
+    claudeResult = (args) => ({ code: 0, stdout: args[1] === 'list' ? 'vannevar: node server - Connected\n' : '' });
+    await syncMcp.run();
+    assert.deepEqual(mcpCalls(), [['mcp', 'list']], 'an existing current entry was unnecessarily registered again');
+    assert.equal(receiptServer(), 'vannevar');
+    console.log('OK — an already-current registration only repairs the receipt');
+
+    reset();
+    claudeResult = (args) => ({
+        code: args[1] === 'remove' && args[2] === 'vannevar-agents' ? 1 : 0,
+        stdout: args[1] === 'list' ? 'vannevar: node server\nvannevar-agents: node server\n' : '',
+    });
+    await installMcp.run();
+    assert.ok(!existsSync(MCP_RECEIPT), 'failed legacy cleanup left a receipt that prevents a retry');
+    assert.ok(shown.some((s) => s.kind === 'warning' && /removing.*failed/.test(s.message)));
+    reset();
+    claudeResult = (args) => ({ code: 0, stdout: args[1] === 'list' ? 'vannevar: node server\nvannevar-agents: node server\n' : '' });
+    await syncMcp.run();
+    assert.deepEqual(mcpCalls(), [['mcp', 'list'], ['mcp', 'remove', 'vannevar-agents', '--scope', 'user']]);
+    assert.equal(receiptServer(), 'vannevar');
+    console.log('OK — explicit repair cleans the legacy name, and failed cleanup is retried without another add');
+    claudeResult = { code: 0, stdout: '' };
 
     // --- the same version, already patched --------------------------------------------------------
     // Every other window on every other day. It must be quiet, and it must not rewrite the runtime.
