@@ -332,7 +332,8 @@ assert.equal(mine.toolUseId, 'toolu_live', 'the tool_use id is what the map sele
 assert.equal(mine.parentToolUseId, null, 'a call the main agent made sits at the top');
 assert.equal(mine.description, 'deepseek · deepseek-v4-pro · Review host', 'the row names the provider, served model and label');
 assert.equal(mine.status, 'working');
-assert.equal(mine.subagentType, 'deepseek-v4-pro', 'the card names the model that answered, not the alias');
+assert.equal(mine.model, 'deepseek-v4-pro', 'the card names the model that answered, not the parent selection');
+assert.equal(mine.subagentType, undefined, 'the model is not duplicated in the role field');
 assert.equal(mine.usage.totalTokens, 41000);
 assert.equal(mine.startTime, liveRun.startedAt);
 assert.equal(mine.endTime, undefined, 'a working run has no end yet');
@@ -350,7 +351,7 @@ const old = entry('ccx:toolu_old');
 assert.equal(old.status, 'finished', 'a call with no run left is built from its result');
 assert.equal(old.result, 'the old answer', "the answer, without the server's report under it");
 assert.equal(old.ccxSession, '12345678-aaaa-bbbb-cccc-1234567890ab', 'the report still names the transcript');
-assert.equal(old.subagentType, 'opus');
+assert.equal(old.model, 'opus');
 assert.equal(old.description, 'gemini · opus · an old question', 'without a manifest the row keeps the model from the call');
 
 // Nothing changed, nothing written: a write re-renders, and a re-render is the next pass.

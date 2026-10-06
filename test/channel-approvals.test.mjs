@@ -100,16 +100,22 @@ await wait(600);
 
 // 3. A question the dialog is holding is mirrored, and the answer that comes back from the channel is
 //    the answer: the dialog's promise never settles.
-let sawChannel = null;
+let dialogCancelled = false;
+const toolController = new AbortController();
 const wrapped = host.wrapCanUseTool(
-    () =>
-        new Promise((resolve) => {
-            sawChannel = resolve;
+    (_name, _input, options) =>
+        new Promise((_resolve, reject) => {
+            options.signal.addEventListener('abort', () => {
+                dialogCancelled = true;
+                reject(new Error('IDE request cancelled'));
+            }, { once: true });
         }),
     {},
 );
-const decision = await wrapped('Bash', { command: 'curl https://example.com' }, { toolUseID: 'tu-1' });
+const decision = await wrapped('Bash', { command: 'curl https://example.com' }, { toolUseID: 'tu-1', signal: toolController.signal });
 assert.deepEqual(decision, { behavior: 'allow' }, 'the channel answered, so that is the decision');
+assert.equal(dialogCancelled, true, 'the losing IDE prompt is cancelled');
+assert.equal(toolController.signal.aborted, false, 'closing the IDE prompt does not abort the tool');
 await wait(200);
 const sent = readFileSync(sentFile, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
 assert.ok(

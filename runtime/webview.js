@@ -705,15 +705,7 @@
         // While the conversation's tab is working, Telegram is told "typing…" — the window refreshes
         // it for as long as this lasts. Only transitions are sent; the relay holds the chat id.
         if (d.type === 'ccx:state') {
-            var live = d.relay;
-            var session = activeSession();
-            var busy = Boolean(session && session.busy && session.busy.value);
-            var mine = Boolean(live && live.status === 'on' && (live.target ? live.target === d.sessionId : (live.targets || []).length === 1));
-            if (mine !== relayBusySent || busy !== relayBusyValue) {
-                relayBusySent = mine;
-                relayBusyValue = mine && busy;
-                send({ type: 'ccx:relayBusy', busy: relayBusyValue });
-            }
+            syncRelayBusy(d.relay, d.sessionId);
         }
 
         if (d.type === 'ccx:channelMessage') {
@@ -1836,9 +1828,9 @@
             parentToolUseId: parentToolUseId,
             description: mapLabel(run.profile, run.servedModel || run.model, run.description, run.prompt),
             prompt: run.prompt || undefined,
-            // The card prints this beside the status. The model the transcript says answered, not the
-            // alias the run asked for — the profile decides what `sonnet` means.
-            subagentType: run.servedModel || run.model || undefined,
+            // The card reads the model field; subagentType is a role, not a model. Leaving model
+            // unset makes the card fall back to the parent session's selection.
+            model: run.servedModel || run.model || undefined,
             isBackgrounded: run.background === true,
             startTime: run.startedAt || undefined,
             endTime: endTime,
@@ -1874,7 +1866,7 @@
             parentToolUseId: call.parent,
             description: mapLabel(input.profile, typeof input.model === 'string' ? input.model : undefined, input.description, input.prompt),
             prompt: typeof input.prompt === 'string' ? input.prompt : undefined,
-            subagentType: typeof input.model === 'string' ? input.model : undefined,
+            model: typeof input.model === 'string' ? input.model : undefined,
             isBackgrounded: input.background === true,
             startTime: call.shown || undefined,
             status: status,
@@ -3747,7 +3739,23 @@
         }
     }
 
+    function syncRelayBusy(live, sessionId) {
+        live = live || state.relay;
+        sessionId = sessionId || state.sessionId;
+        var session = activeSession();
+        var mine = Boolean(live && live.status === 'on' && (live.target
+            ? live.target === sessionId
+            : (live.targets || []).length === 1 && live.targets[0].sessionId === sessionId));
+        var busy = Boolean(mine && session && session.busy && session.busy.value);
+        if (mine === relayBusySent && busy === relayBusyValue) return;
+        relayBusySent = mine;
+        relayBusyValue = busy;
+        if (mine) send({ type: 'ccx:relayBusy', busy: busy, sessionId: sessionId });
+    }
+
     function watchPicker() {
+        // Busy can change without a host state push or a visible DOM mutation (thinking/tools).
+        if (typeof setInterval === 'function') setInterval(function () { syncRelayBusy(); }, 500);
         var timer = null;
         new MutationObserver(function () {
             clearTimeout(timer);

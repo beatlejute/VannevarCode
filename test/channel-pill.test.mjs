@@ -138,7 +138,7 @@ const pageContext = {
     JSON,
     setTimeout: pageWindow.setTimeout,
     clearTimeout: pageWindow.clearTimeout,
-    setInterval: () => ({}),
+    setInterval: (fn, delay) => { timers.push({ fn, delay }); return {}; },
     clearInterval: () => {},
     navigator: { clipboard: { writeText: () => Promise.resolve() } },
     MutationObserver: class {
@@ -158,7 +158,10 @@ vm.runInContext(readFileSync(new URL('../runtime/webview.js', import.meta.url), 
 const fromHost = (m) => pageWindow.onMessage({ data: m });
 const observerPass = () => {
     observerCallback();
-    for (const t of timers.splice(0)) if (t.delay === 60) t.fn();
+    for (const t of timers.splice(0)) {
+        if (t.delay === 60) t.fn();
+        else timers.push(t);
+    }
 };
 const pillNow = () => pageDocument.querySelector('.ccx-channel-pill');
 const withRelay = (relay, sessionId) =>
@@ -227,5 +230,27 @@ assert.ok(drop && /No active session/.test(drop.textContent), 'with no session t
 const page = readFileSync(new URL('../runtime/webview.js', import.meta.url), 'utf8');
 assert.match(page, /\[image_path="' \+ d\.imagePath/, 'the downloaded image path travels in the tag');
 assert.match(page, /\[attachment_file_id="' \+ d\.attachmentId/, 'and the file id for deferred download');
+
+// Thinking and tools change busy without a host state push. The periodic observer must
+// report those transitions, and unrelated tabs must not emit a stop for the owner.
+const busySession = { send() {}, busy: { value: false } };
+pageWindow.__ccx.onRegistry(null, null, busySession);
+withRelay({ status: 'on', server: 'telegram', target: 's-1', targets: [], pending: 0 }, 's-1');
+const busyTick = timers.find((t) => t.delay === 500).fn;
+posted.length = 0;
+busySession.busy.value = true;
+busyTick();
+assert.equal(posted.length, 1);
+assert.equal(posted[0].type, 'ccx:relayBusy');
+assert.equal(posted[0].busy, true);
+busyTick();
+assert.equal(posted.length, 1, 'unchanged busy must not restart the typing timer');
+busySession.busy.value = false;
+busyTick();
+assert.equal(posted[1].busy, false);
+posted.length = 0;
+withRelay({ status: 'on', server: 'telegram', target: 's-other', targets: [], pending: 0 }, 's-1');
+busyTick();
+assert.equal(posted.filter((m) => m.type === 'ccx:relayBusy').length, 0, 'a different tab cannot stop typing');
 
 console.log('\nOK — the channel is shown in the tab it is addressed to, and nowhere else');

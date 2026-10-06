@@ -5,6 +5,13 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## Unreleased
+
+Answering a permission question through a channel now cancels the losing IDE prompt through its
+own abort signal. The original tool signal stays active, so allowing the action closes the dialog
+without cancelling the action itself. The pending channel request and abort listener are removed
+when either surface answers or the request fails.
+
 ## 2.1.289
 
 Verified against Claude Code **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**,

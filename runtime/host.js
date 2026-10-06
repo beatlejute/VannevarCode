@@ -2486,11 +2486,13 @@ function attachWebview(webview) {
             // The addressed tab reports whether it is working; the relay refreshes Telegram's
             // "typing…" while it is. Only transitions matter — the page checks on every pass.
             const state = relayState();
-            if (state.relay && state.chatId) {
+            const bound = loadRelayTarget();
+            const targets = relayTargets();
+            const owner = bound || (targets.length === 1 ? targets[0].sessionId : null);
+            if (owner && webview.__ccxSessionId === owner && state.relay && state.chatId) {
                 if (m.busy) state.relay.startTyping(state.chatId);
                 else state.relay.stopTyping();
             }
-            broadcast();
         } else if (m.type === 'ccx:relayTarget') {
             // The answer to "who is this conversation with": a session id, or nothing to go back to the
             // fallback. Kept on disk because a reload must not silently change who is being talked to.
@@ -3051,8 +3053,27 @@ function wrapCanUseTool(inner, context) {
             human,
             human,
         );
-        const answer = await Promise.race([inner(toolName, input, options), fromChannel]);
-        state.pending.delete(shortId);
+        // Race the answers, not the lifetime of the IDE prompt. sendRequest removes its outstanding
+        // request and sends cancel_request when this signal aborts. The CLI's original signal must
+        // remain untouched: cancelling the losing dialog is not cancelling the tool execution.
+        const dialogController = new AbortController();
+        const signal = options && options.signal;
+        const cancelDialog = () => dialogController.abort(signal && signal.reason);
+        if (signal) {
+            if (signal.aborted) cancelDialog();
+            else signal.addEventListener('abort', cancelDialog, { once: true });
+        }
+        let answer;
+        try {
+            answer = await Promise.race([
+                inner(toolName, input, Object.assign({}, options, { signal: dialogController.signal })),
+                fromChannel,
+            ]);
+            if (answer && answer.viaChannel) dialogController.abort('Answered via channel');
+        } finally {
+            state.pending.delete(shortId);
+            if (signal) signal.removeEventListener('abort', cancelDialog);
+        }
         // A deny needs words of its own — the SDK rejects a bare one, and "invalid permission result"
         // reaching the model is the failure mode that costs a whole round trip to notice.
         if (answer && answer.viaChannel) {

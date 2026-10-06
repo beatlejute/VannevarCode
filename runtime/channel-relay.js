@@ -219,26 +219,36 @@ class ChannelRelay {
             headers['proxy-authorization'] =
                 'Basic ' +
                 Buffer.from(decodeURIComponent(proxyUrl.username) + ':' + decodeURIComponent(proxyUrl.password || '')).toString('base64');
-        const tunnel = http.request(
-            {
-                host: proxyUrl.hostname,
-                port: proxyUrl.port || 443,
-                method: 'CONNECT',
-                path: 'api.telegram.org:443',
-                headers,
-            },
-            (res) => {
-                if (res.statusCode !== 200) return;
-                const secure = tls.connect({ socket: res.socket, servername: 'api.telegram.org' }, () => {
-                    https
-                        .request(Object.assign(request, { createConnection: () => secure }), (apiRes) => apiRes.resume())
-                        .on('error', () => {})
-                        .end(payload);
-                });
-                secure.on('error', () => {});
-            },
-        );
-        tunnel.on('error', () => {});
+        const transport = proxyUrl.protocol === 'https:' ? https : http;
+        const tunnel = transport.request({
+            host: proxyUrl.hostname,
+            port: proxyUrl.port || (proxyUrl.protocol === 'https:' ? 443 : 80),
+            method: 'CONNECT',
+            path: 'api.telegram.org:443',
+            headers,
+        });
+        // CONNECT delivers its socket through the connect event, not the response callback.
+        tunnel.on('connect', (res, socket, head) => {
+            if (res.statusCode !== 200) {
+                socket.destroy();
+                this.log('typing proxy refused', res.statusCode);
+                return;
+            }
+            if (head.length) socket.unshift(head);
+            const secure = tls.connect({ socket, servername: 'api.telegram.org' });
+            secure.on('error', () => this.log('typing TLS failed'));
+            const agent = new https.Agent({ keepAlive: false });
+            agent.createConnection = () => secure;
+            const api = https.request(Object.assign({}, request, { agent }), (apiRes) => {
+                apiRes.resume();
+                apiRes.on('end', () => agent.destroy());
+            });
+            api.setTimeout(10000, () => api.destroy());
+            api.on('error', () => this.log('typing request failed'));
+            api.end(payload);
+        });
+        tunnel.setTimeout(10000, () => tunnel.destroy());
+        tunnel.on('error', () => this.log('typing proxy connection failed'));
         tunnel.end();
     }
 

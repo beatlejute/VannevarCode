@@ -177,6 +177,7 @@ window2.addEventListener = (type, fn) => { if (type === 'message') listener = fn
 const context = {
     window: window2, document: document2, console,
     setTimeout: window2.setTimeout, clearTimeout: window2.clearTimeout,
+    setInterval: () => ({}), clearInterval: () => {},
     navigator: { clipboard: { writeText: () => Promise.resolve() } },
     MutationObserver: class { observe() {} },
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
