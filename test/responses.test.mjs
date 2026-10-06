@@ -7,6 +7,7 @@ import assert from 'node:assert';
 import { createServer } from '../runtime/proxy/server.mjs';
 import {
     anthropicToResponses,
+    toolNamesForResponses,
     responsesToAnthropic,
     createResponsesCollector,
     createReasoningStore,
@@ -133,6 +134,23 @@ const backend = http.createServer((req, res) => {
             res.end(JSON.stringify({ error: { message: "Item 'rs_1' of type 'reasoning' is not allowed here" } }));
             return;
         }
+        if (mode === 'aliases' || mode === 'aliases-json') {
+            const request = lastRequest.body;
+            for (const item of [...request.input, ...request.tools, request.tool_choice])
+                if (item?.name) assert.match(item.name, /^[a-zA-Z0-9_-]+$/, 'backend accepts only legal names');
+            const item = { type: 'function_call', call_id: 'call_alias', name: request.tools[0].name, arguments: '{}' };
+            const response = { id: 'resp_alias', model: request.model, output: [item] };
+            if (mode === 'aliases-json') {
+                res.writeHead(200, { 'content-type': 'application/json' });
+                res.end(JSON.stringify(response));
+            } else {
+                res.writeHead(200, { 'content-type': 'text/event-stream' });
+                res.write(`event: response.output_item.added\ndata: ${JSON.stringify({ item })}\n\n`);
+                res.write(`event: response.completed\ndata: ${JSON.stringify({ response })}\n\n`);
+                res.end();
+            }
+            return;
+        }
         res.writeHead(200, { 'content-type': 'text/event-stream' });
         for (const [name, payload] of SCRIPTS[mode])
             res.write(`event: ${name}\ndata: ${JSON.stringify(payload)}\n\n`);
@@ -253,6 +271,71 @@ async function main() {
     const last = sent.input.at(-1);
     assert.strictEqual(last.role, 'user', 'the reminder is the last input item');
     assert.match(last.content[0].text, /never end a turn by announcing/i, 'agent loop restated');
+
+    // Names from older providers must remain usable without rewriting the saved conversation.
+    const invalidName = 'functions.Read';
+    const historicalName = 'mcp:old/read';
+    const aliasBody = {
+        ...request,
+        tools: [{ ...request.tools[0], name: invalidName }],
+        tool_choice: { type: 'tool', name: invalidName },
+        messages: [{ role: 'assistant', content: [
+            { type: 'tool_use', id: 'call_invalid', name: invalidName, input: {} },
+            { type: 'tool_use', id: 'call_old', name: historicalName, input: {} },
+            { type: 'tool_use', id: 'call_valid', name: 'Read', input: {} },
+            { type: 'tool_use', id: 'call_other', name: 'functions/Read', input: {} },
+        ] }],
+    };
+    const original = JSON.stringify(aliasBody);
+    const aliased = anthropicToResponses(aliasBody);
+    const alias = aliased.tools[0].name;
+    assert.match(alias, /^[a-zA-Z0-9_-]+$/, 'illegal name encoded');
+    assert.strictEqual(aliased.input[0].name, alias, 'history and declarations share an alias');
+    assert.strictEqual(aliased.tool_choice.name, alias, 'explicit tool choice shares the alias');
+    assert.strictEqual(aliased.input[2].name, 'Read', 'legal historical name unchanged');
+    assert.strictEqual(new Set(aliased.input.map((i) => i.name)).size, 4, 'distinct names stay distinct');
+    for (const item of aliased.input) assert.match(item.name, /^[a-zA-Z0-9_-]+$/);
+    assert.strictEqual(JSON.stringify(aliasBody), original, 'source request not mutated');
+    assert.strictEqual(aliased.input[0].call_id, 'call_invalid', 'call id not renamed');
+    const collisionBody = { ...aliasBody, tools: [...aliasBody.tools, { name: alias, input_schema: {} }] };
+    const collision = anthropicToResponses(collisionBody);
+    assert.strictEqual(collision.tools[1].name, alias, 'legal name reserved before aliases');
+    assert.notStrictEqual(collision.tools[0].name, alias, 'alias cannot shadow a legal name');
+    const reordered = anthropicToResponses({ ...collisionBody, tools: [...collisionBody.tools].reverse() });
+    assert.strictEqual(reordered.tools[1].name, collision.tools[0].name, 'mapping independent of declaration order');
+    const decoded = responsesToAnthropic({ output: [{ type: 'function_call', call_id: 'call_restore', name: alias, arguments: '{}' }] }, 'gpt-5.5', toolNamesForResponses(aliased));
+    assert.strictEqual(decoded.content[0].name, invalidName, 'JSON translation restores the name');
+    assert.ok(!JSON.stringify(aliased).includes('decode'), 'mapping metadata stays off the wire');
+
+    mode = 'aliases';
+    for (const stream of [true, false]) {
+        const reply = await fetch(`${base}/v1/messages`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': 'sk-test' },
+            body: JSON.stringify({ ...aliasBody, stream }),
+        });
+        assert.strictEqual(reply.status, 200);
+        const tool = stream
+            ? parseSse(await reply.text()).find((e) => e.data.content_block?.type === 'tool_use').data.content_block
+            : (await reply.json()).content[0];
+        assert.strictEqual(tool.name, invalidName, 'streaming and collected responses restore original names');
+        assert.strictEqual(tool.id, 'call_alias', 'response call id unchanged');
+    }
+    const jsonProxy = createServer({ upstreams: { plain: { baseUrl, protocol: 'responses', auth: 'key' } } });
+    await new Promise((r) => jsonProxy.listen(0, '127.0.0.1', r));
+    try {
+        mode = 'aliases-json';
+        const reply = await fetch(`http://127.0.0.1:${jsonProxy.address().port}/plain/v1/messages`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-api-key': 'sk-test' },
+            body: JSON.stringify({ ...aliasBody, stream: false }),
+        });
+        assert.strictEqual(reply.status, 200);
+        assert.strictEqual((await reply.json()).content[0].name, invalidName, 'plain JSON response restores original names');
+    } finally {
+        await new Promise((r) => jsonProxy.close(r));
+        mode = 'ok';
+    }
 
     // --- non-codex mode keeps the system prompt in instructions
     const plain = anthropicToResponses({ model: 'gpt-5.5', system: 'instruction', messages: [] });

@@ -1,7 +1,43 @@
 // Translation between Anthropic Messages API and OpenAI Responses API.
 // Spoken by the ChatGPT subscription backend (chatgpt.com/backend-api/codex) and api.openai.com/v1/responses.
 
+import { createHash } from 'node:crypto';
 import { stopReasonFor, stripModelSuffix } from './translate.mjs';
+
+const requestToolNames = new WeakMap();
+
+// History may contain names from another provider. Keep aliases on the wire only, including
+// tools no longer declared, and reserve legal names before assigning any aliases.
+function createToolNames(body) {
+    const names = new Set();
+    for (const tool of body.tools || []) if (tool?.name) names.add(tool.name);
+    if (body.tool_choice?.name) names.add(body.tool_choice.name);
+    for (const message of body.messages || [])
+        if (Array.isArray(message.content))
+            for (const block of message.content)
+                if (block?.type === 'tool_use') names.add(block.name);
+    const reserved = new Set([...names].filter((name) => /^[a-zA-Z0-9_-]+$/.test(name)));
+    const forward = new Map();
+    const reverse = new Map();
+    for (const name of [...names].sort()) {
+        if (reserved.has(name)) continue;
+        const base = `ccx_${createHash('sha256').update(String(name ?? '')).digest('hex').slice(0, 40)}`;
+        let alias = base;
+        let suffix = 0;
+        while (reserved.has(alias)) alias = `${base}_${++suffix}`;
+        reserved.add(alias);
+        forward.set(name, alias);
+        reverse.set(alias, name);
+    }
+    return {
+        encode: (name) => forward.get(name) ?? name,
+        decode: (name) => reverse.get(name) ?? name,
+    };
+}
+
+function toolNamesForResponses(request) {
+    return requestToolNames.get(request);
+}
 
 const CODEX_INSTRUCTIONS = 'You are Claude Code, a software engineering agent running in a terminal.';
 
@@ -93,7 +129,7 @@ function createReasoningStore(limit = 400) {
     };
 }
 
-function messagesToInput(messages, reasoning) {
+function messagesToInput(messages, reasoning, toolNames) {
     const input = [];
     for (const message of messages || []) {
         const blocks = Array.isArray(message.content) ? message.content : [{ type: 'text', text: message.content }];
@@ -137,7 +173,7 @@ function messagesToInput(messages, reasoning) {
                 input.push({
                     type: 'function_call',
                     call_id: block.id,
-                    name: block.name,
+                    name: toolNames.encode(block.name),
                     arguments: JSON.stringify(block.input ?? {}),
                     status: 'completed',
                 });
@@ -145,34 +181,35 @@ function messagesToInput(messages, reasoning) {
     return input;
 }
 
-function toolsToResponses(tools) {
+function toolsToResponses(tools, toolNames) {
     if (!Array.isArray(tools) || !tools.length) return undefined;
     return tools
         .filter((t) => t && t.name && !t.type)
         .map((t) => ({
             type: 'function',
-            name: t.name,
+            name: toolNames.encode(t.name),
             description: t.description || '',
             parameters: t.input_schema || { type: 'object', properties: {} },
         }));
 }
 
-function toolChoiceToResponses(choice) {
+function toolChoiceToResponses(choice, toolNames) {
     if (!choice) return undefined;
     if (choice.type === 'auto') return 'auto';
     if (choice.type === 'any') return 'required';
     if (choice.type === 'none') return 'none';
-    if (choice.type === 'tool' && choice.name) return { type: 'function', name: choice.name };
+    if (choice.type === 'tool' && choice.name) return { type: 'function', name: toolNames.encode(choice.name) };
     return undefined;
 }
 
 function anthropicToResponses(body, options = {}) {
     const { codexBackend = false, reasoningEffort, reasoning } = options;
     const system = textOf(body.system);
+    const toolNames = createToolNames(body);
 
     const request = {
         model: stripModelSuffix(body.model),
-        input: messagesToInput(body.messages, reasoning),
+        input: messagesToInput(body.messages, reasoning, toolNames),
         stream: codexBackend ? true : !!body.stream,
         store: false,
     };
@@ -191,10 +228,10 @@ function anthropicToResponses(body, options = {}) {
     if (typeof body.temperature === 'number') request.temperature = body.temperature;
     if (typeof body.top_p === 'number') request.top_p = body.top_p;
 
-    const tools = toolsToResponses(body.tools);
+    const tools = toolsToResponses(body.tools, toolNames);
     if (tools) {
         request.tools = tools;
-        const choice = toolChoiceToResponses(body.tool_choice);
+        const choice = toolChoiceToResponses(body.tool_choice, toolNames);
         if (choice) request.tool_choice = choice;
         // Only for a call that can act: title and classifier requests arrive without tools
         if (codexBackend)
@@ -206,6 +243,7 @@ function anthropicToResponses(body, options = {}) {
     }
     if (reasoningEffort) request.reasoning = { effort: reasoningEffort };
 
+    requestToolNames.set(request, toolNames);
     return request;
 }
 
@@ -224,7 +262,7 @@ function usageToAnthropic(usage = {}, fallbackInput = 0) {
     };
 }
 
-function responsesToAnthropic(payload, fallbackModel) {
+function responsesToAnthropic(payload, fallbackModel, toolNames) {
     const content = [];
     for (const item of payload.output || []) {
         if (item.type === 'message')
@@ -234,7 +272,7 @@ function responsesToAnthropic(payload, fallbackModel) {
             content.push({
                 type: 'tool_use',
                 id: item.call_id,
-                name: item.name,
+                name: toolNames?.decode(item.name) ?? item.name,
                 input: safeParse(item.arguments),
             });
     }
@@ -417,7 +455,7 @@ function createResponsesStreamTranslator(model, options = {}) {
                     push('content_block_start', {
                         type: 'content_block_start',
                         index,
-                        content_block: { type: 'tool_use', id: item.call_id, name: item.name || '', input: {} },
+                        content_block: { type: 'tool_use', id: item.call_id, name: options.toolNames?.decode(item.name) ?? item.name ?? '', input: {} },
                     });
                     break;
                 }
@@ -499,6 +537,7 @@ function createResponsesStreamTranslator(model, options = {}) {
 
 export {
     anthropicToResponses,
+    toolNamesForResponses,
     responsesToAnthropic,
     createResponsesStreamTranslator,
     createResponsesCollector,

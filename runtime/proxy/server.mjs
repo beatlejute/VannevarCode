@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { anthropicToOpenAI, openAIToAnthropic, createStreamTranslator, estimateTokens } from './translate.mjs';
 import {
     anthropicToResponses,
+    toolNamesForResponses,
     responsesToAnthropic,
     createResponsesStreamTranslator,
     createResponsesCollector,
@@ -397,13 +398,16 @@ async function handleMessages(req, res, body, upstream, name, modelRules, reason
             res,
             200,
             protocol === 'responses'
-                ? responsesToAnthropic(payload, request.model)
+                ? responsesToAnthropic(payload, request.model, toolNamesForResponses(request))
                 : openAIToAnthropic(payload, request.model)
         );
     }
 
     if (protocol === 'responses') {
-        const translator = createResponsesStreamTranslator(request.model, { inputTokens: estimateTokens(anthropic) });
+        const translator = createResponsesStreamTranslator(request.model, {
+            inputTokens: estimateTokens(anthropic),
+            toolNames: toolNamesForResponses(request),
+        });
         return streamTranslated(req, res, upstreamResponse, translator, () => reasoning?.remember(translator.output));
     }
 
@@ -597,7 +601,7 @@ async function collectResponses(req, res, upstreamResponse, request, reasoning) 
     const payload = collector.result;
     if (!payload) return sendError(res, 502, 'upstream closed without a response');
     reasoning?.remember(payload.output);
-    return sendJson(res, 200, responsesToAnthropic(payload, request.model));
+    return sendJson(res, 200, responsesToAnthropic(payload, request.model, toolNamesForResponses(request)));
 }
 
 function createServer(config) {
