@@ -5,7 +5,17 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## Unreleased
+## 2.1.291
+
+Verified against Claude Code **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**,
+**2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.291 takes all twenty-two current hooks unchanged: seven in `extension.js` and fifteen
+in the webview. Both patched bundles pass the syntax check. Compared with 2.1.289, upstream message
+timestamps are now enabled by default; Vannevar already relies on that native feature rather than
+injecting its own timestamps. The plugin UI gains command/download consent and more detailed
+installation errors, while restored sessions explain interruptions after extension-host restarts.
+These changes do not replace the per-tab provider switch or the window-owned channel relay.
 
 Channel sessions can discover and invoke the active plugin's advertised MCP tools through
 `channel_tools` and `channel_call`, preserving structured results and plugin errors. `channel_send`
