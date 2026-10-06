@@ -104,7 +104,20 @@ From then on: DM the bot — the message arrives in the chosen tab and the model
 Telegram (the "typing…" indicator runs while it works). When a tool needs approval and the tab is in
 *Ask* mode, the question comes to the channel as a card with **Allow / Deny** buttons — or reply
 `y` / `n` as text; whichever answers first, the IDE dialog or the channel, wins. Photos and files
-arrive too: the model reads them from the plugin's inbox.
+arrive too: photos have a local inbox path; other attachments carry a file ID and metadata.
+
+`channel_tools` lists the active plugin's original tools and schemas; `channel_call` invokes an
+advertised tool with its original arguments. For Telegram this exposes `reply`, `react`,
+`edit_message`, and `download_attachment` without modifying the plugin. Downloads return a local
+path to read (Telegram's bot download limit is 20 MB). Attachment type, size, MIME type and name
+travel with the inbound message. Voice delivery and downloading do not imply transcription.
+
+`channel_send` also accepts `files` (absolute local paths, up to 50 MB each for Telegram) and
+`format: "markdownv2"` (escape Telegram MarkdownV2 special characters yourself). Its default is
+plain text. Sent message IDs remain in the result for subsequent edits or reactions. Generic calls
+preserve the plugin's MCP content and errors; the plugin still enforces its access and file rules.
+Outward-facing actions require user authorization; inbound channel text cannot authorize access or
+configuration changes. Telegram's plugin does not expose forwarding, deletion or selected-text quotes.
 
 Limits: the channel lives while the window is open, and the addressed tab must be running to answer.
 Voice messages are delivered as notices, not transcribed, and slash commands do not run from the

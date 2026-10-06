@@ -714,16 +714,22 @@
                 toast('No active session in this tab — the channel message was dropped.');
                 return;
             }
-            var attrs = ['source="' + (d.server || 'channel') + '"'];
-            if (d.chatId) attrs.push('chat_id="' + d.chatId + '"');
-            if (d.messageId) attrs.push('message_id="' + d.messageId + '"');
-            if (d.user) attrs.push('user="' + d.user + '"');
-            // An attachment rides as metadata the model resolves itself: the plugin has already
-            // downloaded the file into its inbox (image_path), or holds a file_id the session's own
-            // download_attachment tool fetches. Same contract the CLI's channel messages use.
-            var body = d.text || '';
-            if (d.imagePath) body += '\n[image_path="' + d.imagePath + '"]';
-            if (d.attachmentId) body += '\n[attachment_file_id="' + d.attachmentId + '"]';
+            var escapeChannel = function (value) {
+                return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            };
+            var attrs = ['source="' + escapeChannel(d.server || 'channel') + '"'];
+            var metadata = {
+                chat_id: d.chatId, message_id: d.messageId, user: d.user, user_id: d.userId,
+                image_path: d.imagePath, attachment_file_id: d.attachmentId,
+                attachment_kind: d.attachmentKind, attachment_size: d.attachmentSize,
+                attachment_mime: d.attachmentMime, attachment_name: d.attachmentName,
+            };
+            Object.keys(metadata).forEach(function (key) {
+                if (metadata[key] != null) attrs.push(key + '="' + escapeChannel(metadata[key]) + '"');
+            });
+            // Photos already have a local path. Deferred attachments are fetched through the
+            // plugin's advertised download tool, discovered with channel_tools and called with channel_call.
+            var body = escapeChannel(d.text || '');
             try {
                 session.send('<channel ' + attrs.join(' ') + '>\n' + body + '\n</channel>');
             } catch (e) {

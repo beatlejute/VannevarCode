@@ -176,6 +176,23 @@ So `claude-vscode.editor.open` with a live `sessionId` only reveals the existing
 
 `close_channel` does not complete instantly: roughly 0.5 s pass between "Closing Claude on channel" and the channel actually being freed. Sending `launch_claude` on a timer before that returns `Channel already exists`, after which the host finishes killing the channel and the tab is left without a process (`Channel not found for io_message`). The trigger must be the **incoming** `close_channel`, not a timeout.
 
+### Window-owned channel plugin tools
+
+The active relay is the plugin's MCP client. Sessions reach it through `channel_tools` (the original
+`tools/list` schemas) and `channel_call` (an advertised `tools/call` name and arguments). The atomic
+outbox/result protocol carries these operations alongside legacy `channel_send` requests. Generic
+calls preserve MCP content and `isError`; discovery follows pagination, and unknown names are refused
+before invocation. The plugin remains responsible for chat allowlists and file restrictions.
+
+`channel_send` forwards `files` and `format` to `reply`, alongside text and optional threading. Inbound
+attachment type, size, MIME, filename and file ID survive the relay/host/webview path as escaped
+channel attributes. Photos carry their downloaded path; other attachments are downloaded on demand
+through the advertised plugin tool. Neither downloading voice nor delivery implies transcription.
+The host tracks in-flight outbox files so polling cannot dispatch a pending call twice.
+
+The SDK channel-enable path below describes the older session-owned integration, not the current
+window-owned relay. The current path does not require CLI channel feature gates.
+
 ### `--channels` cannot be reached from the spawn options, so a channel is started at runtime instead
 
 Plugin channels — the Telegram bridge, whose terminal launch line is `--channels

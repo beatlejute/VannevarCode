@@ -7,6 +7,13 @@ does.
 
 ## Unreleased
 
+Channel sessions can discover and invoke the active plugin's advertised MCP tools through
+`channel_tools` and `channel_call`, preserving structured results and plugin errors. `channel_send`
+now supports local file attachments and MarkdownV2 formatting. Deferred attachment downloads,
+reactions and message editing use the pristine plugin; inbound attachment type, size, MIME and
+filename are preserved and escaped. Pending outbox calls are not dispatched twice while awaiting
+the plugin's answer.
+
 Answering a permission question through a channel now cancels the losing IDE prompt through its
 own abort signal. The original tool signal stays active, so allowing the action closes the dialog
 without cancelling the action itself. The pending channel request and abort listener are removed

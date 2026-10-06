@@ -59,6 +59,23 @@ const request2 = requests().filter((n) => n !== files[0])[0];
 writeFileSync(join(OUTBOX, request2.replace(/\.json$/, '.result.json')), JSON.stringify({ ok: false, error: 'no conversation yet' }));
 await assert.rejects(() => second, /no conversation yet/, 'what the window said is what the model is told');
 
+await assert.rejects(() => server.callTool('channel_send', { text: 'x', files: ['relative.txt'] }), /absolute paths/);
+await assert.rejects(() => server.callTool('channel_call', { name: 'react', arguments: [] }), /object/);
+const before = new Set(requests());
+const generic = server.callTool('channel_call', { name: 'download_attachment', arguments: { file_id: 'file-1' } });
+const discovery = server.callTool('channel_tools', {});
+await wait(300);
+for (const name of requests().filter((name) => !before.has(name))) {
+    const payload = JSON.parse(readFileSync(join(OUTBOX, name), 'utf8'));
+    const result = payload.operation === 'tools'
+        ? [{ name: 'download_attachment', inputSchema: { type: 'object' } }]
+        : { content: [{ type: 'text', text: '/inbox/file.txt' }], isError: false };
+    if (payload.operation === 'call') assert.deepEqual(payload.arguments, { file_id: 'file-1' });
+    writeFileSync(join(OUTBOX, name.replace(/\.json$/, '.result.json')), JSON.stringify({ ok: true, result }));
+}
+assert.equal((await generic).content[0].text, '/inbox/file.txt');
+assert.equal(JSON.parse(await discovery)[0].name, 'download_attachment');
+
 await wait(50);
 rmSync(home, { recursive: true, force: true });
 console.log('\nOK — a session can send into the window\'s channel, and is told the truth when it cannot');

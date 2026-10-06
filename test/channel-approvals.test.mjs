@@ -46,6 +46,8 @@ process.stdin.on('data', (chunk) => {
         if (message.method === 'initialize') {
             process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'stub', version: '1' } } }) + '\\n');
             notify({ content: 'первое сообщение', meta: { chat_id: '777', message_id: '1', user: 'owner', user_id: '777' } });
+        } else if (message.method === 'tools/list') {
+            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: ['reply', 'react', 'edit_message', 'download_attachment'].map(name => ({ name, inputSchema: { type: 'object' } })) } }) + '\\n');
         } else if (message.method === 'tools/call') {
             const args = message.params.arguments || {};
             fs.appendFileSync(${JSON.stringify(sentFile)}, JSON.stringify(args.text) + '\\n');
@@ -131,6 +133,20 @@ assert.ok(
 //    dialog still owns the next question.
 const answered = await host.wrapCanUseTool(async () => ({ behavior: 'deny', message: 'no' }), {})('Bash', {}, { toolUseID: 'tu-2' });
 assert.deepEqual(answered, { behavior: 'deny', message: 'no' }, 'an unanswered question still resolves through the dialog');
+
+// The real host drains generic requests and preserves the plugin result.
+const outbox = join(runtime, 'outbox');
+mkdirSync(outbox, { recursive: true });
+writeFileSync(join(outbox, 'discover.json'), JSON.stringify({ operation: 'tools' }));
+writeFileSync(join(outbox, 'edit.json'), JSON.stringify({ operation: 'call', name: 'edit_message', arguments: { chat_id: '777', message_id: '42', text: 'updated' } }));
+writeFileSync(join(outbox, 'unknown.json'), JSON.stringify({ operation: 'call', name: 'missing', arguments: {} }));
+const deadline = Date.now() + 5000;
+while (!['discover', 'edit', 'unknown'].every((name) => existsSync(join(outbox, name + '.result.json'))) && Date.now() < deadline) await wait(100);
+const result = (name) => JSON.parse(readFileSync(join(outbox, name + '.result.json'), 'utf8'));
+assert.equal(result('discover').result.length, 4);
+assert.equal(result('edit').result.content[0].text, 'ok');
+assert.equal(result('unknown').ok, false);
+assert.match(result('unknown').error, /does not advertise/);
 
 host.stopChannelRelay();
 // The plugin this test started lives in that directory and is on its way out; on Windows a file a

@@ -2661,6 +2661,8 @@ function relayHeartbeatFresh() {
     }
 }
 
+const relayOutboxPending = new Set();
+
 function relayDrainOutbox() {
     const state = relayState();
     let files;
@@ -2675,6 +2677,7 @@ function relayDrainOutbox() {
     }
     for (const name of files) {
         const file = path.join(OUTBOX_DIR, name);
+        if (relayOutboxPending.has(file)) continue;
         let request;
         try {
             request = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -2684,7 +2687,9 @@ function relayDrainOutbox() {
             } catch {}
             continue;
         }
+        relayOutboxPending.add(file);
         const answer = (payload) => {
+            relayOutboxPending.delete(file);
             try {
                 fs.writeFileSync(file.replace(/\.json$/, '.result.json'), JSON.stringify(payload));
             } catch (e) {
@@ -2698,6 +2703,16 @@ function relayDrainOutbox() {
             answer({ ok: false, error: 'the channel is not up in this window' });
             continue;
         }
+        if (request.operation) {
+            const work = request.operation === 'tools'
+                ? state.relay.listTools()
+                : request.operation === 'call' && typeof request.name === 'string' && request.arguments && typeof request.arguments === 'object' && !Array.isArray(request.arguments)
+                    ? state.relay.invokeTool(request.name, request.arguments)
+                    : Promise.reject(new Error('invalid channel operation'));
+            work.then((result) => answer({ ok: true, result }))
+                .catch((e) => answer({ ok: false, error: (e && e.message) || String(e) }));
+            continue;
+        }
         const chatId = String(request.chatId || state.chatId || '');
         if (!chatId) {
             answer({ ok: false, error: 'no conversation yet: message the bot once and I will know where to reply' });
@@ -2706,6 +2721,7 @@ function relayDrainOutbox() {
         const extra = {};
         if (request.replyTo) extra.reply_to = String(request.replyTo);
         if (request.format) extra.format = request.format;
+        if (request.files) extra.files = request.files;
         state.relay
             .send(chatId, request.text, extra)
             .then((result) => answer({ ok: true, text: result && result.text ? result.text : 'sent' }))
@@ -2795,6 +2811,10 @@ function deliverToTabs(message) {
             userId: message.userId,
             imagePath: message.imagePath,
             attachmentId: message.attachmentId,
+            attachmentKind: message.attachmentKind,
+            attachmentSize: message.attachmentSize,
+            attachmentMime: message.attachmentMime,
+            attachmentName: message.attachmentName,
             server: relayState().mcpServer || relayState().server,
         });
         dlog('relay deliver target', bound ? 'bound' : 'last-active', target ? 'found' : 'missing');

@@ -323,6 +323,10 @@ class ChannelRelay {
                 userId: meta.user_id,
                 imagePath: meta.image_path,
                 attachmentId: meta.attachment_file_id,
+                attachmentKind: meta.attachment_kind,
+                attachmentSize: meta.attachment_size,
+                attachmentMime: meta.attachment_mime,
+                attachmentName: meta.attachment_name,
                 ts: meta.ts,
             });
             return;
@@ -373,7 +377,27 @@ class ChannelRelay {
         });
     }
 
-    // The plugin's tools are the same ones a session gets; `reply` is the one that matters here.
+    async listTools() {
+        const tools = [];
+        const seen = new Set();
+        let cursor;
+        do {
+            const result = await this.request('tools/list', cursor ? { cursor } : {});
+            if (!result || !Array.isArray(result.tools)) throw new Error('invalid channel tool list');
+            tools.push(...result.tools);
+            cursor = result.nextCursor;
+            if (cursor && seen.has(cursor)) throw new Error('channel tool list repeated a cursor');
+            if (cursor) seen.add(cursor);
+        } while (cursor);
+        return tools;
+    }
+
+    async invokeTool(name, args) {
+        const tools = await this.listTools();
+        if (!tools.some((tool) => tool.name === name)) throw new Error('channel does not advertise tool: ' + name);
+        return this.request('tools/call', { name, arguments: args });
+    }
+
     callTool(name, args) {
         return this.request('tools/call', { name, arguments: args }).then((result) => {
             const text = result && Array.isArray(result.content)

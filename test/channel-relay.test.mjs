@@ -42,6 +42,8 @@ process.stdin.on('data', (chunk) => {
         if (message.method === 'initialize') {
             process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'stub', version: '1' } } }) + '\\n');
             process.stdout.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/claude/channel', params: { content: 'hello из плагина', meta: { chat_id: '285532172', message_id: '7', user: 'beatlejute', user_id: '285532172', ts: '2026-10-02T10:00:00.000Z' } } }) + '\\n');
+        } else if (message.method === 'tools/list') {
+            process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { tools: ['reply', 'react', 'edit_message', 'download_attachment'].map(name => ({ name, description: name, inputSchema: { type: 'object' } })) } }) + '\\n');
         } else if (message.method === 'tools/call') {
             fs.appendFileSync(${JSON.stringify(calls)}, JSON.stringify(message.params) + '\\n');
             const failing = message.params.name === 'react';
@@ -94,6 +96,13 @@ assert.equal(inbound[0].messageId, '7', 'and the message it answers');
 assert.equal(inbound[0].text, 'hello из плагина');
 
 await assert.rejects(() => relay.callTool('react', { chat_id: '1', message_id: '2', emoji: '👍' }), /no such message/, 'a refused tool call is an error, not a silent success');
+
+assert.equal((await relay.listTools()).length, 4);
+await assert.rejects(() => relay.invokeTool('missing', {}), /does not advertise/);
+const edited = await relay.invokeTool('edit_message', { chat_id: '1', message_id: '2', text: 'updated' });
+assert.equal(edited.content[0].text, 'sent (id: 42)');
+const refused = await relay.invokeTool('react', { chat_id: '1', message_id: '2', emoji: '👍' });
+assert.equal(refused.isError, true, 'generic calls preserve plugin errors');
 
 relay.stop();
 await wait(300);

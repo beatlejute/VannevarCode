@@ -100,7 +100,7 @@ async function main() {
     // --- tools/list
     out = await capture(() => handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }));
     const names = out[0].result.tools.map((t) => t.name).sort();
-    assert.deepStrictEqual(names, ['channel_send', 'check_agent', 'list_profiles', 'run_agent', 'stop_agent'], 'every tool listed');
+    assert.deepStrictEqual(names, ['channel_call', 'channel_send', 'channel_tools', 'check_agent', 'list_profiles', 'run_agent', 'stop_agent'], 'every tool listed');
     const runAgent = TOOLS.find((t) => t.name === 'run_agent');
     // profile is not required any more: a resumed session already knows which provider it belongs to
     assert.deepStrictEqual(runAgent.inputSchema.required, ['prompt'], 'only the prompt is always required');
