@@ -19,7 +19,10 @@ const asJson = process.argv.includes('--json');
 
 // One JSON object per line, on stdout, and nothing else in --json mode: the reader is a line parser,
 // so a stray console.log would be indistinguishable from an event.
-const emit = (event) => process.stdout.write(`${JSON.stringify(event)}\n`);
+// Flush a terminal event before exiting; leftover HTTP sockets must not keep the editor waiting.
+const emit = (event, exitCode) => process.stdout.write(`${JSON.stringify(event)}\n`, () => {
+    if (exitCode !== undefined) process.exit(exitCode);
+});
 
 if (wantStatus) {
     const state = status();
@@ -55,8 +58,11 @@ if (wantRefresh) {
 try {
     // With --json the browser is the caller's to open — VS Code resolves the user's own browser and,
     // in a remote window, forwards the callback port back to the machine that browser runs on.
-    const stored = await login(asJson ? { onAuthorize: (url) => emit({ event: 'authorize', url }) } : {});
-    if (asJson) emit({ event: 'signed-in', accountId: stored.account_id || null, store: STORE });
+    const stored = await login(asJson ? {
+        onAuthorize: (url) => emit({ event: 'authorize', url }),
+        onExchange: () => emit({ event: 'exchanging' }),
+    } : {});
+    if (asJson) emit({ event: 'signed-in', accountId: stored.account_id || null, store: STORE }, 0);
     else {
         console.log('\nSigned in.');
         console.log(`  account_id: ${stored.account_id || '(none)'}`);
@@ -66,7 +72,7 @@ try {
     // unsupported_country means the request went out without the proxy, which is a route problem and
     // not a credential one — worth saying wherever the failure is read.
     const bypassed = /unsupported_country/.test(e.message);
-    if (asJson) emit({ event: 'error', message: e.message, proxyBypassed: bypassed });
+    if (asJson) emit({ event: 'error', message: e.message, proxyBypassed: bypassed }, 1);
     else {
         console.error(`\nSign-in failed: ${e.message}`);
         if (bypassed)

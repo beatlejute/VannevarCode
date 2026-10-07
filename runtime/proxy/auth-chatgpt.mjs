@@ -86,13 +86,21 @@ function storeFrom(payload, previous = {}) {
     };
 }
 
-async function postForm(url, params) {
-    const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams(params).toString(),
-    });
-    const text = await res.text();
+async function postForm(url, params, timeoutMs = 30_000) {
+    let res;
+    let text;
+    try {
+        res = await fetch(url, {
+            method: 'POST',
+            headers: { 'content-type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(params).toString(),
+            signal: AbortSignal.timeout(timeoutMs),
+        });
+        text = await res.text();
+    } catch (error) {
+        const detail = error.cause?.code || error.cause?.errors?.find((cause) => cause.code)?.code || error.name;
+        throw Error(`token endpoint request failed: ${error.message} (${detail})`, { cause: error });
+    }
     if (!res.ok) throw Error(`token endpoint ${res.status}: ${text.slice(0, 300)}`);
     return JSON.parse(text);
 }
@@ -134,7 +142,7 @@ function openBrowser(url) {
 // `onAuthorize` is for a caller that opens the page itself — the extension hands the URL to VS Code,
 // which knows about the user's browser and about a remote window's port forwarding, and neither
 // rundll32 nor xdg-open does.
-async function login({ timeoutMs = 300_000, onAuthorize } = {}) {
+async function login({ timeoutMs = 300_000, tokenTimeoutMs = 30_000, onAuthorize, onExchange } = {}) {
     const { verifier, challenge } = pkce();
     const state = base64url(randomBytes(24));
     const params = new URLSearchParams({
@@ -173,10 +181,13 @@ async function login({ timeoutMs = 300_000, onAuthorize } = {}) {
             const error = url.searchParams.get('error');
             const returnedState = url.searchParams.get('state');
 
-            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            const accepted = !error && returnedState === state && !!received;
+            res.writeHead(accepted ? 200 : 400, { 'content-type': 'text/html; charset=utf-8' });
             res.end(
                 `<!doctype html><meta charset="utf-8"><body style="font:16px system-ui;padding:40px">${
-                    received ? 'Done — close this tab and return to the editor.' : `Sign-in failed: ${error || 'no code returned'}`
+                    accepted
+                        ? 'Authorization code received. Return to the editor while sign-in finishes.'
+                        : 'Sign-in failed. Return to the editor for details.'
                 }</body>`
             );
             if (error) return finish(reject, Error(`OAuth: ${error}`));
@@ -200,13 +211,14 @@ async function login({ timeoutMs = 300_000, onAuthorize } = {}) {
         timer.unref?.();
     });
 
+    onExchange?.();
     const payload = await postForm(TOKEN_URL, {
         grant_type: 'authorization_code',
         client_id: CLIENT_ID,
         code,
         redirect_uri: REDIRECT_URI,
         code_verifier: verifier,
-    });
+    }, tokenTimeoutMs);
     const stored = storeFrom(payload);
     writeStore(stored);
     return stored;

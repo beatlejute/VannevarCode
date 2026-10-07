@@ -184,10 +184,18 @@ assert.ok(!('garbage' in merged), 'an entry without a string name is not a varia
 assert.ok(merged !== process.env, 'the merge must copy, never mutate the editor’s own environment');
 assert.equal(process.env.HTTPS_PROXY, ambientProxy, 'the merge must not leak back into the extension host’s environment');
 
+const proxyBase = { HTTPS_PROXY: 'http://runtime-proxy.invalid:3128', NODE_EXTRA_CA_CERTS: '/test/proxy-ca.pem' };
+const withDefaults = editorEnv(proxyBase);
+assert.equal(withDefaults.HTTPS_PROXY, merged.HTTPS_PROXY, 'editor settings must outrank proxy-specific defaults');
+assert.equal(withDefaults.NODE_EXTRA_CA_CERTS, proxyBase.NODE_EXTRA_CA_CERTS, 'unrelated proxy defaults must survive');
+assert.equal(proxyBase.HTTPS_PROXY, 'http://runtime-proxy.invalid:3128', 'the merge must not mutate proxy defaults');
+configuredEnv = undefined;
+assert.strictEqual(editorEnv(proxyBase), proxyBase, 'with no setting the supplied base must pass through by identity');
+
 // The wiring: both spawn sites that talk to the network go through the helper, and the ChatGPT
 // sign-in — which reads its proxy variables once at startup — merges the setting itself.
 const hostSource = readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8');
-assert.match(hostSource, /\{\s*\.\.\.editorEnv\(\),\s*\.\.\.extraEnv,/, 'the local adapter must be spawned with the merged environment');
+assert.match(hostSource, /\.\.\.editorEnv\(\{\s*\.\.\.process\.env,\s*\.\.\.extraEnv\s*\}\)/, 'the local adapter must apply editor settings after proxy defaults');
 assert.match(hostSource, /const relayEnv = editorEnv\(\);/, 'the channel relay must be started with the merged environment');
 const signinSource = readFileSync(new URL('../runtime/chatgpt-signin.js', import.meta.url), 'utf8');
 assert.match(signinSource, /getConfiguration\('claudeCode'\)\.get\('environmentVariables'\)/, 'the ChatGPT sign-in must see the setting as well');

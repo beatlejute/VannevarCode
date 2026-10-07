@@ -9,7 +9,7 @@
 // MCP registration while the tests run. All three are stubbed through the module loader, so what is
 // exercised is extension.js itself.
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -43,6 +43,7 @@ mkdirSync(path.join(SELF, 'templates', 'profiles'), { recursive: true });
 mkdirSync(BUNDLE, { recursive: true });
 writeFileSync(path.join(SELF, 'runtime', 'apply-patch.mjs'), '/* patcher */\n');
 writeFileSync(path.join(SELF, 'runtime', 'login-chatgpt.mjs'), '/* sign-in */\n');
+copyFileSync(path.join(ROOT, 'runtime', 'chatgpt-signin.js'), path.join(SELF, 'runtime', 'chatgpt-signin.js'));
 writeFileSync(path.join(SELF, 'runtime', 'host.js'), '/* host */\n');
 writeFileSync(path.join(SELF, 'runtime', 'proxy', 'server.mjs'), '/* proxy */\n');
 writeFileSync(path.join(SELF, 'runtime', 'mcp', 'agent-server.mjs'), '/* agents */\n');
@@ -58,6 +59,7 @@ const copied = [];
 const progress = [];
 let answer = (choice) => Promise.resolve(choice);
 let configuration = { autoPatch: true };
+let configuredEnv;
 let openExternalResult = true;
 
 const vscodeStub = {
@@ -93,7 +95,12 @@ const vscodeStub = {
         getExtension: (id) => (id === 'anthropic.claude-code' ? { extensionPath: BUNDLE } : undefined),
     },
     workspace: {
-        getConfiguration: () => ({ get: (key, fallback) => (key in configuration ? configuration[key] : fallback) }),
+        getConfiguration: (section) => ({
+            get: (key, fallback) => {
+                if (section === 'claudeCode') return key === 'environmentVariables' ? configuredEnv : fallback;
+                return key in configuration ? configuration[key] : fallback;
+            },
+        }),
     },
     env: {
         openExternal: (uri) => {
@@ -437,6 +444,19 @@ try {
     // notification. What the child process must keep is --use-env-proxy — node reads the proxy
     // variables at startup, and without them auth.openai.com answers unsupported_country.
     reset();
+    writeFileSync(path.join(RUNTIME, 'proxy.json'), JSON.stringify({ env: {
+        HTTP_PROXY: 'http://runtime-proxy.invalid:3128',
+        HTTPS_PROXY: 'http://runtime-proxy.invalid:3128',
+        NODE_EXTRA_CA_CERTS: '/test/proxy-ca.pem',
+    } }));
+    configuredEnv = [
+        { name: 'HTTP_PROXY', value: 'http://editor-proxy.invalid:8080' },
+        { name: 'HTTPS_PROXY', value: 'http://editor-proxy.invalid:8443' },
+        { name: 'ALL_PROXY', value: 'http://editor-proxy.invalid:8080' },
+        { name: 'CCX_EMPTY_ENV', value: '' },
+        { name: 'ELECTRON_RUN_AS_NODE', value: '0' },
+    ];
+    const ambientBeforeLogin = { ...process.env };
     const signIn = context.subscriptions.find((s) => s.id === 'vannevar.loginChatgpt');
     const running = signIn.run();
     const started = logins.at(-1);
@@ -448,12 +468,20 @@ try {
     assert.ok(started.args.includes('--json'), 'the sign-in was not asked for events the extension can read');
     assert.ok(started.args.some((a) => a.endsWith('login-chatgpt.mjs')), `wrong script: ${started.args.join(' ')}`);
     assert.equal(started.env.ELECTRON_RUN_AS_NODE, '1', 'Code.exe without the flag opens a window, not the flow');
+    assert.equal(started.env.HTTP_PROXY, 'http://editor-proxy.invalid:8080');
+    assert.equal(started.env.HTTPS_PROXY, 'http://editor-proxy.invalid:8443');
+    assert.equal(started.env.ALL_PROXY, 'http://editor-proxy.invalid:8080');
+    assert.equal(started.env.NODE_EXTRA_CA_CERTS, '/test/proxy-ca.pem');
+    assert.equal(started.env.CCX_EMPTY_ENV, '');
+    assert.deepEqual({ ...process.env }, ambientBeforeLogin, 'sign-in must not mutate the editor environment');
 
     const authorizeUrl = 'https://auth.openai.com/oauth/authorize?client_id=app&state=abc&scope=openid';
     started.child.stdout.emit('data', `${JSON.stringify({ event: 'authorize', url: authorizeUrl })}\n`);
     await new Promise((go) => setTimeout(go, 20));
     assert.deepEqual(opened, [authorizeUrl], 'the sign-in page was not opened by VS Code');
     assert.ok(progress.some((p) => /browser/i.test(p.message || '')), 'the progress said nothing about the browser');
+    started.child.stdout.emit('data', `${JSON.stringify({ event: 'exchanging' })}\n`);
+    assert.ok(progress.some((p) => /authorization code/i.test(p.message || '')), 'the progress must distinguish token exchange from waiting for the browser');
 
     started.child.stdout.emit('data', `${JSON.stringify({ event: 'signed-in', accountId: 'acct_9' })}\n`);
     started.child.emit('close', 0);
@@ -468,8 +496,11 @@ try {
     // The flow is alive on localhost:1455 and unreachable, and the URL is the only way back into it.
     reset();
     openExternalResult = false;
+    configuredEnv = undefined;
     answer = () => Promise.resolve('Copy sign-in link');
     const stranded = signIn.run();
+    assert.equal(logins.at(-1).env.HTTP_PROXY, 'http://runtime-proxy.invalid:3128');
+    assert.equal(logins.at(-1).env.NODE_EXTRA_CA_CERTS, '/test/proxy-ca.pem');
     logins.at(-1).child.stdout.emit('data', `${JSON.stringify({ event: 'authorize', url: authorizeUrl })}\n`);
     await new Promise((go) => setTimeout(go, 20));
     assert.deepEqual(copied, [authorizeUrl], 'a browser that did not open left no way to reach the sign-in page');
@@ -481,7 +512,9 @@ try {
 
     // --- the sign-in failed -------------------------------------------------------------------------
     reset();
+    configuredEnv = [{ name: 'HTTPS_PROXY', value: 'http://updated-editor-proxy.invalid:8443' }];
     const failing = signIn.run();
+    assert.equal(logins.at(-1).env.HTTPS_PROXY, 'http://updated-editor-proxy.invalid:8443', 'each sign-in must read the current settings');
     logins
         .at(-1)
         .child.stdout.emit(

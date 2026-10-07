@@ -421,13 +421,14 @@ function crossesProvider(profile) {
 // and nothing else does. Everything this host starts whose connections leave the machine — the local
 // provider adapter and the channel relay — is spawned here, so the setting is merged the same way
 // the CLI merges it: a null value is an empty one, and anything that is not a name/value entry is
-// skipped. With no readable setting the environment passes through by identity.
-function editorEnv() {
-    let env = process.env;
+// skipped. Settings outrank any proxy-specific defaults in base. With no readable setting the base
+// environment passes through by identity.
+function editorEnv(base = process.env) {
+    let env = base;
     try {
         const configured = vscode.workspace.getConfiguration('claudeCode').get('environmentVariables');
         if (Array.isArray(configured)) {
-            env = Object.assign({}, process.env);
+            env = Object.assign({}, base);
             for (const entry of configured) {
                 if (entry && typeof entry.name === 'string') env[entry.name] = entry.value == null ? '' : String(entry.value);
             }
@@ -472,7 +473,7 @@ async function ensureProxy(profile) {
         const child = spawn(process.execPath, ['--use-env-proxy', PROXY_SCRIPT, '--port', String(port)], {
             detached: true,
             stdio: 'ignore',
-            env: { ...editorEnv(), ...extraEnv, ELECTRON_RUN_AS_NODE: '1' },
+            env: { ...editorEnv({ ...process.env, ...extraEnv }), ELECTRON_RUN_AS_NODE: '1' },
         });
         child.unref();
         dlog('proxy spawned', { port, profile });

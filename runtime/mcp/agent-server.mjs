@@ -258,6 +258,7 @@ function portIsOpen(port) {
 
 // A profile pointing at 127.0.0.1 is served by the local adapter, which the extension normally
 // starts when such a tab spawns. A delegated run can be the first thing to need it.
+// Its CLI parent already applied claudeCode.environmentVariables, which outrank adapter defaults.
 async function ensureProxy(profile) {
     const port = localProxyPort(profile);
     if (!port || !fs.existsSync(PROXY_SCRIPT)) return;
@@ -267,7 +268,7 @@ async function ensureProxy(profile) {
         const child = spawn(process.execPath, ['--use-env-proxy', PROXY_SCRIPT, '--port', String(port)], {
             detached: true,
             stdio: 'ignore',
-            env: { ...process.env, ...extraEnv },
+            env: { ...extraEnv, ...process.env },
         });
         child.unref();
         log('proxy spawned', { port, profile });

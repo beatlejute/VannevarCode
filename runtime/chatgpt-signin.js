@@ -81,7 +81,8 @@ function signIn({ vscode, dir, onLog = () => {}, showLog = null }) {
                 // The extension host's process.env is not the whole story: the corporate proxy usually
                 // lives in `claudeCode.environmentVariables` — the same merge the CLI's own spawn does —
                 // and this child reads its proxy variables exactly once, at startup.
-                const spawnEnv = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+                const extraEnv = readJson(path.join(dir, 'proxy.json'))?.env || {};
+                const spawnEnv = { ...process.env, ...extraEnv };
                 try {
                     const configured = vscode.workspace.getConfiguration('claudeCode').get('environmentVariables');
                     if (Array.isArray(configured))
@@ -89,6 +90,7 @@ function signIn({ vscode, dir, onLog = () => {}, showLog = null }) {
                             if (entry && typeof entry.name === 'string')
                                 spawnEnv[entry.name] = entry.value == null ? '' : String(entry.value);
                 } catch {}
+                spawnEnv.ELECTRON_RUN_AS_NODE = '1';
                 const child = spawn(process.execPath, ['--use-env-proxy', script, '--json'], {
                     // process.execPath is Code.exe in an extension host; without the flag it opens a
                     // window instead of running the script.
@@ -112,6 +114,8 @@ function signIn({ vscode, dir, onLog = () => {}, showLog = null }) {
                     if (event.event === 'authorize') {
                         progress.report({ message: 'finish the sign-in in the browser' });
                         openSignInPage(vscode, event.url, onLog);
+                    } else if (event.event === 'exchanging') {
+                        progress.report({ message: 'exchanging the authorization code for tokens' });
                     } else result = event;
                 };
                 const read = (chunk) => {

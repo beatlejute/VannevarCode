@@ -137,6 +137,11 @@ Nothing else to run: on the first window it copies its runtime into `~/.claude/v
 patch to the installed Claude Code bundle, drops three template profiles into `~/.claude/profiles/` and
 registers the delegated-agent MCP server. Then reload the window when it asks.
 
+Replacing runtime files does not update code already loaded by an open editor window; use
+**Developer: Reload Window** after a runtime update. A running adapter keeps the environment it was
+started with, so restart it after changing proxy settings. Reloading the editor alone does not restart
+the detached adapter.
+
 Requirements: the `anthropic.claude-code` extension, and VS Code 1.85 or newer. There is no Node
 requirement — the extension host's own runtime is used, which matters since Claude Code stopped
 shipping one in 2.1.227.
@@ -186,6 +191,18 @@ notification holds the wait, and the account is reported when it is done. Tokens
 live in `~/.claude/vannevar/chatgpt-auth.json`, and an existing `~/.codex/auth.json` is picked up as a
 source. See [docs/internals.md](https://github.com/beatlejute/VannevarCode/blob/main/docs/internals.md) for the details, including corporate proxies.
 
+The command palette and **Settings -> Sign in to ChatGPT** use the same launcher. The browser callback
+only acknowledges receipt of the authorization code; it is not a successful sign-in. The editor then
+exchanges the code for tokens, with a 30-second network deadline, and reports the account or the error.
+Transport failures include the underlying error code instead of only `fetch failed`.
+
+For a corporate proxy, set `HTTP_PROXY` and `HTTPS_PROXY` through the editor's
+`claudeCode.environmentVariables`. Both the editor-launched adapter and the OAuth process receive that
+setting before starting with `--use-env-proxy`. Editor values override defaults in
+`~/.claude/vannevar/proxy.json`'s `env`; defaults not overridden, such as `NODE_EXTRA_CA_CERTS`, are kept.
+Start a new sign-in after changing its environment. Manual `npm run proxy` and `npm run login:chatgpt`
+runs inherit the terminal environment instead of reading editor settings.
+
 ## Gemini
 
 `templates/profiles/gemini.json` routes a tab to the Gemini API through the same adapter, which
@@ -198,8 +215,8 @@ thinks is Gemini's own default unless the `gemini` entry in `~/.claude/vannevar/
 `"thinkingLevel"` (`"LOW"`, `"MEDIUM"`, `"HIGH"`).
 
 The Gemini API refuses some regions outright (`400 User location is not supported for the API use`);
-from one of those it takes an `HTTPS_PROXY` in the `env` block of `proxy.json`, which is where the
-adapter's outbound proxy is configured anyway.
+from one of those it takes an `HTTPS_PROXY` in `claudeCode.environmentVariables` or as an adapter
+default in `proxy.json.env`. The editor setting wins when both define it.
 
 ## After a Claude Code update
 

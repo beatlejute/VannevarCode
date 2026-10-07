@@ -18,7 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
-const { execFile, spawn } = require('child_process');
+const { execFile } = require('child_process');
 
 const pkg = require('./package.json');
 
@@ -322,98 +322,9 @@ async function registerMcp(bundle, { explicit, registrations }) {
 // The flow still runs as a child process rather than inside the extension host, for one reason:
 // --use-env-proxy. Node reads the proxy variables once, at startup, so a fetch from this process would
 // go out direct — and auth.openai.com answers unsupported_country wherever ChatGPT is not served.
-async function openSignInPage(url) {
-    let opened = false;
-    try {
-        opened = await vscode.env.openExternal(vscode.Uri.parse(url));
-    } catch (e) {
-        log(`openExternal failed: ${e && e.message}`);
-    }
-    if (opened) return;
-    // The flow is alive and unreachable at this point, and the URL is the only way back into it — a few
-    // hundred characters of PKCE that nobody retypes off a notification.
-    vscode.window
-        .showWarningMessage('Vannevar: the sign-in page did not open by itself.', 'Copy sign-in link')
-        .then((choice) => choice === 'Copy sign-in link' && vscode.env.clipboard.writeText(url));
-}
-
 function loginChatgpt() {
-    const script = path.join(RUNTIME, 'login-chatgpt.mjs');
-    if (!fs.existsSync(script))
-        return vscode.window.showWarningMessage(`Vannevar: the runtime is not installed — no ${script}.`);
-
-    return vscode.window.withProgress(
-        {
-            location: vscode.ProgressLocation.Notification,
-            title: 'Vannevar: signing in to ChatGPT',
-            cancellable: true,
-        },
-        (progress, cancel) =>
-            new Promise((finish) => {
-                const child = spawn(process.execPath, ['--use-env-proxy', script, '--json'], {
-                    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-                    windowsHide: true,
-                });
-
-                let result = null;
-                let cancelled = false;
-                let rest = '';
-
-                // One JSON object per line on stdout; anything else the child says is for the log.
-                const handle = (line) => {
-                    if (!line) return;
-                    let event = null;
-                    try {
-                        event = JSON.parse(line);
-                    } catch {}
-                    if (!event || !event.event) return log(`chatgpt sign-in: ${line}`);
-                    log(`chatgpt sign-in: ${event.event}${event.message ? ` — ${event.message}` : ''}`);
-                    if (event.event === 'authorize') {
-                        progress.report({ message: 'finish the sign-in in the browser' });
-                        openSignInPage(event.url);
-                    } else result = event;
-                };
-                const read = (chunk) => {
-                    rest += chunk;
-                    const lines = rest.split('\n');
-                    rest = lines.pop();
-                    for (const line of lines) handle(line.trim());
-                };
-
-                child.stdout.setEncoding('utf8');
-                child.stdout.on('data', read);
-                child.stderr.setEncoding('utf8');
-                child.stderr.on('data', (chunk) => log(`chatgpt sign-in (stderr): ${String(chunk).trim()}`));
-                child.on('error', (e) => {
-                    result = { event: 'error', message: e.message };
-                });
-
-                cancel.onCancellationRequested(() => {
-                    cancelled = true;
-                    child.kill();
-                });
-
-                child.on('close', (code) => {
-                    handle(rest.trim());
-                    finish();
-                    if (cancelled) return log('chatgpt sign-in: cancelled');
-
-                    if (result && result.event === 'signed-in') {
-                        vscode.window.showInformationMessage(
-                            `Vannevar: signed in to ChatGPT${result.accountId ? ` (account ${result.accountId})` : ''}. ` +
-                                'Pick a profile with "CCX_PROXY": "openai" to use the subscription.',
-                        );
-                        return;
-                    }
-
-                    const reason = (result && result.message) || `the sign-in ended with code ${code}`;
-                    const hint = result && result.proxyBypassed ? ' The request went out without the proxy.' : '';
-                    vscode.window
-                        .showWarningMessage(`Vannevar: the ChatGPT sign-in failed — ${reason}.${hint}`, 'Show log')
-                        .then((choice) => choice === 'Show log' && showLog());
-                });
-            }),
-    );
+    const { signIn } = require(path.join(RUNTIME, 'chatgpt-signin.js'));
+    return signIn({ vscode, dir: RUNTIME, onLog: log, showLog });
 }
 
 // Once, on the first activation that finds no entry. It is not a question: the server is what the
