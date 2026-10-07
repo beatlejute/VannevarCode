@@ -49,6 +49,7 @@ copyFileSync(new URL('../runtime/webview.js', import.meta.url), join(runtime, 'w
 process.env.HOME = home;
 process.env.USERPROFILE = home;
 process.env.HTTPS_PROXY = 'http://ambient-proxy.invalid:9999';
+delete process.env.NODE_EXTRA_CA_CERTS;
 const ambientEnv = { ...process.env };
 
 const require = createRequire(import.meta.url);
@@ -192,6 +193,8 @@ assert.deepEqual({ ...process.env }, ambientEnv);
 assert.equal(unrefs, 2);
 
 // 7. The MCP server inherits the editor settings from the CLI and must not replace them with defaults.
+// Only probe the local fixture: the direct-provider case above must not launch an outbound probe child.
+rmSync(join(profiles, 'deepseek.json'));
 process.env.VANNEVAR_PROFILES_DIR = profiles;
 process.env.VANNEVAR_RUNTIME_DIR = runtime;
 for (const entry of configuredEnv) process.env[entry.name] = entry.value;
