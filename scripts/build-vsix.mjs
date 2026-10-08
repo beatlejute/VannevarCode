@@ -89,6 +89,7 @@ const CONTENT_TYPES = {
     json: 'application/json',
     js: 'application/javascript',
     mjs: 'application/javascript',
+    cjs: 'application/javascript',
     md: 'text/markdown',
     png: 'image/png',
     jpg: 'image/jpeg',

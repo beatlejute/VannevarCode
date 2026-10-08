@@ -379,6 +379,8 @@ try {
         files.some((f) => f.name === 'runtime/apply-patch.mjs') && files.some((f) => f.name === 'extension.js'),
         'the package is missing the patcher or the entry point',
     );
+    assert.ok(files.some((f) => f.name === 'runtime/channel-proxy.cjs'), 'the package is missing the channel proxy preload');
+    assert.ok(files.some((f) => f.name === 'runtime/channel-relay.js'), 'the package is missing the channel relay');
     assert.ok(!files.some((f) => f.name.startsWith('test/') || f.name.startsWith('docs/')), 'tests or docs shipped');
 
     const eocd = vsix.length - 22;
@@ -403,6 +405,12 @@ try {
 
     assert.ok(names.has('extension.vsixmanifest'), 'no vsixmanifest — VS Code would reject the package');
     assert.ok(names.has('[Content_Types].xml'), 'no content types map');
+    assert.ok(names.has('extension/runtime/channel-proxy.cjs'), 'the VSIX omitted the channel proxy preload');
+    assert.match(
+        names.get('[Content_Types].xml').toString('utf8'),
+        /<Default Extension="cjs" ContentType="application\/javascript" \/>/,
+        'the VSIX does not declare CommonJS content type',
+    );
     assert.deepEqual(
         JSON.parse(names.get('extension/package.json').toString('utf8')),
         PKG,

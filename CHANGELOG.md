@@ -7,6 +7,10 @@ does.
 
 ## Unreleased
 
+The VSIX packer now ships `.cjs` runtime files with an explicit JavaScript content type. Without this,
+`runtime/channel-relay.js` could reference `channel-proxy.cjs` even though the installed extension omitted
+it, causing channel startup to fail before connecting through the corporate proxy.
+
 Current request failures in the selected session (including provider errors, rejected requests and
 failed automatic compaction) are sent once to the active channel. Historical errors and ordinary
 interruptions are not forwarded.
