@@ -7,31 +7,21 @@ does.
 
 ## Unreleased
 
-The VSIX packer now ships `.cjs` runtime files with an explicit JavaScript content type. Without this,
-`runtime/channel-relay.js` could reference `channel-proxy.cjs` even though the installed extension omitted
-it, causing channel startup to fail before connecting through the corporate proxy.
+## 2.1.294
 
-Current request failures in the selected session (including provider errors, rejected requests and
-failed automatic compaction) are sent once to the active channel. Historical errors and ordinary
-interruptions are not forwarded.
+Verified against Claude Code **2.1.294**, **2.1.293**, **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
 
-Channel command request correlation and displayed tab lists now survive host module reloads.
-Replies from existing webview listeners resolve the same pending requests rather than timing out
-because the listener and relay were holding different module-local maps.
+Claude Code 2.1.294 takes all twenty-two hooks unchanged: seven in `extension.js` and fifteen in the webview. Both patched bundles pass the syntax check. Compared with 2.1.293, both JavaScript bundles and the stylesheet retain the same byte sizes; the manifest remains at 31 commands and 21 settings, and the 3,604-key CLI settings schema differs only in its generation timestamp. The native CLI binary retains the same size; changed agent-related strings add error handling for agent/skill hook parsing and remote-agent metadata cleanup. The first-party Agent/Task and cloud/scheduled-task functionality introduced in 2.1.293 remains broadly adjacent to Vannevar's delegated-agent MCP feature, but is not a replacement for cross-provider delegation.
 
-Channel children preload proxy routing for HTTPS agent-based libraries and Bun's built-in
-node-fetch compatibility module. Bun uses the system CA store so corporate proxy certificates
-remain verified; explicit extra CA settings are preserved. The preload keeps plugin files unchanged
-and refuses failed connections without falling back to direct traffic. Outbox results are published
-by atomic rename so callers cannot read a partially written acknowledgement.
+The VSIX packer now ships `.cjs` runtime files with an explicit JavaScript content type. Without this, `runtime/channel-relay.js` could reference `channel-proxy.cjs` even though the installed extension omitted it, causing channel startup to fail before connecting through the corporate proxy.
 
-Window-owned channels handle `/commands`, `/tabs`, `/tab <number>` and `/session` directly,
-without sending these commands to a model. Tab selection uses the latest list shown to that chat,
-so reordered or closed tabs cannot silently select a different session. Plugin-owned help commands
-remain unchanged. `/models`, `/model`, `/effort`, `/mode`, `/providers` and `/provider` use the
-selected tab's native controls. Permission modes other than default/plan require an IDE modal
-confirmation; provider changes request the existing profile restart. Busy tabs and unconfirmed
-native changes are reported without claiming success.
+Current request failures in the selected session (including provider errors, rejected requests and failed automatic compaction) are sent once to the active channel. Historical errors and ordinary interruptions are not forwarded.
+
+Channel command request correlation and displayed tab lists now survive host module reloads. Replies from existing webview listeners resolve the same pending requests rather than timing out because the listener and relay were holding different module-local maps.
+
+Channel children preload proxy routing for HTTPS agent-based libraries and Bun's built-in node-fetch compatibility module. Bun uses the system CA store so corporate proxy certificates remain verified; explicit extra CA settings are preserved. The preload keeps plugin files unchanged and refuses failed connections without falling back to direct traffic. Outbox results are published by atomic rename so callers cannot read a partially written acknowledgement.
+
+Window-owned channels handle `/commands`, `/tabs`, `/tab <number>` and `/session` directly, without sending these commands to a model. Tab selection uses the latest list shown to that chat, so reordered or closed tabs cannot silently select a different session. Plugin-owned help commands remain unchanged. `/models`, `/model`, `/effort`, `/mode`, `/providers` and `/provider` use the selected tab's native controls. Permission modes other than default/plan require an IDE modal confirmation; provider changes request the existing profile restart. Busy tabs and unconfirmed native changes are reported without claiming success.
 
 ## 2.1.293
 
