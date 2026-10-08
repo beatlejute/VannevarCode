@@ -29,6 +29,14 @@ selected tab's native controls. Permission modes other than default/plan require
 confirmation; provider changes request the existing profile restart. Busy tabs and unconfirmed
 native changes are reported without claiming success.
 
+## 2.1.293
+
+Verified against Claude Code **2.1.293**, **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.293 takes all twenty-two hooks unchanged: seven in `extension.js` and fifteen in the webview. Both patched bundles pass the syntax check. Compared with 2.1.292, the pristine host grows 3,162 bytes and the webview 450; the stylesheet is unchanged. The extension manifest keeps 31 commands and 21 settings; the 3,604-key CLI settings schema adds no keys and only revises the `syncClaudeAiSkills` description.
+
+The native CLI adds first-party agent/task functionality: addressable spawned agents, `SendMessage`, cloud sessions, and scheduled/background tasks. This overlaps broadly with Vannevar's delegated-agent MCP feature, but is not a direct replacement: Claude's native tasks use the first-party Anthropic provider, while Vannevar delegates to other providers. The CLI binary was compared for these strings, not exhaustively audited.
+
 ## 2.1.292
 
 Verified against Claude Code **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**,
