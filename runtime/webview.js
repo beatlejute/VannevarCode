@@ -48,6 +48,7 @@
     var pendingRestart = null;
     var relayBusySent = null;
     var relayBusyValue = null;
+    var relayErrorSent = null;
     // The last 1h cache signal the host reported for the active session ({ ttl, anchorAt }), and the
     // timer that fires the pre-expiry compaction. Both are page-local: a reload drops the signal, and
     // the next message_delta restores it; the enabled flag survives in localStorage.
@@ -3812,9 +3813,65 @@
         if (mine) send({ type: 'ccx:relayBusy', busy: busy, sessionId: sessionId });
     }
 
+    function isRequestFailure(text) {
+        return /^(?:API Error:|Prompt is too long\b)|Provider returned error|automatic compaction failed|Request rejected \(\d{3}\)/i.test(text);
+    }
+
+    function relayErrorCandidate() {
+        var terminal = detectTerminalState();
+        if (terminal !== 'error' && terminal !== 'limit' && terminal !== 'failed') return null;
+        var messages = sessionMessages();
+        var last = messages.length ? messages[messages.length - 1] : null;
+        var assistantText = last && last.type === 'assistant' ? messageText(last).trim() : '';
+        var text = assistantText;
+        var errorBanner = document.querySelector('[class*="banner_"][data-color="error"]');
+        if (terminal === 'error' && errorBanner && errorBanner.offsetParent !== null) {
+            var bannerText = String(errorBanner.textContent || '').trim();
+            if (bannerText) text = assistantText && isRequestFailure(assistantText) ? assistantText : bannerText;
+        } else if (terminal === 'limit') text = '';
+        if (!text && terminal === 'limit') {
+            var banners = document.querySelectorAll('[class*="banner_"][data-color="warning"]');
+            for (var i = banners.length - 1; i >= 0; i--) {
+                if (banners[i].offsetParent !== null && /You've hit your\b/i.test(banners[i].textContent || '')) {
+                    text = String(banners[i].textContent || '').trim();
+                    break;
+                }
+            }
+        }
+        if (!text) return null;
+        if (terminal === 'failed' && !isRequestFailure(assistantText)) return null;
+        return { id: last && last.uuid ? String(last.uuid) : String(messages.length) + ':' + text, text: text };
+    }
+
+    function syncRelayError(live, sessionId) {
+        live = live || state.relay;
+        sessionId = sessionId || state.sessionId;
+        var session = activeSession();
+        var mine = Boolean(live && live.status === 'on' && (live.target
+            ? live.target === sessionId
+            : (live.targets || []).length === 1 && live.targets[0].sessionId === sessionId));
+        if (!session) {
+            relayErrorSent = null;
+            return;
+        }
+        var failure = relayErrorCandidate();
+        if (!failure) {
+            relayErrorSent = null;
+            return;
+        }
+        var key = String(sessionId || '') + ':' + failure.id;
+        if (!mine) {
+            relayErrorSent = key;
+            return;
+        }
+        if ((session.busy && session.busy.value) || key === relayErrorSent) return;
+        relayErrorSent = key;
+        send({ type: 'ccx:relayError', sessionId: sessionId, errorId: failure.id, text: failure.text });
+    }
+
     function watchPicker() {
-        // Busy can change without a host state push or a visible DOM mutation (thinking/tools).
-        if (typeof setInterval === 'function') setInterval(function () { syncRelayBusy(); }, 500);
+        // Busy and terminal state can change without a host push or visible DOM mutation.
+        if (typeof setInterval === 'function') setInterval(function () { syncRelayBusy(); syncRelayError(); }, 500);
         var timer = null;
         new MutationObserver(function () {
             clearTimeout(timer);
@@ -4241,7 +4298,7 @@
         if (!Array.isArray(msgs) || !msgs.length) return false;
         var last = msgs[msgs.length - 1];
         if (!last || last.type !== 'assistant') return false;
-        return /^API Error:/.test(messageText(last));
+        return isRequestFailure(messageText(last).trim());
     }
 
     // The send button swaps its icon between send and stop: stopIcon_ only renders while the model is

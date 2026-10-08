@@ -131,7 +131,9 @@ for that exact tab; a channel reply cannot approve it. `/providers` lists profil
 `/provider <name>` requests the existing profile switch and tab restart without changing the default
 provider. Omit a setting value to read its current value. Changes are refused while the tab is busy;
 missing native APIs, unavailable values and unconfirmed changes are reported instead of claiming
-success. Provider restart completion is not implied by the request acknowledgement.
+success. Provider restart completion is not implied by the request acknowledgement. Current request
+failures (for example API errors, rejected requests and automatic-compaction failures) are forwarded
+once to the channel when this is the selected tab; historical errors and ordinary interruptions are not.
 Plugin-owned commands such as Telegram's `/help` are not overridden; other slash commands are passed
 through as ordinary session text, not executed by the extension. To move the channel to another window,
 switch it on there — the toggle moves the ownership,

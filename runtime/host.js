@@ -2370,7 +2370,18 @@ function attachWebview(webview) {
         if (!m.type.startsWith('ccx:')) return;
 
         const sessionId = webview.__ccxSessionId || m.sessionId || null;
-        if (m.type === 'ccx:relayControlResult') {
+        if (m.type === 'ccx:relayError') {
+            const relay = relayState();
+            const bound = loadRelayTarget();
+            const messageId = String(m.sessionId || '');
+            const text = typeof m.text === 'string' ? m.text.trim() : '';
+            if (relay.status !== 'on' || !relay.relay || !relay.chatId || !text || !messageId ||
+                webview.__ccxSessionId !== messageId || (bound && bound !== messageId)) return;
+            const label = webview.__ccxTitle || 'Session ' + messageId.slice(0, 8);
+            const body = '[' + label + '] Request failed:\n' + text.slice(0, 3500);
+            relay.relay.send(relay.chatId, body)
+                .catch(() => dlog('relay failed to forward a tab error'));
+        } else if (m.type === 'ccx:relayControlResult') {
             const pending = relayControls.get(m.requestId);
             if (!pending || pending.target !== webview) return;
             relayControls.delete(m.requestId);
@@ -2839,8 +2850,10 @@ function deliverToTabs(message) {
 const RELAY_YES = /^(y|yes|да|\+)$/i;
 const RELAY_NO = /^(n|no|нет|-)$/i;
 
-const relayCommandTabs = new Map();
-const relayControls = new Map();
+// Host hooks reload this module while webview listeners from an earlier load remain attached.
+// Requests and replies must share the same maps across those loads.
+const relayCommandTabs = (S.relayCommandTabs ||= new Map());
+const relayControls = (S.relayControls ||= new Map());
 
 function relayControlReply(message, text) {
     const relay = relayState().relay;

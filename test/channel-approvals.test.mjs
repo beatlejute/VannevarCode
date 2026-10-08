@@ -83,7 +83,7 @@ const vscodeStub = { Uri: { file: (p) => ({ fsPath: p }) }, window: {
 Module._load = (request, ...rest) =>
     request === 'vscode' ? vscodeStub : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-approvals-${process.pid}.cjs`);
-writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8') + '\nmodule.exports.__relayCommand = relayCommand;\n');
 let host;
 try {
     host = require(copy);
@@ -192,6 +192,52 @@ inbound('/mode ask');
 assert.equal(delivered.at(-1).command, 'mode');
 assert.equal(delivered.at(-1).value, 'ask');
 assert.equal(confirmations.length, 1, 'ask does not require escalation approval');
+// A reload must retain requests owned by listeners installed by the previous host module.
+const pendingMap = state.relayControls;
+const tabsMap = state.relayCommandTabs;
+assert.ok(pendingMap.size > 0);
+// Attach a real host listener before reloading, then answer a request created by the new module.
+let oldListener;
+const controlMessages = [];
+const target = {
+    __ccxSessionId: 'session-two', __ccxTitle: 'Second tab',
+    postMessage: (message) => { controlMessages.push(message); return Promise.resolve(true); },
+    onDidReceiveMessage: (listener) => { oldListener = listener; },
+    asWebviewUri: (uri) => uri,
+};
+for (const field of ['agentRunsWatcher', 'settingsWatcher', 'bindingsWatcher', 'defaultWatcher', 'profilesWatcher', 'healthWatcher', 'extensionsWatcher']) state[field] ||= {};
+writeFileSync(join(runtime, 'webview.js'), '// Fake webview runtime for listener registration.');
+state.webviews.delete([...state.webviews].find((view) => view.__ccxSessionId === 'session-two'));
+host.renderScript(target, 'test-nonce');
+assert.equal(typeof oldListener, 'function');
+Module._load = (request, ...rest) => request === 'vscode' ? vscodeStub : load(request, ...rest);
+writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8') + '\nmodule.exports.__relayCommand = relayCommand;\n');
+try {
+    delete require.cache[require.resolve(copy)];
+    const reloadedHost = require(copy);
+    assert.equal(state.relayControls, pendingMap, 'request correlation survives host reload');
+    assert.equal(state.relayCommandTabs, tabsMap, 'the displayed tab list survives host reload');
+    reloadedHost.__relayCommand({ chatId: '777', messageId: '56' }, '/session');
+    const control = controlMessages.findLast((message) => message.type === 'ccx:relayControl');
+    assert.ok(control, 'the new host posts the request to the selected webview');
+    assert.ok(pendingMap.has(control.requestId));
+    oldListener({ type: 'ccx:relayControlResult', requestId: control.requestId, text: 'Provider: test-provider' });
+    assert.equal(pendingMap.has(control.requestId), false, 'the old listener settles the new request');
+    assert.equal(commandReplies.at(-1).text, 'Provider: test-provider');
+    assert.equal(commandReplies.at(-1).extra.reply_to, '56');
+    oldListener({ type: 'ccx:relayError', sessionId: 'session-two', errorId: 'api-429', text: 'API Error: Request rejected (429)' });
+    assert.equal(commandReplies.at(-1).text, '[Second tab] Request failed:\nAPI Error: Request rejected (429)');
+    const forwardedCount = commandReplies.length;
+    oldListener({ type: 'ccx:relayError', sessionId: 'session-one', errorId: 'stale', text: 'wrong tab' });
+    assert.equal(commandReplies.length, forwardedCount, 'errors from stale tabs are ignored');
+    oldListener({ type: 'ccx:relayError', sessionId: 'session-two', errorId: 'empty', text: '  ' });
+    assert.equal(commandReplies.length, forwardedCount, 'empty error notifications are ignored');
+} finally {
+    rmSync(copy, { force: true });
+    Module._load = load;
+    for (const pending of pendingMap.values()) clearTimeout(pending.timer);
+    pendingMap.clear();
+}
 state.relay.relay.send = originalSend;
 
 host.stopChannelRelay();

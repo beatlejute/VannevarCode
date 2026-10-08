@@ -292,4 +292,55 @@ assert.match(await control('mode', 'auto'), /refused/);
 controlled.autoModeAvailability.value = 'unavailable';
 assert.match(await control('mode', 'auto'), /unavailable/);
 
+// Forward only the current tab's terminal API failure, once, while idle and addressed by the channel.
+const requestFailure = 'Prompt is too long · automatic compaction failed: API Error: Request rejected (429) · Provider returned error';
+controlled.messages = { value: [{ type: 'assistant', uuid: 'error-1', content: [{ content: { type: 'text', text: requestFailure } }] }] };
+controlled.busy.value = false;
+withRelay({ status: 'on', server: 'telegram', chatId: '777', target: 's-1', targets: [], pending: 0 }, 's-1');
+posted.length = 0;
+busyTick();
+const failures = () => posted.filter((m) => m.type === 'ccx:relayError');
+assert.equal(failures().length, 1);
+assert.equal(failures()[0].sessionId, 's-1');
+assert.equal(failures()[0].text, requestFailure);
+busyTick();
+assert.equal(failures().length, 1, 'one terminal error is forwarded once');
+controlled.busy.value = true;
+busyTick();
+assert.equal(failures().length, 1, 'an error is not forwarded while the tab is working');
+controlled.messages.value.push({ type: 'user', uuid: 'user-2', content: [] });
+busyTick();
+assert.equal(failures().length, 1, 'a failure followed by a new turn is historical');
+controlled.busy.value = false;
+controlled.messages.value.push({ type: 'assistant', uuid: 'error-2', content: [{ content: { type: 'text', text: 'API Error: Request rejected (429)' } }] });
+busyTick();
+assert.equal(failures().length, 2, 'a new request failure gets a new notification');
+withRelay({ status: 'on', server: 'telegram', chatId: '777', target: 's-other', targets: [], pending: 0 }, 's-1');
+controlled.messages.value.push({ type: 'assistant', uuid: 'error-3', content: [{ content: { type: 'text', text: 'Provider returned error' } }] });
+busyTick();
+assert.equal(failures().length, 2, 'errors from a tab not addressed by the channel are not forwarded');
+
+// A visible CLI error banner and hard usage-limit banner are forwarded even without an assistant turn.
+const originalQuerySelector = pageDocument.querySelector;
+const originalQuerySelectorAll = pageDocument.querySelectorAll;
+let visibleError = null;
+let visibleWarnings = [];
+pageDocument.querySelector = (selector) => selector.includes('banner_') && selector.includes('error') ? visibleError : originalQuerySelector(selector);
+pageDocument.querySelectorAll = (selector) => selector.includes('banner_') && selector.includes('warning') ? visibleWarnings : originalQuerySelectorAll(selector);
+controlled.messages.value = [];
+withRelay({ status: 'on', server: 'telegram', chatId: '777', target: 's-1', targets: [], pending: 0 }, 's-1');
+visibleError = { offsetParent: {}, textContent: 'Provider returned error: rate limited' };
+posted.length = 0;
+busyTick();
+assert.equal(failures().length, 1);
+assert.equal(failures()[0].text, 'Provider returned error: rate limited');
+visibleError = null;
+visibleWarnings = [{ offsetParent: {}, textContent: "You've hit your weekly limit · resets Friday" }];
+busyTick();
+assert.equal(failures().length, 2);
+assert.equal(failures()[1].text, "You've hit your weekly limit · resets Friday");
+visibleWarnings = [];
+pageDocument.querySelector = originalQuerySelector;
+pageDocument.querySelectorAll = originalQuerySelectorAll;
+
 console.log('\nOK — the channel is shown in the tab it is addressed to, and nowhere else');

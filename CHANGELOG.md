@@ -7,6 +7,14 @@ does.
 
 ## Unreleased
 
+Current request failures in the selected session (including provider errors, rejected requests and
+failed automatic compaction) are sent once to the active channel. Historical errors and ordinary
+interruptions are not forwarded.
+
+Channel command request correlation and displayed tab lists now survive host module reloads.
+Replies from existing webview listeners resolve the same pending requests rather than timing out
+because the listener and relay were holding different module-local maps.
+
 Channel children preload proxy routing for HTTPS agent-based libraries and Bun's built-in
 node-fetch compatibility module. Bun uses the system CA store so corporate proxy certificates
 remain verified; explicit extra CA settings are preserved. The preload keeps plugin files unchanged
