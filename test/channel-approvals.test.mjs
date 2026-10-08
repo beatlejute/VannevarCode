@@ -17,7 +17,7 @@ import assert from 'node:assert';
 const home = join(tmpdir(), `ccx-approvals-${process.pid}`);
 const runtime = join(home, '.claude', 'vannevar');
 mkdirSync(runtime, { recursive: true });
-for (const file of ['host.js', 'channel-relay.js']) {
+for (const file of ['host.js', 'channel-relay.js', 'channel-proxy.cjs']) {
     copyFileSync(new URL(`../runtime/${file}`, import.meta.url), join(runtime, file));
 }
 
@@ -76,8 +76,12 @@ process.env.USERPROFILE = home;
 const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const load = Module._load;
+const confirmations = [];
+const vscodeStub = { Uri: { file: (p) => ({ fsPath: p }) }, window: {
+    showWarningMessage: async (text, options) => { confirmations.push({ text, options }); return undefined; },
+} };
 Module._load = (request, ...rest) =>
-    request === 'vscode' ? { Uri: { file: (p) => ({ fsPath: p }) }, window: {} } : load(request, ...rest);
+    request === 'vscode' ? vscodeStub : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-approvals-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
 let host;
@@ -147,6 +151,48 @@ assert.equal(result('discover').result.length, 4);
 assert.equal(result('edit').result.content[0].text, 'ok');
 assert.equal(result('unknown').ok, false);
 assert.match(result('unknown').error, /does not advertise/);
+
+// Extension commands reply directly without asking a model to interpret them.
+const commandReplies = [];
+const delivered = [];
+const state = globalThis.__ccxState;
+const originalSend = state.relay.relay.send;
+state.relay.relay.send = async (chat, text, extra) => { commandReplies.push({ chat, text, extra }); return { text: 'ok' }; };
+state.webviews = new Set([
+    { __ccxSessionId: 'session-one', __ccxTitle: 'First tab', postMessage: (message) => delivered.push(message) },
+    { __ccxSessionId: 'session-two', __ccxTitle: 'Second tab', postMessage: (message) => delivered.push(message) },
+]);
+state.lastActiveWebview = [...state.webviews][0];
+// Drive the same inbound event handler used by the running plugin.
+const inbound = (text) => state.relay.relay.emit('inbound', { text, chatId: '777', messageId: '55' });
+inbound('/commands');
+assert.match(commandReplies.at(-1).text, /\/tabs/);
+assert.equal(commandReplies.at(-1).chat, '777');
+assert.equal(commandReplies.at(-1).extra.reply_to, '55');
+inbound('/tabs');
+assert.match(commandReplies.at(-1).text, /2\. Second tab/);
+inbound('/tab 2');
+assert.match(commandReplies.at(-1).text, /Receiving tab: Second tab/);
+inbound('/session');
+assert.equal(delivered.at(-1).command, 'session');
+assert.equal(delivered.at(-1).sessionId, 'session-two');
+inbound('/tab 99');
+assert.match(commandReplies.at(-1).text, /Invalid or closed tab/);
+inbound('ordinary message');
+assert.equal(delivered.at(-1).text, 'ordinary message');
+const controlsBefore = delivered.filter((m) => m.type === 'ccx:relayControl').length;
+inbound('/mode auto');
+await wait(20);
+assert.equal(confirmations.length, 1);
+assert.equal(confirmations[0].options.modal, true);
+assert.match(confirmations[0].text, /Second tab/);
+assert.match(commandReplies.at(-1).text, /cancelled/);
+assert.equal(delivered.filter((m) => m.type === 'ccx:relayControl').length, controlsBefore, 'denied escalation never reaches the native setter');
+inbound('/mode ask');
+assert.equal(delivered.at(-1).command, 'mode');
+assert.equal(delivered.at(-1).value, 'ask');
+assert.equal(confirmations.length, 1, 'ask does not require escalation approval');
+state.relay.relay.send = originalSend;
 
 host.stopChannelRelay();
 // The plugin this test started lives in that directory and is on its way out; on Windows a file a

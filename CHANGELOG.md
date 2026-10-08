@@ -5,6 +5,22 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## Unreleased
+
+Channel children preload proxy routing for HTTPS agent-based libraries and Bun's built-in
+node-fetch compatibility module. Bun uses the system CA store so corporate proxy certificates
+remain verified; explicit extra CA settings are preserved. The preload keeps plugin files unchanged
+and refuses failed connections without falling back to direct traffic. Outbox results are published
+by atomic rename so callers cannot read a partially written acknowledgement.
+
+Window-owned channels handle `/commands`, `/tabs`, `/tab <number>` and `/session` directly,
+without sending these commands to a model. Tab selection uses the latest list shown to that chat,
+so reordered or closed tabs cannot silently select a different session. Plugin-owned help commands
+remain unchanged. `/models`, `/model`, `/effort`, `/mode`, `/providers` and `/provider` use the
+selected tab's native controls. Permission modes other than default/plan require an IDE modal
+confirmation; provider changes request the existing profile restart. Busy tabs and unconfirmed
+native changes are reported without claiming success.
+
 ## 2.1.292
 
 Verified against Claude Code **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**,

@@ -140,7 +140,18 @@ class ChannelRelay {
             this.log('relay start', this.command, args.join(' '));
             let child;
             try {
-                child = spawn(resolveCommand(expandRoot(this.command, this.cwd)), args, { cwd: this.cwd, env: this.env, stdio: ['pipe', 'pipe', 'pipe'] });
+                const env = Object.assign({}, this.env);
+                if (env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy) {
+                    const preloadPath = require('path').join(__dirname, 'channel-proxy.cjs');
+                    env.VANNEVAR_CHANNEL_PROXY = '1';
+                    env.NODE_OPTIONS = ((env.NODE_OPTIONS || '') + ' --require ' + JSON.stringify(preloadPath)).trim();
+                    // Bun's environment parser treats quotes/backslashes differently from Node's.
+                    // The equals form keeps the Windows path intact, including spaces.
+                    // Bun otherwise trusts only its bundled roots, unlike the editor on corporate
+                    // networks. Keep TLS verification enabled and include the OS-managed CA store.
+                    env.BUN_OPTIONS = ((env.BUN_OPTIONS || '') + ' --use-system-ca --preload=' + preloadPath).trim();
+                }
+                child = spawn(resolveCommand(expandRoot(this.command, this.cwd)), args, { cwd: this.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
             } catch (e) {
                 reject(e);
                 return;

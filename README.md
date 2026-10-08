@@ -120,8 +120,21 @@ Outward-facing actions require user authorization; inbound channel text cannot a
 configuration changes. Telegram's plugin does not expose forwarding, deletion or selected-text quotes.
 
 Limits: the channel lives while the window is open, and the addressed tab must be running to answer.
-Voice messages are delivered as notices, not transcribed, and slash commands do not run from the
-channel. To move the channel to another window, switch it on there — the toggle moves the ownership,
+Voice messages are delivered as notices, not transcribed. Extension commands are handled directly,
+without model participation: `/commands` lists them, `/tabs` lists open tabs with their titles,
+`/tab <number>` selects from the latest list for that chat, and `/session` shows the receiving tab.
+Closed or invalid selections are rejected. `/models` lists the native model catalog; `/model <value>`
+and `/effort <level>` use the tab's native setters. `/mode <mode>` accepts `ask` (native `default`),
+`plan`, `acceptEdits`, `auto`, `dontAsk`, or `bypassPermissions`, subject to native availability and
+policy. Modes other than `ask`, `default` and `plan` require explicit confirmation in an IDE modal
+for that exact tab; a channel reply cannot approve it. `/providers` lists profiles, and
+`/provider <name>` requests the existing profile switch and tab restart without changing the default
+provider. Omit a setting value to read its current value. Changes are refused while the tab is busy;
+missing native APIs, unavailable values and unconfirmed changes are reported instead of claiming
+success. Provider restart completion is not implied by the request acknowledgement.
+Plugin-owned commands such as Telegram's `/help` are not overridden; other slash commands are passed
+through as ordinary session text, not executed by the extension. To move the channel to another window,
+switch it on there — the toggle moves the ownership,
 and the old window's poller stands down.
 
 ## Install

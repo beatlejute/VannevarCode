@@ -2370,7 +2370,13 @@ function attachWebview(webview) {
         if (!m.type.startsWith('ccx:')) return;
 
         const sessionId = webview.__ccxSessionId || m.sessionId || null;
-        if (m.type === 'ccx:get') {
+        if (m.type === 'ccx:relayControlResult') {
+            const pending = relayControls.get(m.requestId);
+            if (!pending || pending.target !== webview) return;
+            relayControls.delete(m.requestId);
+            clearTimeout(pending.timer);
+            relayControlReply(pending.message, webview.__ccxSessionId === pending.sessionId ? String(m.text || 'No result') : 'The receiving tab changed.');
+        } else if (m.type === 'ccx:get') {
             // The icon set is sent once per webview and then only when it changes — but the first
             // send happens in renderScript(), while the HTML is still being built and no page exists
             // to receive it. That message is dropped, the stamp is not, and every later postIcons()
@@ -2567,6 +2573,9 @@ const RELAY_MODULE = path.join(DIR, 'channel-relay.js');
 
 function relayModule() {
     try {
+        // Runtime files may be updated while this host is alive. A restarted relay must use the
+        // current launch configuration rather than the constructor cached by its previous start.
+        delete require.cache[require.resolve(RELAY_MODULE)];
         return require(RELAY_MODULE);
     } catch (e) {
         dlog('channel relay module missing', (e && e.message) || String(e));
@@ -2692,7 +2701,10 @@ function relayDrainOutbox() {
         const answer = (payload) => {
             relayOutboxPending.delete(file);
             try {
-                fs.writeFileSync(file.replace(/\.json$/, '.result.json'), JSON.stringify(payload));
+                const resultFile = file.replace(/\.json$/, '.result.json');
+                const tmp = resultFile + '.' + process.pid + '.tmp';
+                fs.writeFileSync(tmp, JSON.stringify(payload), { mode: 0o600 });
+                fs.renameSync(tmp, resultFile);
             } catch (e) {
                 dlog('relay result write failed', (e && e.message) || String(e));
             }
@@ -2827,10 +2839,87 @@ function deliverToTabs(message) {
 const RELAY_YES = /^(y|yes|да|\+)$/i;
 const RELAY_NO = /^(n|no|нет|-)$/i;
 
+const relayCommandTabs = new Map();
+const relayControls = new Map();
+
+function relayControlReply(message, text) {
+    const relay = relayState().relay;
+    if (relay && message.chatId) relay.send(String(message.chatId), text, message.messageId ? { reply_to: String(message.messageId) } : {})
+        .catch((e) => dlog('relay control reply failed', e.message));
+}
+
+async function relayControl(message, command, value) {
+    const bound = loadRelayTarget();
+    const target = bound ? findWebviewBySession(bound) : S.lastActiveWebview;
+    if (!target) return relayControlReply(message, 'No receiving tab. Run /tabs first.');
+    const sessionId = target.__ccxSessionId;
+    if (command === 'mode' && value && !['ask', 'default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions'].includes(value))
+        return relayControlReply(message, 'Unknown permission mode.');
+    if (command === 'mode' && value && !['ask', 'default', 'plan'].includes(value)) {
+        const approved = await vscode.window.showWarningMessage(
+            'Channel requests permission mode "' + value + '" for "' + (target.__ccxTitle || sessionId) + '".',
+            { modal: true }, 'Change mode');
+        if (approved !== 'Change mode') return relayControlReply(message, 'Permission mode change cancelled.');
+    }
+    if (!S.webviews.has(target) || target.__ccxSessionId !== sessionId) return relayControlReply(message, 'The receiving tab changed or closed.');
+    const requestId = require('crypto').randomUUID();
+    const timer = setTimeout(() => {
+        relayControls.delete(requestId);
+        relayControlReply(message, 'No confirmation from the tab within 15s; the change is not confirmed.');
+    }, 15000);
+    timer.unref?.();
+    relayControls.set(requestId, { target, sessionId, message, timer });
+    post(target, { type: 'ccx:relayControl', requestId, command, value, sessionId });
+}
+
+function relayCommand(message, text) {
+    const match = /^\/(commands|tabs|tab|session|models|model|effort|mode|providers|provider)(?:\s+(.*))?$/i.exec(text);
+    if (!match) return false;
+    const command = match[1].toLowerCase();
+    const chatId = String(message.chatId || '');
+    const tabs = relayTargets();
+    const title = (tab) => tab.title || 'Session ' + tab.sessionId.slice(0, 8);
+    let reply;
+    if (['session', 'models', 'model', 'effort', 'mode', 'provider'].includes(command)) {
+        relayControl(message, command, (match[2] || '').trim()).catch((e) => relayControlReply(message, 'Control failed: ' + e.message));
+        return true;
+    }
+    if (command === 'providers') {
+        reply = listProfiles().join('\n') || 'No provider profiles.';
+    } else if (command === 'commands') {
+        reply = 'Vannevar commands:\n/commands — show this list\n/tabs — list open tabs\n/tab <number> — select a tab from the latest /tabs list\n/session — show the receiving tab\n/models — list models\n/model <value> — change model\n/effort <level> — change effort\n/mode <mode> — change permission mode (elevated modes require IDE confirmation)\n/providers — list provider profiles\n/provider <name> — switch provider and restart the tab\n\nOther messages go to the selected tab. Omit a setting value to read it.';
+    } else if (command === 'tabs') {
+        relayCommandTabs.set(chatId, tabs.map((tab) => tab.sessionId));
+        reply = tabs.length ? tabs.map((tab, index) => (index + 1) + '. ' + title(tab)).join('\n') : 'No open session tabs.';
+    } else if (command === 'tab') {
+        const ids = relayCommandTabs.get(chatId);
+        const arg = match[2] || '';
+        const index = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
+        const tab = ids && tabs.find((tab) => tab.sessionId === ids[index]);
+        if (!tab) reply = 'Invalid or closed tab. Run /tabs, then /tab <number>.';
+        else {
+            saveRelayTarget(tab.sessionId);
+            broadcast();
+            reply = 'Receiving tab: ' + title(tab);
+        }
+    } else {
+        const bound = loadRelayTarget();
+        const tab = bound ? tabs.find((tab) => tab.sessionId === bound) : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
+        reply = tab ? 'Receiving tab: ' + title(tab) : 'No receiving tab available. Run /tabs, then /tab <number>.';
+    }
+    const state = relayState();
+    if (state.relay && chatId) {
+        state.relay.send(chatId, reply, message.messageId ? { reply_to: String(message.messageId) } : {})
+            .catch((e) => dlog('relay command reply failed', (e && e.message) || String(e)));
+    }
+    return true;
+}
+
 function relayInbound(message) {
     relayRememberChat(message);
     const state = relayState();
     const text = String((message && message.text) || '').trim();
+    if (relayCommand(message, text)) return;
     // A `y` or `n` with a question outstanding is an answer, and nothing else. Anything else is a
     // message for the session: it is handed to the open tab exactly as the CLI would have delivered
     // it had the session's own plugin been the one polling — which, while this relay runs, it is not.

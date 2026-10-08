@@ -671,6 +671,54 @@
         window.addEventListener('keydown', onKey, true);
     }
 
+    async function handleRelayControl(d) {
+        var result;
+        try {
+            var s = activeSession();
+            if (!s || (sessionByChannel[activeChannelId] || state.sessionId) !== d.sessionId) throw new Error('The receiving session changed.');
+            var value = d.value;
+            var models = s.claudeConfig && s.claudeConfig.value && s.claudeConfig.value.models || [];
+            if (d.command === 'session') {
+                result = 'Provider: ' + (state.active || 'default') + '\nModel: ' + (s.modelSelection && s.modelSelection.value || 'default')
+                    + '\nEffort: ' + (s.effortLevel && s.effortLevel.value || 'default') + '\nPermission mode: ' + (s.permissionMode && s.permissionMode.value || 'default');
+            } else if (d.command === 'models') {
+                result = models.map(function (m) { return m.value + (m.displayName ? ' — ' + m.displayName : ''); }).join('\n') || 'No model catalog available.';
+            } else if (!value) {
+                result = d.command === 'model' ? 'Model: ' + (s.modelSelection && s.modelSelection.value || 'default')
+                    : d.command === 'effort' ? 'Effort: ' + (s.effortLevel && s.effortLevel.value || 'default')
+                    : d.command === 'mode' ? 'Permission mode: ' + (s.permissionMode && s.permissionMode.value || 'default')
+                    : 'Provider: ' + (state.active || 'default');
+            } else {
+                if (s.busy && s.busy.value) throw new Error('The tab is busy. Retry when it finishes.');
+                if (d.command === 'model') {
+                    var model = models.find(function (m) { return m.value === value; });
+                    if (!model || typeof s.setModel !== 'function') throw new Error('Unknown or unavailable model. Run /models.');
+                    if (await s.setModel(model) !== true) throw new Error('Model change was not confirmed.');
+                    result = 'Model: ' + value;
+                } else if (d.command === 'effort') {
+                    var info = s.currentModelInfo && s.currentModelInfo.value;
+                    if (!info || !info.supportsEffort || (info.supportedEffortLevels || ['low', 'medium', 'high']).indexOf(value) < 0 || typeof s.setEffortLevel !== 'function') throw new Error('Unsupported effort level for this model.');
+                    await s.setEffortLevel(value);
+                    result = 'Effort: ' + value;
+                } else if (d.command === 'mode') {
+                    var mode = value === 'ask' ? 'default' : value;
+                    if (['default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions'].indexOf(mode) < 0 || typeof s.setPermissionMode !== 'function') throw new Error('Unknown permission mode.');
+                    if (mode === 'auto' && (!s.autoModeAvailability || s.autoModeAvailability.value === 'unavailable')) throw new Error('Auto mode is unavailable.');
+                    if (mode === 'bypassPermissions' && (!s.bypassVerdict || s.bypassVerdict.value !== 'allowed')) throw new Error('Bypass permissions is unavailable.');
+                    if (await s.setPermissionMode(mode, true, true, { requireVerdict: true }) !== 'accepted') throw new Error('Permission mode change was refused or not delivered.');
+                    result = 'Permission mode: ' + mode;
+                } else if (d.command === 'provider') {
+                    if (!state.profiles.some(function (p) { return p.name === value; })) throw new Error('Unknown provider. Run /providers.');
+                    send({ type: 'ccx:apply', sessionId: d.sessionId, channelId: activeChannelId, name: value });
+                    result = 'Provider switch requested: ' + value + '. The tab will restart; completion is not yet confirmed.';
+                }
+            }
+        } catch (err) {
+            result = 'Control failed: ' + err.message;
+        }
+        send({ type: 'ccx:relayControlResult', requestId: d.requestId, text: result });
+    }
+
     window.addEventListener('message', function (e) {
         var d = e.data;
         if (!d || typeof d.type !== 'string') return;
@@ -696,6 +744,11 @@
                 clearTimeout(job.timer);
                 setTimeout(function () { doLaunch(job); }, 150);
             }
+            return;
+        }
+
+        if (d.type === 'ccx:relayControl') {
+            handleRelayControl(d);
             return;
         }
 

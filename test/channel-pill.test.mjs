@@ -261,4 +261,35 @@ withRelay({ status: 'on', server: 'telegram', target: 's-other', targets: [], pe
 busyTick();
 assert.equal(posted.filter((m) => m.type === 'ccx:relayBusy').length, 0, 'a different tab cannot stop typing');
 
+// Remote controls use the same native setters as the editor, never model prompts.
+const setters = [];
+const controlled = {
+    send() {}, busy: { value: false },
+    claudeConfig: { value: { models: [{ value: 'sonnet', displayName: 'Sonnet' }] } },
+    currentModelInfo: { value: { supportsEffort: true, supportedEffortLevels: ['low', 'high'] } },
+    setModel: async (model) => { setters.push(['model', model.value]); return true; },
+    setEffortLevel: async (level) => { setters.push(['effort', level]); },
+    setPermissionMode: async (mode) => { setters.push(['mode', mode]); return 'accepted'; },
+};
+pageWindow.__ccx.onRegistry(null, null, controlled);
+const control = async (command, value) => {
+    fromHost({ type: 'ccx:relayControl', sessionId: 's-1', requestId: 'req-1', command, value });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return posted.filter((m) => m.type === 'ccx:relayControlResult').at(-1).text;
+};
+assert.match(await control('models', ''), /sonnet/);
+assert.equal(await control('model', 'sonnet'), 'Model: sonnet');
+assert.equal(await control('effort', 'high'), 'Effort: high');
+assert.equal(await control('mode', 'ask'), 'Permission mode: default');
+assert.deepEqual(setters, [['model', 'sonnet'], ['effort', 'high'], ['mode', 'default']]);
+assert.match(await control('effort', 'max'), /Unsupported/);
+controlled.busy.value = true;
+assert.match(await control('model', 'sonnet'), /busy/);
+controlled.busy.value = false;
+controlled.setPermissionMode = async () => 'refused';
+controlled.autoModeAvailability = { value: 'available' };
+assert.match(await control('mode', 'auto'), /refused/);
+controlled.autoModeAvailability.value = 'unavailable';
+assert.match(await control('mode', 'auto'), /unavailable/);
+
 console.log('\nOK — the channel is shown in the tab it is addressed to, and nowhere else');
