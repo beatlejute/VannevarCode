@@ -14,3 +14,14 @@ assets/
 .kilo/
 .claude/
 CLAUDE.md
+
+# Workflow AI specific
+.workflow-state/
+.cache/
+.workflow/
+.workflow/state/
+
+# AI
+QWEN.md
+.kilocode/
+.kilocodemodes
