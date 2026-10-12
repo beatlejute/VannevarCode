@@ -60,6 +60,11 @@ const {
     formatCost,
     describeModel,
     execAllowlist,
+    prepareAgentFiles,
+    stageAgentFiles,
+    promptWithAttachments,
+    agentArgsWithAttachments,
+    openRun,
     MODES,
     MODE_ALIASES,
 } = await import('../runtime/mcp/agent-server.mjs');
@@ -102,7 +107,10 @@ async function main() {
     const names = out[0].result.tools.map((t) => t.name).sort();
     assert.deepStrictEqual(names, ['channel_call', 'channel_send', 'channel_tools', 'check_agent', 'list_profiles', 'run_agent', 'stop_agent'], 'every tool listed');
     const runAgent = TOOLS.find((t) => t.name === 'run_agent');
-    // profile is not required any more: a resumed session already knows which provider it belongs to
+    assert.ok(runAgent.inputSchema.properties.files, 'run_agent accepts explicit channel attachment paths');
+    assert.match(runAgent.description, /discover `download_attachment` with channel_tools/);
+    assert.match(runAgent.description, /pass its returned inbox path in `files`/);
+    // profile is not required any more: a resumed session already knows which provider it belongs to.
     assert.deepStrictEqual(runAgent.inputSchema.required, ['prompt'], 'only the prompt is always required');
     assert.ok(runAgent.inputSchema.properties.session, 'a run can be continued');
     assert.ok(runAgent.inputSchema.properties.background, 'a run can be backgrounded');
@@ -183,7 +191,77 @@ async function main() {
     assert.deepStrictEqual(MODES.write.slice(2), MODES.exec, 'write is a superset of exec');
     assert.strictEqual(MODE_ALIASES['read+exec'], 'exec', 'the name the mode was asked for still works');
 
-    // --- bad calls are reported as tool errors the model can correct, not as transport failures
+    // Channel attachments are made available to the delegate as files in its Read scope, not copied
+    // into the task prompt. Only the channel's own per-server inbox may be handed off.
+    const channels = path.join(dir, 'channels');
+    const inbox = path.join(channels, 'telegram', 'inbox');
+    const staging = path.join(dir, 'staging');
+    fs.mkdirSync(inbox, { recursive: true });
+    fs.mkdirSync(staging, { recursive: true });
+    const markdown = path.join(inbox, 'brief.md');
+    const markdownBody = '# Brief\n\nThis content should stay in the file, not the prompt.';
+    fs.writeFileSync(markdown, markdownBody, 'utf8');
+    const binary = path.join(inbox, 'diagram.pdf');
+    fs.writeFileSync(binary, Buffer.from([0x25, 0x50, 0x44, 0x46, 0x00]));
+    const attachments = prepareAgentFiles([markdown, binary], channels);
+    assert.equal(attachments.length, 2);
+    const staged = stageAgentFiles(attachments, staging);
+    try {
+        assert.ok(fs.existsSync(staged.directory));
+        assert.deepStrictEqual(staged.files.map((file) => fs.readFileSync(file.path)), [
+            fs.readFileSync(markdown), fs.readFileSync(binary),
+        ], 'only the explicitly attached files are copied into the delegate workspace');
+        const attachmentPrompt = promptWithAttachments('Review the supplied brief.', staged.files);
+        assert.match(attachmentPrompt, /Review the supplied brief/);
+        assert.match(attachmentPrompt, /brief\.md/);
+        assert.match(attachmentPrompt, /diagram\.pdf/);
+        assert.doesNotMatch(attachmentPrompt, /This content should stay in the file/, 'file contents are not in the prompt');
+        assert.ok(attachmentPrompt.includes(JSON.stringify(staged.files[0].path)), 'staged path is quoted for Read');
+        const manifestId = 'cccccccc-1111-2222-3333-444444444444';
+        openRun({
+            liveSession: manifestId,
+            profile: 'claude',
+            model: 'sonnet',
+            mode: 'read',
+            cwd: dir,
+            depth: 0,
+            promptPreview: 'Review the supplied brief.',
+            attachments: staged.files,
+        }, false);
+        const manifest = JSON.parse(fs.readFileSync(path.join(runtime, 'agent-runs', `${manifestId}.json`), 'utf8'));
+        assert.equal(manifest.prompt, 'Review the supplied brief.');
+        assert.deepStrictEqual(manifest.attachments, ['01-brief.md', '02-diagram.pdf']);
+        assert.doesNotMatch(JSON.stringify(manifest), /This content should stay in the file|diagram contents/);
+        const delegatedArgs = agentArgsWithAttachments(['-p', '--allowedTools', 'Read'], staged.directory);
+        assert.deepStrictEqual(delegatedArgs.slice(-2), ['--add-dir', staged.directory], 'the CLI grants Read access to the isolated attachment directory');
+        assert.deepStrictEqual(agentArgsWithAttachments(['-p'], null), ['-p'], 'calls without files keep their normal argv');
+    } finally {
+        fs.rmSync(staged.directory, { recursive: true, force: true });
+    }
+    const outsideAttachment = path.join(dir, 'outside.md');
+    fs.writeFileSync(outsideAttachment, '# Outside');
+    assert.throws(() => prepareAgentFiles([outsideAttachment], channels), /channel server inbox/);
+    const workspaceFile = path.join(dir, 'workspace.md');
+    fs.writeFileSync(workspaceFile, '# Workspace file');
+    assert.throws(() => prepareAgentFiles([workspaceFile], channels), /channel server inbox/, 'CWD files are not channel attachments');
+    const escapedLink = path.join(inbox, 'escape.md');
+    try {
+        fs.symlinkSync(outsideAttachment, escapedLink, 'file');
+        assert.throws(() => prepareAgentFiles([escapedLink], channels), /channel server inbox/, 'symlinks cannot escape the inbox');
+    } catch (error) {
+        if (!['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) throw error;
+    } finally {
+        fs.rmSync(escapedLink, { force: true });
+    }
+    assert.throws(() => prepareAgentFiles(Array(11).fill(markdown), channels), /at most 10 attachments/);
+    const oversized = path.join(inbox, 'oversized.md');
+    fs.writeFileSync(oversized, '');
+    fs.truncateSync(oversized, 20 * 1024 * 1024 + 1);
+    assert.throws(() => prepareAgentFiles([oversized], channels), /20 MB limit/);
+    fs.rmSync(channels, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
+
+    // --- bad calls are reported as tool errors the model can correct, not as transport failures.
     out = await capture(() =>
         handle({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'run_agent', arguments: { profile: 'nope', prompt: 'hi' } } }),
     );

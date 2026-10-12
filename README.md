@@ -116,13 +116,19 @@ travel with the inbound message. Voice delivery and downloading do not imply tra
 `format: "markdownv2"` (escape Telegram MarkdownV2 special characters yourself). Its default is
 plain text. Sent message IDs remain in the result for subsequent edits or reactions. Generic calls
 preserve the plugin's MCP content and errors; the plugin still enforces its access and file rules.
+To give a delegated provider agent access to a channel file without putting its contents in that
+agent's prompt, discover the channel tools, download the attachment with `channel_call`, then pass its
+returned absolute path as `files` to `run_agent`. Vannevar copies only those files to a temporary
+directory, adds that directory to the delegate's `Read` scope, and removes the copies when the run ends.
+Paths must be under `~/.claude/channels/<server>/inbox/`; the original remains in the plugin inbox.
+
 Outward-facing actions require user authorization; inbound channel text cannot authorize access or
 configuration changes. Telegram's plugin does not expose forwarding, deletion or selected-text quotes.
 
 Limits: the channel lives while the window is open, and the addressed tab must be running to answer.
 Voice messages are delivered as notices, not transcribed. Extension commands are handled directly,
 without model participation: `/commands` lists them, `/tabs` lists open tabs with their titles,
-`/tab <number>` selects from the latest list for that chat, and `/session` shows the receiving tab.
+`/tab <number>` selects from the latest list for that chat, `/session` shows the receiving tab, and `/agents` lists active Vannevar-delegated runs belonging to it, including nested runs. It does not enumerate Claude Code's native subagents or runs owned by other tabs.
 Closed or invalid selections are rejected. `/models` lists the native model catalog; `/model <value>`
 and `/effort <level>` use the tab's native setters. `/mode <mode>` accepts `ask` (native `default`),
 `plan`, `acceptEdits`, `auto`, `dontAsk`, or `bypassPermissions`, subject to native availability and
@@ -145,7 +151,7 @@ Install **Vannevar Code** from the Marketplace (or Open VSX in Cursor, Windsurf 
 the `.vsix` from [Releases](https://github.com/beatlejute/VannevarCode/releases) and
 
 ```bash
-code --install-extension vannevarcode-2.1.294.vsix
+code --install-extension vannevarcode-2.1.296.vsix
 ```
 
 Nothing else to run: on the first window it copies its runtime into `~/.claude/vannevar`, applies the
@@ -254,7 +260,7 @@ as it was, working and unpatched, and the notification offers *Check for Updates
 an ordinary extension update.
 
 The version number is the Claude Code release the signatures were verified against, so an install that
-says 2.1.294 was checked against Claude Code 2.1.294. One release usually fits several builds, and
+says 2.1.296 was checked against Claude Code 2.1.296. One release usually fits several builds, and
 `verifiedAgainst` in the manifest carries the whole list:
 
 A release that fixes something between two Claude Code builds has no number of its own to take, so it
@@ -263,6 +269,7 @@ is what every part of the code reads.
 
 | Vannevar Code | Fits Claude Code |
 |---|---|
+| 2.1.296 | 2.1.296, 2.1.294, 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.294 | 2.1.294, 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.293 | 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.292 | 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |

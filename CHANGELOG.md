@@ -5,7 +5,13 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
-## Unreleased
+## 2.1.296
+
+`run_agent` accepts explicitly downloaded channel attachment paths only from a channel server inbox. It copies those files to an isolated temporary directory, adds that directory to the delegate's `Read` scope, and removes the copies after completion; file contents are not injected into the task prompt. `/agents` lists active Vannevar delegated runs owned by the receiving tab, including nested delegated runs; it does not claim to enumerate native Claude Code subagents or runs from other tabs.
+
+Verified against Claude Code **2.1.296**, **2.1.294**, **2.1.293**, **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.296 takes all twenty-two hooks: seven in `extension.js` and fifteen in the webview. The Rewind prompt picker now calls `y51(Q,w)` instead of searching backward itself; its shared user-message filter still anchors, and the action menu's `messages/indexOf` relationship matches both this release and 2.1.294. Both patched bundles pass the syntax check. Compared with 2.1.294, the pristine host grows 12,121 bytes (3,480,825 → 3,492,946), the webview shrinks 5,445 bytes (5,567,460 → 5,562,015), and the stylesheet shrinks 490 bytes (436,408 → 435,918). The manifest remains at 31 commands and adds `claudeCode.spinnerVerbs`, letting users append custom loading verbs or replace the built-ins; this does not overlap Vannevar's per-tab provider UI or session history features. The CLI settings schema remains at 174 top-level keys and differs only in its generation timestamp (`2026-10-08T02:44:07.366Z` → `2026-10-09T14:29:41.092Z`). The native CLI grew 4,333,568 bytes; new strings expose cloud sessions/tasks and session-tunnel/agent-proxy support. Cloud execution is adjacent to Vannevar's delegated-agent surface, but does not replace its cross-provider delegation. This is a targeted string comparison, not an exhaustive binary audit.
 
 ## 2.1.294
 

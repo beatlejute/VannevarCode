@@ -358,10 +358,12 @@ const PATCHES = [
         // A user message's action menu — fork from here, rewind code, fork and rewind. From a message
         // before the compaction every one of them forks the uncompacted transcript up to that point,
         // so the button is not rendered there. Placed after the component's hooks, where the stock
-        // code already returns null for a tab with no session id.
+        // code already returns null for a tab with no session id. Through 2.1.294 the selected
+        // message's fork point was found by scanning backward; 2.1.296 delegates that lookup to
+        // `y51(messages,index)`. The stable `messages.indexOf(message)` relationship spans both.
         file: 'webview/index.js',
-        find: /let ([\w$]+)=([\w$]+)\.sessionId\.value;if\(!\1\)return null;let ([\w$]+)=\2\.messages\.value,([\w$]+)=void 0;for\(let ([\w$]+)=\3\.indexOf\(([\w$]+)\)-1;/,
-        replace: (found, id, session, _list, _previous, _i, message) =>
+        find: /let ([\w$]+)=([\w$]+)\.sessionId\.value;if\(!\1\)return null;let ([\w$]+)=\2\.messages\.value,[\s\S]{0,160}?\.indexOf\(([\w$]+)\)/,
+        replace: (found, id, session, _list, message) =>
             found.replace(
                 `if(!${id})return null;`,
                 () =>

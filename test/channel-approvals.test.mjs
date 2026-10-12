@@ -217,7 +217,23 @@ try {
     const reloadedHost = require(copy);
     assert.equal(state.relayControls, pendingMap, 'request correlation survives host reload');
     assert.equal(state.relayCommandTabs, tabsMap, 'the displayed tab list survives host reload');
+    const runsDir = join(runtime, 'agent-runs');
+    mkdirSync(runsDir, { recursive: true });
+    const runs = [
+        { session: 'run-root', owner: 'session-two', description: 'Root task', state: 'running', startedAt: Date.now(), profile: 'codex', model: 'sonnet' },
+        { session: 'run-child', parent: 'run-root', description: 'Nested task', state: 'running', startedAt: Date.now(), profile: 'glm' },
+        { session: 'run-other', owner: 'session-one', description: 'Other tab task', state: 'running', startedAt: Date.now() },
+        { session: 'run-done', owner: 'session-two', description: 'Completed task', state: 'done', startedAt: Date.now() },
+    ];
+    for (const run of runs) writeFileSync(join(runsDir, run.session + '.json'), JSON.stringify(run));
+    reloadedHost.__relayCommand({ chatId: '777', messageId: '57' }, '/agents');
+    const agentReply = commandReplies.at(-1).text;
+    assert.match(agentReply, /Root task/);
+    assert.match(agentReply, /Nested task/);
+    assert.doesNotMatch(agentReply, /Other tab task|Completed task/);
+    assert.match(agentReply, /Active delegated agents for Second tab/);
     reloadedHost.__relayCommand({ chatId: '777', messageId: '56' }, '/session');
+
     const control = controlMessages.findLast((message) => message.type === 'ccx:relayControl');
     assert.ok(control, 'the new host posts the request to the selected webview');
     assert.ok(pendingMap.has(control.requestId));
@@ -225,7 +241,9 @@ try {
     assert.equal(pendingMap.has(control.requestId), false, 'the old listener settles the new request');
     assert.equal(commandReplies.at(-1).text, 'Provider: test-provider');
     assert.equal(commandReplies.at(-1).extra.reply_to, '56');
+
     oldListener({ type: 'ccx:relayError', sessionId: 'session-two', errorId: 'api-429', text: 'API Error: Request rejected (429)' });
+
     assert.equal(commandReplies.at(-1).text, '[Second tab] Request failed:\nAPI Error: Request rejected (429)');
     const forwardedCount = commandReplies.length;
     oldListener({ type: 'ccx:relayError', sessionId: 'session-one', errorId: 'stale', text: 'wrong tab' });

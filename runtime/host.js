@@ -2885,40 +2885,76 @@ async function relayControl(message, command, value) {
     post(target, { type: 'ccx:relayControl', requestId, command, value, sessionId });
 }
 
+function activeAgentRunsForOwner(owner) {
+    if (!owner) return [];
+    const runs = readAgentRuns();
+    const included = new Set(runs.filter((run) => run.owner === owner).map((run) => run.session));
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const run of runs) {
+            if (run.parent && included.has(run.parent) && !included.has(run.session)) {
+                included.add(run.session);
+                changed = true;
+            }
+        }
+    }
+    return runs.filter((run) => included.has(run.session) && (run.state || 'running') === 'running');
+}
+
 function relayCommand(message, text) {
-    const match = /^\/(commands|tabs|tab|session|models|model|effort|mode|providers|provider)(?:\s+(.*))?$/i.exec(text);
+    const match = /^\/(commands|tabs|tab|session|agents|models|model|effort|mode|providers|provider)(?:\s+(.*))?$/i.exec(text);
     if (!match) return false;
     const command = match[1].toLowerCase();
     const chatId = String(message.chatId || '');
     const tabs = relayTargets();
     const title = (tab) => tab.title || 'Session ' + tab.sessionId.slice(0, 8);
     let reply;
-    if (['session', 'models', 'model', 'effort', 'mode', 'provider'].includes(command)) {
+    if (command === 'agents') {
+        const bound = loadRelayTarget();
+        const target = bound
+            ? tabs.find((tab) => tab.sessionId === bound)
+            : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
+        if (!target) reply = 'No receiving tab. Run /tabs, then /tab <number>.';
+        else {
+            const runs = activeAgentRunsForOwner(target.sessionId);
+            reply = runs.length
+                ? 'Active delegated agents for ' + title(target) + ':\n' + runs.map((run) => {
+                    const label = run.description || 'Agent ' + run.session.slice(0, 8);
+                    const profile = run.profile ? ' [' + run.profile + (run.model ? '/' + run.model : '') + ']' : '';
+                    const elapsed = run.startedAt ? ' — ' + Math.max(0, Math.floor((Date.now() - run.startedAt) / 1000)) + 's' : '';
+                    return '• ' + label + profile + elapsed;
+                }).join('\n')
+                : 'No active delegated agents for ' + title(target) + '.';
+        }
+    } else if (['session', 'models', 'model', 'effort', 'mode', 'provider'].includes(command)) {
         relayControl(message, command, (match[2] || '').trim()).catch((e) => relayControlReply(message, 'Control failed: ' + e.message));
         return true;
     }
-    if (command === 'providers') {
-        reply = listProfiles().join('\n') || 'No provider profiles.';
-    } else if (command === 'commands') {
-        reply = 'Vannevar commands:\n/commands — show this list\n/tabs — list open tabs\n/tab <number> — select a tab from the latest /tabs list\n/session — show the receiving tab\n/models — list models\n/model <value> — change model\n/effort <level> — change effort\n/mode <mode> — change permission mode (elevated modes require IDE confirmation)\n/providers — list provider profiles\n/provider <name> — switch provider and restart the tab\n\nOther messages go to the selected tab. Omit a setting value to read it.';
-    } else if (command === 'tabs') {
-        relayCommandTabs.set(chatId, tabs.map((tab) => tab.sessionId));
-        reply = tabs.length ? tabs.map((tab, index) => (index + 1) + '. ' + title(tab)).join('\n') : 'No open session tabs.';
-    } else if (command === 'tab') {
-        const ids = relayCommandTabs.get(chatId);
-        const arg = match[2] || '';
-        const index = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
-        const tab = ids && tabs.find((tab) => tab.sessionId === ids[index]);
-        if (!tab) reply = 'Invalid or closed tab. Run /tabs, then /tab <number>.';
-        else {
-            saveRelayTarget(tab.sessionId);
-            broadcast();
-            reply = 'Receiving tab: ' + title(tab);
+    if (command !== 'agents') {
+        if (command === 'providers') {
+            reply = listProfiles().join('\n') || 'No provider profiles.';
+        } else if (command === 'commands') {
+            reply = 'Vannevar commands:\n/commands — show this list\n/tabs — list open tabs\n/tab <number> — select a tab from the latest /tabs list\n/session — show the receiving tab\n/agents — list active delegated agents for this tab\n/models — list models\n/model <value> — change model\n/effort <level> — change effort\n/mode <mode> — change permission mode (elevated modes require IDE confirmation)\n/providers — list provider profiles\n/provider <name> — switch provider and restart the tab\n\n/agents shows Vannevar delegated runs only, not native Claude Code subagents. Other messages go to the selected tab. Omit a setting value to read it.';
+        } else if (command === 'tabs') {
+            relayCommandTabs.set(chatId, tabs.map((tab) => tab.sessionId));
+            reply = tabs.length ? tabs.map((tab, index) => (index + 1) + '. ' + title(tab)).join('\n') : 'No open session tabs.';
+        } else if (command === 'tab') {
+            const ids = relayCommandTabs.get(chatId);
+            const arg = match[2] || '';
+            const index = /^\d+$/.test(arg) ? Number(arg) - 1 : -1;
+            const tab = ids && tabs.find((tab) => tab.sessionId === ids[index]);
+            if (!tab) reply = 'Invalid or closed tab. Run /tabs, then /tab <number>.';
+            else {
+                saveRelayTarget(tab.sessionId);
+                broadcast();
+                reply = 'Receiving tab: ' + title(tab);
+            }
+        } else {
+            const bound = loadRelayTarget();
+            const tab = bound ? tabs.find((tab) => tab.sessionId === bound) : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
+            reply = tab ? 'Receiving tab: ' + title(tab) : 'No receiving tab available. Run /tabs, then /tab <number>.';
         }
-    } else {
-        const bound = loadRelayTarget();
-        const tab = bound ? tabs.find((tab) => tab.sessionId === bound) : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
-        reply = tab ? 'Receiving tab: ' + title(tab) : 'No receiving tab available. Run /tabs, then /tab <number>.';
     }
     const state = relayState();
     if (state.relay && chatId) {
