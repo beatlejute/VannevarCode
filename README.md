@@ -299,8 +299,34 @@ is what every part of the code reads.
 | **Vannevar: Register the delegated-agent MCP server** | re-register by hand |
 | **Vannevar: Sign in to ChatGPT (subscription mode)** | the OAuth flow, in the editor: the page opens in the browser, the result comes back as a notification |
 
-`vannevar.autoPatch` (default `true`) is the only setting: turned off, the patch is applied only from
-the command menu.
+`vannevar.autoPatch` (default `true`) is the only extension setting: turned off, the patch is applied
+only from the command menu.
+
+### Local spellcheck
+
+Spellcheck runs locally through Hunspell and is disabled unless enabled in `~/.claude/settings.json`.
+Install Hunspell and the dictionary for the language you configure. On Windows, install Hunspell with
+WinGet:
+
+```powershell
+winget install --id FSFhu.Hunspell --exact
+```
+
+For Russian, download `ru_RU.aff` and `ru_RU.dic` from the
+[LibreOffice dictionaries repository](https://github.com/LibreOffice/dictionaries/tree/master/ru_RU)
+and place them in `C:\Hunspell`. The Hunspell executable must be available on `PATH` or at
+`%LOCALAPPDATA%\Microsoft\WinGet\Links\hunspell.exe`. If WinGet did not create that command link,
+copy `hunspell.exe` from its `Microsoft\WinGet\Packages\FSFhu.Hunspell*` folder into `Microsoft\WinGet\Links`.
+
+Add this top-level setting (merge it with the existing JSON):
+
+```json
+"spellcheck": {
+  "enabled": true,
+  "checker": "hunspell",
+  "language": "ru_RU"
+}
+```
 
 ## Known limitations
 
