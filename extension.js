@@ -82,9 +82,28 @@ function currentStamp() {
 // Copies runtime/ out of the extension folder when this version's copy is not the one on disk, and
 // stamps what went there. The stamp is what the patcher reads for its own version, for the releases it
 // was verified against, and for the extensions root to scan when it is run by hand with no --dir.
+function runtimeMatches(source, target) {
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+        const from = path.join(source, entry.name);
+        const to = path.join(target, entry.name);
+        if (entry.isDirectory()) {
+            if (!fs.existsSync(to) || !fs.statSync(to).isDirectory() || !runtimeMatches(from, to)) return false;
+        } else {
+            try {
+                if (!fs.readFileSync(from).equals(fs.readFileSync(to))) return false;
+            } catch (error) {
+                if (error.code === 'ENOENT' || error.code === 'EISDIR') return false;
+                throw error;
+            }
+        }
+    }
+    return true;
+}
+
 function syncRuntime(context, bundle) {
     const stamp = currentStamp();
-    const fresh = stamp.version !== pkg.version || !fs.existsSync(PATCHER);
+    const fresh = stamp.version !== pkg.version || !fs.existsSync(PATCHER)
+        || !runtimeMatches(runtimeSource(context), RUNTIME);
 
     fs.mkdirSync(RUNTIME, { recursive: true });
     if (fresh) {
@@ -431,7 +450,14 @@ function activate(context) {
         .catch((e) => log(`activation failed: ${e && e.stack}`));
 }
 
-function deactivate() {}
+function deactivate() {
+    try {
+        const { closeProgressBroker } = require('./runtime/host.js');
+        closeProgressBroker();
+    } catch (e) {
+        log(`deactivate failed: ${e && e.message}`);
+    }
+}
 
 module.exports = {
     activate,

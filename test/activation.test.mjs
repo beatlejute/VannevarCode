@@ -336,7 +336,7 @@ try {
     // Every other window on every other day. It must be quiet, and it must not rewrite the runtime.
     reset();
     patcherResult = { code: 0, stdout: 'ccx-result: up-to-date\n' };
-    writeFileSync(path.join(RUNTIME, 'host.js'), '/* host, edited by hand */\n');
+    const unchangedHost = readFileSync(path.join(RUNTIME, 'host.js'), 'utf8');
     extension.activate(context);
     await settle(800);
 
@@ -347,8 +347,8 @@ try {
     );
     assert.equal(
         readFileSync(path.join(RUNTIME, 'host.js'), 'utf8'),
-        '/* host, edited by hand */\n',
-        'the runtime was copied again although the version had not changed',
+        unchangedHost,
+        'the runtime was copied again although its contents had not changed',
     );
     assert.equal(shown.length, 0, `a quiet activation said something: ${JSON.stringify(shown)}`);
     console.log('OK — an unchanged version runs --if-needed, copies nothing and says nothing');

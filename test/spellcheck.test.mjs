@@ -56,6 +56,8 @@ Module._load = (request, ...rest) => {
 };
 const copy = join(tmpdir(), `ccx-host-spellcheck-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+// Copy progress-broker.js to the runtime directory where host.js expects it
+writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 let renderScript;
 try {
     ({ renderScript } = require(copy));

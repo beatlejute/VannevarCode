@@ -35,6 +35,7 @@ for (const dir of [RUNTIME, RUNNING, UPDATED]) mkdirSync(dir, { recursive: true 
 
 // renderScript refuses to do anything without the page bundle beside it
 writeFileSync(path.join(RUNTIME, 'webview.js'), '/* page */\n');
+writeFileSync(path.join(RUNTIME, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 
 // Stands in for apply-patch.mjs: records how it was called and which copy of itself ran, then answers
 // the way a fresh patch onto a version nobody has verified does — the case the watcher words differently

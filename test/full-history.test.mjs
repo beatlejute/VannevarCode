@@ -35,6 +35,8 @@ Module._load = (request, ...rest) =>
         : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-history-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+// Copy progress-broker.js to the runtime directory where host.js expects it
+writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 let host;
 try {
     host = require(copy);

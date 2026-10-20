@@ -40,6 +40,43 @@
                     "type": "boolean",
                     "default": true,
                     "description": "Re-apply the patch by itself after a Claude Code update."
+                },
+                "vannevar.progress.enabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable progress tracking and analytics."
+                },
+                "vannevar.progress.semantic": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable semantic progress analysis."
+                },
+                "vannevar.progress.channels": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable progress channels for fine-grained tracking."
+                },
+                "vannevar.progress.nativeSemantic": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Use native semantic understanding for progress analysis."
+                },
+                "vannevar.progress.expandedView": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable expanded view of progress details."
+                },
+                "vannevar.progress.debug": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable debug mode for progress tracking."
+                },
+                "vannevar.channels.responseBudget": {
+                    "type": "number",
+                    "default": 3500,
+                    "minimum": 500,
+                    "maximum": 16000,
+                    "description": "Response budget limit for channel processing."
                 }
             }
         }
@@ -55,6 +92,6 @@
         "proxy": "node --use-env-proxy runtime/proxy/server.mjs",
         "login:chatgpt": "node --use-env-proxy runtime/login-chatgpt.mjs",
         "auth:status": "node runtime/login-chatgpt.mjs --status",
-        "test": "node test/proxy.test.mjs && node test/responses.test.mjs && node test/auth-chatgpt.test.mjs && node test/gemini.test.mjs && node test/model-overrides.test.mjs && node test/profile-icons.test.mjs && node test/env-isolation.test.mjs && node test/proxy-revival.test.mjs && node test/attachment-prompt.test.mjs && node test/fresh-tab-switch.test.mjs && node test/resume-guard.test.mjs && node test/foreign-message-id.test.mjs && node test/compact-on-switch.test.mjs && node test/model-indicator.test.mjs && node test/content-search.test.mjs && node test/retract-last-message.test.mjs && node test/spellcheck.test.mjs && node test/model-routing.test.mjs && node test/agent-server.test.mjs && node test/agent-live-frame.test.mjs && node test/agent-map.test.mjs && node test/pinned-sessions.test.mjs && node test/provider-health.test.mjs && node test/session-resources.test.mjs && node test/autocompact.test.mjs && node test/full-history.test.mjs && node test/channel-launch.test.mjs && node test/channel-relay.test.mjs && node test/channel-proxy.test.mjs && node test/channel-approvals.test.mjs && node test/channel-send.test.mjs && node test/channel-pill.test.mjs && node test/auto-repatch.test.mjs && node test/update-watcher.test.mjs && node test/state-contract.test.mjs && node test/activation.test.mjs"
+        "test": "node scripts/run-tests.mjs"
     }
 }

@@ -35,6 +35,8 @@ Module._load = (request, ...rest) =>
         : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-msgid-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+// Copy progress-broker.js to the state directory where host.js expects it
+writeFileSync(join(state, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 let envFor;
 try {
     ({ envFor } = require(copy));

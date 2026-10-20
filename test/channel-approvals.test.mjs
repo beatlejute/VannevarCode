@@ -84,7 +84,10 @@ Module._load = (request, ...rest) =>
     request === 'vscode' ? vscodeStub : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-approvals-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8') + '\nmodule.exports.__relayCommand = relayCommand;\n');
+// Copy progress-broker.js to the runtime directory where host.js expects it
+writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 let host;
+let reloadedHost;
 try {
     host = require(copy);
 } finally {
@@ -174,8 +177,20 @@ assert.match(commandReplies.at(-1).text, /2\. Second tab/);
 inbound('/tab 2');
 assert.match(commandReplies.at(-1).text, /Receiving tab: Second tab/);
 inbound('/session');
+assert.match(commandReplies.at(-1).text, /Second tab/);
+assert.match(commandReplies.at(-1).text, /No progress data yet\./, 'enriched /session includes idle status line');
+assert.match(commandReplies.at(-1).text, /unknown\/\?/, 'enriched /session includes provider/model');
+assert.match(commandReplies.at(-1).text, /0 agents/, 'enriched /session includes agent count');
+assert.ok(!delivered.some((m) => m.type === 'ccx:relayControl' && m.command === 'session'),
+    'enriched /session answers from the projection, not a webview round-trip');
+// progress disabled: the commands fall back to the exact pre-feature behavior.
+process.env.VANNEVAR_DISABLE_PROGRESS = '1';
+inbound('/session');
 assert.equal(delivered.at(-1).command, 'session');
 assert.equal(delivered.at(-1).sessionId, 'session-two');
+inbound('/tabs');
+assert.equal(commandReplies.at(-1).text, '1. First tab\n2. Second tab');
+delete process.env.VANNEVAR_DISABLE_PROGRESS;
 inbound('/tab 99');
 assert.match(commandReplies.at(-1).text, /Invalid or closed tab/);
 inbound('ordinary message');
@@ -214,7 +229,7 @@ Module._load = (request, ...rest) => request === 'vscode' ? vscodeStub : load(re
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url), 'utf8') + '\nmodule.exports.__relayCommand = relayCommand;\n');
 try {
     delete require.cache[require.resolve(copy)];
-    const reloadedHost = require(copy);
+    reloadedHost = require(copy);
     assert.equal(state.relayControls, pendingMap, 'request correlation survives host reload');
     assert.equal(state.relayCommandTabs, tabsMap, 'the displayed tab list survives host reload');
     const runsDir = join(runtime, 'agent-runs');
@@ -228,10 +243,17 @@ try {
     for (const run of runs) writeFileSync(join(runsDir, run.session + '.json'), JSON.stringify(run));
     reloadedHost.__relayCommand({ chatId: '777', messageId: '57' }, '/agents');
     const agentReply = commandReplies.at(-1).text;
+    assert.match(agentReply, /Agents for Second tab/);
     assert.match(agentReply, /Root task/);
     assert.match(agentReply, /Nested task/);
     assert.doesNotMatch(agentReply, /Other tab task|Completed task/);
-    assert.match(agentReply, /Active delegated agents for Second tab/);
+    // progress disabled: the same command shows the pre-feature delegated-only list.
+    process.env.VANNEVAR_DISABLE_PROGRESS = '1';
+    reloadedHost.__relayCommand({ chatId: '777', messageId: '58' }, '/agents');
+    const legacyAgentReply = commandReplies.at(-1).text;
+    assert.match(legacyAgentReply, /Active delegated agents for Second tab/);
+    assert.match(legacyAgentReply, /Root task/);
+    assert.doesNotMatch(legacyAgentReply, /Other tab task|Completed task/);
     reloadedHost.__relayCommand({ chatId: '777', messageId: '56' }, '/session');
 
     const control = controlMessages.findLast((message) => message.type === 'ccx:relayControl');
@@ -241,6 +263,7 @@ try {
     assert.equal(pendingMap.has(control.requestId), false, 'the old listener settles the new request');
     assert.equal(commandReplies.at(-1).text, 'Provider: test-provider');
     assert.equal(commandReplies.at(-1).extra.reply_to, '56');
+    delete process.env.VANNEVAR_DISABLE_PROGRESS;
 
     oldListener({ type: 'ccx:relayError', sessionId: 'session-two', errorId: 'api-429', text: 'API Error: Request rejected (429)' });
 
@@ -255,10 +278,14 @@ try {
     Module._load = load;
     for (const pending of pendingMap.values()) clearTimeout(pending.timer);
     pendingMap.clear();
+    // The enriched commands spin up the progress broker; both module copies must release it,
+    // or its listening pipe keeps this process alive past the last assertion.
+    try { reloadedHost.closeProgressBroker(); } catch {}
 }
 state.relay.relay.send = originalSend;
 
 host.stopChannelRelay();
+try { host.closeProgressBroker(); } catch {}
 // The plugin this test started lives in that directory and is on its way out; on Windows a file a
 // closing process still holds is a removal that has to be asked for again.
 await wait(800);

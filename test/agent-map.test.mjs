@@ -46,6 +46,8 @@ Module._load = (request, ...rest) =>
         : load(request, ...rest);
 const copy = join(tmpdir(), `ccx-host-map-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+// Copy progress-broker.js to the runtime directory where host.js expects it
+writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 let host;
 try {
     host = require(copy);
@@ -503,4 +505,96 @@ assert.ok(
     'and it must lead the array, so the line reads time · duration · tokens',
 );
 
-console.log('OK — delegated runs sit in the agent map beside the app’s own, its rows say when they were called, and its buttons reach them');
+// Exercise the actual renderer against trusted broker projections while the map is open.
+pageContext.window.__ccx.onRegistry(null, null, session);
+const h = (tag, props) => ({ tag, props });
+const renderProgress = (entry = null) => pageWindow.__ccx.mapProgress(entry, entry ? undefined : session, h);
+const progressText = (entry) => {
+    const rendered = renderProgress(entry);
+    if (!rendered) return null;
+    const [count, note] = rendered.props.children;
+    return count.props.children + (note.props.children ? ' · ' + note.props.children : '');
+};
+const progressBar = (entry) => { const rendered = renderProgress(entry); return rendered ? rendered.props.children[2] : null; };
+const semanticSession = session.sessionId.value;
+let semanticRevision = 0;
+const semanticDelta = (payload) => fromHost({ type: 'ccx:progressDelta', sessionId: semanticSession,
+    brokerInstanceId: 'map-broker', revision: ++semanticRevision, payload });
+fromHost({ type: 'ccx:progressSnapshot', sessionId: semanticSession, brokerInstanceId: 'map-broker', revision: 0,
+    root: { rootId: 'root-a', state: 'running', semantic: { done: 1, total: 3, note: 'Inspect' } },
+    broker: { nativeScopes: { toolu_native: { scopeId: 'native-a', runId: 'run-a' },
+        toolu_sibling: { scopeId: 'native-b', runId: 'run-b' } }, semanticByScope: {
+        'native-a': { done: 1, total: 4, note: 'Native A' },
+        'native-b': { done: 2, total: 5, note: 'Native B' },
+    } } });
+assert.equal(progressText(null), '1/3 · Inspect');
+assert.equal(progressBar(null).props.value, 1);
+const firstMapProgress = renderProgress(null);
+assert.equal(firstMapProgress.props.className, 'ccx-map-progress');
+assert.equal(firstMapProgress.props.children[0].props.className, 'ccx-map-progress-count');
+assert.equal(firstMapProgress.props.children[1].props.className, 'ccx-map-progress-note');
+assert.equal(firstMapProgress.props.children[1].props.title, 'Inspect');
+assert.equal(firstMapProgress.props.children[2].tag, 'progress');
+const openMapBefore = writes;
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', semantic: { done: 2, total: 3, note: 'Implement' } } });
+assert.equal(progressText(null), '2/3 · Implement');
+assert.ok(writes > openMapBefore, 'a semantic update invalidates an already open map');
+const afterSemantic = writes;
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', currentTool: 'Read', semantic: { done: 2, total: 3, note: 'Implement' } } });
+assert.equal(writes, afterSemantic, 'activity-only changes do not invalidate the map');
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', semantic: { done: 1, total: 3, plan: ['Inspect', 'Implement', 'Verify'] } } });
+assert.equal(progressText(null), '1/3 · Implement', 'the next actual plan stage explains progress when no note is supplied');
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', semantic: { done: 1, total: 3, note: 'Explicit note', plan: ['Inspect', 'Implement', 'Verify'] } } });
+assert.equal(progressText(null), '1/3 · Explicit note', 'an explicit note takes precedence over the plan stage');
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', semantic: { done: 3, total: 3, plan: ['Inspect', 'Implement', 'Verify'] } } });
+assert.equal(progressText(null), '3/3 · Verify', 'completion can retain the actual final stage label');
+semanticDelta({ changedRoot: { rootId: 'root-a', state: 'running', semantic: { done: 1, total: 3 } } });
+assert.equal(renderProgress(null), null, 'no note or plan stage means no unexplained count or bar');
+assert.equal(progressText(native), '1/4 · Native A');
+assert.equal(progressText({ toolUseId: 'toolu_sibling' }), '2/5 · Native B');
+semanticDelta({ changedScopes: { 'native-a': { done: 3, total: 4, note: 'Finish A' } } });
+assert.equal(progressText(native), '3/4 · Finish A');
+assert.equal(progressText({ toolUseId: 'toolu_sibling' }), '2/5 · Native B');
+assert.equal(progressBar({ toolUseId: 'unknown' }), null);
+assert.strictEqual(renderProgress({ toolUseId: 'unknown' }), null, 'no stages reported renders no element at all');
+const delegatedRun = { ...liveRun, scopeId: 'delegated-scope', attemptId: 'delegated-attempt' };
+fromHost({ type: 'ccx:agentRuns', runs: [delegatedRun] });
+const delegatedEntry = [...mapValue.values()].find((e) => e.ccxAttemptId === 'delegated-attempt');
+assert.ok(delegatedEntry && delegatedEntry.ccxScopeId === 'delegated-scope');
+semanticDelta({ changedScopes: { 'delegated-scope': { done: 2, total: 7, note: 'Delegate' } } });
+assert.equal(progressText(delegatedEntry), '2/7 · Delegate');
+assert.equal(progressBar({ ...delegatedEntry, ccxAttemptId: 'other-attempt' }), null);
+assert.equal(progressBar({ ...delegatedEntry, ccxScopeId: 'other-scope' }), null);
+assert.equal(progressText({ toolUseId: 'toolu_sibling' }), '2/5 · Native B');
+semanticDelta({ changedScopes: { 'native-a': null } });
+assert.equal(progressBar(native), null, 'closed scopes lose their determinate bar');
+semanticDelta({ changedRoot: { rootId: 'root-b', state: 'running' } });
+assert.equal(progressBar(null), null, 'a new root without a plan has no inherited percentage');
+semanticDelta({ changedRoot: { rootId: 'root-b', state: 'done', semantic: { done: 1, total: 3, note: 'Stopped early' } } });
+assert.equal(progressBar(null).props.value, 1, 'terminal state does not fabricate completion');
+assert.strictEqual(mapValue.get(native.taskId), native, 'invalidation preserves native entries');
+
+// Read actual patch records, not a copied regex, and evaluate only the matched row functions.
+const recordStart = patcher.indexOf('    {\n        // Anchor the row');
+const recordEnd = patcher.indexOf('    // --- Plugin channels', recordStart);
+assert.ok(recordStart > 0 && recordEnd > recordStart);
+const rowRecords = vm.runInNewContext('[' + patcher.slice(recordStart, recordEnd) + ']');
+assert.equal(rowRecords.length, 2);
+const fixtures = [
+    'function Child({agent:a,waiting:w,onClick:c}){let s=status(a,w);return many("button",{type:"button",className:`${P.serverItem} ${Y.row}`,onClick:c,title:a.description,"data-agent-status":s,children:[many("span",{className:Y.rowTitle,children:[one(icon,{state:s}),one("span",{children:a.description})]}),one("span",{className:Y.rowMeta,children:one(Meta,{agent:a})})]})}',
+    'function Root({session:s,onClick:c}){track();let title=s.summary.value||"This session",busy=s.visiblyBusy.value;return many("button",{type:"button",className:`${P.serverItem} ${Y.row} ${Y.rowMain}`,onClick:c,title:title,children:[many("span",{className:Y.rowTitle,children:[one(icon,{state:busy?"running":"idle"}),one("span",{children:title})]}),one("span",{className:Y.rowMeta,children:[model(s),tokens(s)].filter((v)=>v!==void 0).join(" · ")})]})}',
+];
+for (let i = 0; i < rowRecords.length; i++) {
+    const record = rowRecords[i];
+    assert.ok(record.find.test(fixtures[i]), 'structural fixture matches its actual record');
+    const patched = fixtures[i].replace(record.find, record.replace);
+    new vm.Script(patched);
+    assert.ok(patched.includes('mapProgress('), 'the real JSX row receives a progress child');
+    assert.ok(patched.includes('onClick:c'), 'stock row handlers stay intact');
+}
+const inputBefore = JSON.stringify(messages.value);
+renderProgress(native);
+renderProgress(null);
+assert.equal(JSON.stringify(messages.value), inputBefore, 'rendering never rewrites input or CLI content');
+
+console.log('OK — delegated runs, map row progress, scoped isolation, invalidation and structural patches');

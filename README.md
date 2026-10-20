@@ -373,3 +373,11 @@ because it was the pointer, not the analyzer, that set the work free.
 
 Not affiliated with, endorsed by, or connected to Anthropic. "Claude" and "Claude Code" are used only
 to say what this works with.
+
+## Unified Task Progress
+
+Task progress appears above the composer, in agent cards, and as a small bar inside the tab icon. Counters reflect reported stages, not elapsed time or token usage. Root, native, and delegated agents keep separate progress ownership; a completed run does not fabricate a final stage report.
+
+Progress and native-agent reporting are enabled by default. Disable tracking with `vannevar.progress.enabled` or `VANNEVAR_DISABLE_PROGRESS=1`; native reporting can be disabled separately with `vannevar.progress.nativeSemantic`. Native semantic reporting is unavailable for resumed launches; runtime activity remains available. A short reported task title is shown when supplied, otherwise the panel uses a neutral label.
+
+The channel commands `/session`, `/tabs`, and `/agents` expose the selected session's progress and agent activity. Disabling progress restores their ordinary behavior. Installation synchronizes the bundled runtime and applies the patch; reload the editor window after an update to load the new UI and launch hooks.

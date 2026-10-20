@@ -23,6 +23,8 @@ const ICON_EXTENSIONS = ['png', 'svg'];
 // An icon is inlined into the webview as base64 — past this size it is a mistake, not an icon
 const MAX_ICON_BYTES = 512 * 1024;
 
+const { createProgressBroker } = require(path.join(DIR, 'progress-broker.js'));
+
 // Several versions linger on disk after an update, so compare version numbers, not names
 function versionOf(dirName) {
     const m = dirName.match(/anthropic\.claude-code-(\d+)\.(\d+)\.(\d+)/);
@@ -105,6 +107,359 @@ const S = (globalThis.__ccxState ||= {
     iconUris: new Map(),
     warnedOverrides: new Set(),
 });
+
+// Hooks reload this module independently; progress ownership must outlive the require cache.
+const progress = (S.progress ||= {
+    broker: null,
+    sessionCapabilities: new Map(),
+    runtimeEpochs: new Map(),
+    lastRuntimeRevision: new Map(),
+    sessionProjections: new Map(),
+    transportRevisions: new Map(),
+    inactiveSessionTimers: new Map(),
+    brokerSubscription: null,
+    brokerSubscribedId: null,
+    settings: { enabled: true, channels: true, nativeSemantic: true, expandedView: false },
+    disableLatched: false,
+});
+const nativeBridges = (progress.nativeBridges ||= new Map());
+const nativeProgress = () => require(path.join(DIR, 'native-progress.js'));
+function nativeSemanticEnabled() {
+    try { return progressAvailable() && vscode.workspace.getConfiguration('vannevar').get('progress.nativeSemantic', true) === true; }
+    catch { return false; }
+}
+function bindNativeProducer(query, context) {
+    if (context?.nativeBridge) nativeProgress().bindNativeProducer(query, context.nativeBridge);
+}
+function observeNativeFrame(query, frame) {
+    if (nativeBridges.size) nativeProgress().observeNativeFrame(query, frame);
+}
+function getProgressBroker() {
+    if (!progress.broker) {
+        progress.broker = createProgressBroker({ listen: true });
+    }
+    return progress.broker;
+}
+
+// Session capability storage
+const sessionCapabilities = progress.sessionCapabilities; // sessionId -> { capability, webview }
+
+function issueSessionCapability(sessionId, webview) {
+    if (!progressAvailable()) return null;
+    try {
+        const broker = getProgressBroker();
+        const issued = broker.issueSessionCapability(sessionId);
+        sessionCapabilities.set(sessionId, { capability: issued.capability, webview });
+        dlog('session capability issued', { sessionId });
+        return issued.capability;
+    } catch (e) {
+        dlog('session capability issue failed', { sessionId, error: e && e.message });
+        return null;
+    }
+}
+
+function revokeSessionCapability(sessionId) {
+    nativeBridges.get(sessionId)?.dispose();
+    nativeBridges.delete(sessionId);
+    if (!progressAvailable()) return false;
+    const entry = sessionCapabilities.get(sessionId);
+    if (!entry) return false;
+    try {
+        const broker = getProgressBroker();
+        // Find the capability hash by looking up the token
+        // The broker stores capabilities by hash, we need to find the right one
+        // Since we don't have direct access to the hash, we'll use the broker's revokeCapability
+        // but we need the hash. Let's store the hash too.
+        // For now, we'll iterate through the broker's capabilities to find the one for this session
+        // Actually, the broker's issueSessionCapability returns the token, we can hash it
+        const crypto = require('crypto');
+        const hash = crypto.createHash('sha256').update(entry.capability).digest('hex');
+        broker.revokeCapability(hash);
+        sessionCapabilities.delete(sessionId);
+        dlog('session capability revoked', { sessionId });
+        return true;
+    } catch (e) {
+        dlog('session capability revoke failed', { sessionId, error: e && e.message });
+        return false;
+    }
+}
+
+function getSessionCapability(sessionId) {
+    if (!progressAvailable()) return null;
+    const entry = sessionCapabilities.get(sessionId);
+    return entry ? entry.capability : null;
+}
+
+// Replace broker (security rollback) - revokes all existing capabilities
+function replaceProgressBroker() {
+    if (!progressAvailable()) return;
+    try {
+        if (progress.broker) {
+            progress.broker.close();
+        }
+        progress.broker = createProgressBroker({ listen: true });
+        // Revoke all session capabilities since broker instance changed
+        for (const sessionId of sessionCapabilities.keys()) {
+            revokeSessionCapability(sessionId);
+        }
+        // A new broker instance resets every page's ordering baseline: fresh epochs, full snapshots.
+        resetProgressTransport();
+        dlog('progress broker replaced, all capabilities revoked');
+    } catch (e) {
+        dlog('progress broker replace failed', { error: e && e.message });
+    }
+}
+
+// Close progress broker (extension deactivation)
+function closeProgressBroker() {
+    try {
+        for (const bridge of nativeBridges.values()) bridge.dispose();
+        nativeBridges.clear();
+        if (progress.broker) {
+            progress.broker.close();
+            progress.broker = null;
+        }
+        sessionCapabilities.clear();
+        try { if (progress.brokerSubscription) progress.brokerSubscription(); } catch {}
+        progress.brokerSubscription = null;
+        progress.brokerSubscribedId = null;
+        runtimeEpochs.clear();
+        lastRuntimeRevision.clear();
+        sessionProjections.clear();
+        transportRevisions.clear();
+        for (const timer of inactiveSessionTimers.values()) clearTimeout(timer);
+        inactiveSessionTimers.clear();
+        for (const panel of S.panels.keys()) decorate(panel);
+        dlog('progress broker closed');
+    } catch (e) {
+        dlog('progress broker close failed', { error: e && e.message });
+    }
+}
+
+// Progress settings: sticky channels preference, enabled gate, emergency disable
+const progressSettings = progress.settings;
+function isProgressEnabled() {
+    if (process.env.VANNEVAR_DISABLE_PROGRESS === '1') return false;
+    try {
+        return vscode.workspace.getConfiguration('vannevar').get('progress.enabled', progressSettings.enabled) === true;
+    } catch (e) {
+        return progressSettings.enabled;
+    }
+}
+
+function progressAvailable() {
+    if (!isProgressEnabled()) {
+        if (!progress.disableLatched) {
+            progress.disableLatched = true;
+            for (const webview of S.webviews) {
+                post(webview, {
+                    type: 'ccx:progressSnapshot',
+                    sessionId: webview.__ccxSessionId || null,
+                    runtimeEpoch: null,
+                    brokerInstanceId: null,
+                    revision: -1,
+                    root: null,
+                    broker: null,
+                    disabled: true,
+                });
+            }
+            closeProgressBroker();
+        }
+        return false;
+    }
+    progress.disableLatched = false;
+    return true;
+}
+// --- Broker state transport ---------------------------------------------------------------------
+//
+// The host is the sole authority on progress ordering. When a page attaches to a session it is given
+// one producer `runtimeEpoch`, and the host keeps the highest `runtimeRevision` it has accepted for
+// that (session, epoch) pair. A runtime event carrying any other epoch belongs to a producer that was
+// replaced — typically a webview reload — and is dropped whole; within the current epoch a revision
+// that is old or equal is dropped too. Revisions are generated broker/host side, so a late-joining or
+// restarted page can never roll the state back. The four canonical message types are
+// `ccx:progressRuntime` and `ccx:requestProgressSnapshot` (page to host) and `ccx:progressSnapshot`
+// and `ccx:progressDelta` (host to page).
+const runtimeEpochs = progress.runtimeEpochs;         // sessionId -> current producer runtimeEpoch
+const lastRuntimeRevision = progress.lastRuntimeRevision;   // `${sessionId}:${epoch}` -> highest accepted revision
+const sessionProjections = progress.sessionProjections;    // sessionId -> latest accepted runtime projection
+const transportRevisions = progress.transportRevisions;   // host-issued outbound revision, independent of producer counters
+const inactiveSessionTimers = progress.inactiveSessionTimers;
+
+function newRuntimeEpoch() {
+    return crypto.randomBytes(8).toString('hex');
+}
+
+// Issue a fresh producer epoch and forget the ordering state of the previous one, so the first event
+// of the new producer applies immediately instead of being silently dropped for a long stretch behind
+// the old producer's higher revisions.
+function issueRuntimeEpoch(sessionId) {
+    const epoch = newRuntimeEpoch();
+    runtimeEpochs.set(sessionId, epoch);
+    const prefix = sessionId + ':';
+    for (const key of [...lastRuntimeRevision.keys()]) if (key.startsWith(prefix)) lastRuntimeRevision.delete(key);
+    return epoch;
+}
+
+// Host-side runtimeRevision rejection: true only when the event belongs to the current producer epoch
+// and its revision is strictly newer than anything accepted in that epoch.
+function acceptRuntimeRevision(sessionId, epoch, runtimeRevision) {
+    if (typeof runtimeRevision !== 'number' || !Number.isFinite(runtimeRevision)) return false;
+    if (!epoch || runtimeEpochs.get(sessionId) !== epoch) return false;
+    const key = sessionId + ':' + epoch;
+    const previous = lastRuntimeRevision.get(key);
+    if (previous !== undefined && runtimeRevision <= previous) return false;
+    lastRuntimeRevision.set(key, runtimeRevision);
+    return true;
+}
+
+function progressBrokerInstanceId() {
+    try { return getProgressBroker().info().instanceId; } catch { return null; }
+}
+
+// Subscribe the transport once per broker instance. An ordinary broker change becomes a bounded
+// `ccx:progressDelta`; a new broker instance resets every page baseline and is answered with a full
+// `ccx:progressSnapshot`, so a gap never turns into a silent stall.
+function ensureProgressBrokerSubscription() {
+    if (!progressAvailable()) return;
+    const instance = progressBrokerInstanceId();
+    if (!instance || (progress.brokerSubscription && progress.brokerSubscribedId === instance)) return;
+    try { if (progress.brokerSubscription) progress.brokerSubscription(); } catch {}
+    progress.brokerSubscription = null;
+    progress.brokerSubscribedId = instance;
+    try {
+        progress.brokerSubscription = getProgressBroker().onChange((event) => broadcastProgressChange(instance, event));
+    } catch (e) {
+        dlog('progress broker subscribe failed', { error: e && e.message });
+    }
+}
+
+function webviewForSession(sessionId) {
+    for (const webview of S.webviews) if (webview.__ccxSessionId === sessionId) return webview;
+    return null;
+}
+
+function broadcastProgressChange(instance, event) {
+    if (!progressAvailable() || !progress.broker || progress.broker.info().instanceId !== instance) return;
+    if (!event || typeof event.sessionId !== 'string') return;
+    const revision = (transportRevisions.get(event.sessionId) || 0) + 1;
+    transportRevisions.set(event.sessionId, revision);
+    const runtime = sessionProjections.get(event.sessionId);
+    const broker = getProgressBroker().snapshot(event.sessionId);
+    const root = runtime && runtime.root
+        ? { ...runtime.root, semantic: broker.root && broker.root.semantic || null } : null;
+    for (const webview of S.webviews) {
+        if (webview.__ccxSessionId !== event.sessionId) continue;
+        const panel = panelFor(webview);
+        if (panel) decorate(panel);
+        post(webview, {
+            type: 'ccx:progressDelta', sessionId: event.sessionId, brokerInstanceId: instance,
+            revision, payload: { ...event.payload, changedRoot: root },
+        });
+    }
+}
+
+// Full state for attach, recovery and broker-instance reset.
+function postProgressSnapshot(webview, sessionId) {
+    if (!progressAvailable()) return;
+    const target = sessionId || (webview && webview.__ccxSessionId) || null;
+    if (!webview || !target) return;
+    const epoch = runtimeEpochs.get(target) || issueRuntimeEpoch(target);
+    const panel = panelFor(webview);
+    if (panel) decorate(panel);
+    let brokerSnapshot = null;
+    try { brokerSnapshot = getProgressBroker().snapshot(target); } catch {}
+    post(webview, {
+        type: 'ccx:progressSnapshot',
+        sessionId: target,
+        runtimeEpoch: epoch,
+        brokerInstanceId: progressBrokerInstanceId(),
+        revision: transportRevisions.get(target) || 0,
+        root: sessionProjections.get(target)?.root
+            ? { ...sessionProjections.get(target).root, semantic: brokerSnapshot?.root?.semantic || null } : null,
+        broker: brokerSnapshot,
+    });
+}
+
+// A page event carrying a runtime projection. Rejected wholesale when stale; otherwise stored and
+// forwarded to the broker, whose own change feeds the delta broadcast.
+function applyRuntimeProgress(webview, m) {
+    if (!progressAvailable()) return;
+    const target = webview.__ccxSessionId || (typeof m.sessionId === 'string' ? m.sessionId : null);
+    if (!target) return;
+    if (typeof m.sessionId === 'string' && m.sessionId && m.sessionId !== target) return;
+    if (!acceptRuntimeRevision(target, m.runtimeEpoch, m.runtimeRevision)) return;
+    const projection = m.projection && typeof m.projection === 'object' ? m.projection : { root: m.root || null };
+    sessionProjections.set(target, { ...projection, active: true });
+    clearTimeout(inactiveSessionTimers.get(target));
+    inactiveSessionTimers.delete(target);
+    try {
+        const broker = getProgressBroker();
+        ensureProgressBrokerSubscription();
+        const root = m.root || (m.projection && m.projection.root) || null;
+        const terminal = root && ['done', 'failed', 'stopped'].includes(root.state);
+        const brokerRoot = broker.snapshot(target).root;
+        if (root && root.rootId && !terminal && (!brokerRoot || brokerRoot.rootId !== root.rootId)) {
+            broker.observeRoot({
+                sessionId: target,
+                rootId: root.rootId,
+                state: root.state,
+                startedAt: root.startedAt,
+                generation: root.rootId,
+            });
+        } else if (brokerRoot && (!root || terminal)) {
+            broker.finishRoot({ sessionId: target, rootId: brokerRoot.rootId });
+        } else {
+            broadcastProgressChange(broker.info().instanceId, { sessionId: target, payload: {} });
+        }
+    } catch (e) {
+        dlog('progress runtime apply failed', { sessionId: target, error: e && e.message });
+    }
+}
+
+// A page that lost a delta, or started with none, asks for the full projection.
+function answerProgressSnapshotRequest(webview, m) {
+    if (!progressAvailable()) return;
+    if (m.sessionId && m.sessionId !== webview.__ccxSessionId) return;
+    ensureProgressBrokerSubscription();
+    postProgressSnapshot(webview, (typeof m.sessionId === 'string' && m.sessionId) || webview.__ccxSessionId);
+}
+
+// A page keeps its producer epochs across tab switches; a new page gets fresh epochs.
+function beginRuntimeTransport(webview, sessionId) {
+    if (!progressAvailable() || !sessionId) return;
+    const oldSession = webview.__ccxProgressSession;
+    if (oldSession && oldSession !== sessionId) {
+        clearTimeout(inactiveSessionTimers.get(oldSession));
+        inactiveSessionTimers.set(oldSession, setTimeout(() => {
+            inactiveSessionTimers.delete(oldSession);
+            const projection = sessionProjections.get(oldSession);
+            if (projection) sessionProjections.set(oldSession, { ...projection, active: false });
+        }, 5000));
+    }
+    webview.__ccxProgressSession = sessionId;
+    const epochs = (webview.__ccxProgressEpochs ||= new Map());
+    if (!epochs.has(sessionId) || epochs.get(sessionId) !== runtimeEpochs.get(sessionId)) {
+        epochs.set(sessionId, issueRuntimeEpoch(sessionId));
+    }
+    ensureProgressBrokerSubscription();
+    postProgressSnapshot(webview, sessionId);
+}
+
+// A security rollback replaces the broker instance; every page gets a new epoch and a full snapshot.
+function resetProgressTransport() {
+    if (!progressAvailable()) return;
+    try { if (progress.brokerSubscription) progress.brokerSubscription(); } catch {}
+    progress.brokerSubscription = null;
+    progress.brokerSubscribedId = null;
+    transportRevisions.clear();
+    ensureProgressBrokerSubscription();
+    for (const sessionId of [...runtimeEpochs.keys()]) {
+        issueRuntimeEpoch(sessionId);
+        const webview = webviewForSession(sessionId);
+        if (webview) postProgressSnapshot(webview, sessionId);
+    }
+}
 
 const LOG_FILE = path.join(DIR, 'debug.log');
 
@@ -735,6 +1090,8 @@ function agentRunsPayload() {
         tailTranscript(run.session, state);
         return {
             session: run.session,
+            attemptId: run.attemptId || null,
+            scopeId: typeof run.scopeId === 'string' ? run.scopeId : null,
             parent: typeof run.parent === 'string' ? run.parent : null,
             owner: typeof run.owner === 'string' ? run.owner : null,
             description: typeof run.description === 'string' ? run.description : null,
@@ -847,16 +1204,46 @@ function agentTranscript(sessionId) {
 // "Stop agent" on a delegated run. Only a run its manifest still calls running is asked, and asking is
 // all this does: the MCP server that owns the child polls for the request, ends the run and closes the
 // manifest as stopped — which is what the map then shows.
-function requestAgentStop(sessionId) {
+// The runs a window may address with a Stop: the session that owns its tab, plus every run
+// reachable from it by the owner/parent chain. A delegated run started by another tab (or by
+// another window's session) is outside the set and cannot be stopped from here — the owner is
+// the host's own view of the requesting tab, never an id the page hands over (PLAN-001 task 20).
+function agentOwnerSet(ownerSession) {
+    const set = new Set();
+    if (typeof ownerSession !== 'string' || !ownerSession) return set;
+    set.add(ownerSession);
+    const runs = readAgentRuns();
+    for (let grew = true; grew; ) {
+        grew = false;
+        for (const run of runs) {
+            if (set.has(run.session)) continue;
+            if ((run.owner && set.has(run.owner)) || (run.parent && set.has(run.parent))) {
+                set.add(run.session);
+                grew = true;
+            }
+        }
+    }
+    return set;
+}
+
+function requestAgentStop(sessionId, attemptId, requesterOwner) {
     if (!sessionId || !/^[0-9a-f-]{36}$/i.test(sessionId)) return { ok: false, error: 'not a run' };
     const run = readJson(path.join(AGENT_RUNS_DIR, `${sessionId}.json`));
     if (!run || run.state !== 'running') return { ok: false, error: 'the run has already finished' };
+    if (requesterOwner && !agentOwnerSet(requesterOwner).has(sessionId))
+        return { ok: false, error: 'that run belongs to another session' };
+    // A Stop names the attempt the card was clicked on: a request carried over from an earlier
+    // attempt of the same child session (a resumed run) must not end the one running now. An
+    // unknown or terminal attempt is refused rather than falling back to the current one
+    // (PLAN-001 task 20).
+    if (attemptId && run.attemptId && attemptId !== run.attemptId)
+        return { ok: false, error: 'that attempt has already ended' };
     try {
-        fs.writeFileSync(path.join(AGENT_RUNS_DIR, `${sessionId}.stop`), String(Date.now()));
+        fs.writeFileSync(path.join(AGENT_RUNS_DIR, `${sessionId}.stop`), String(run.attemptId || attemptId || Date.now()));
     } catch (e) {
         return { ok: false, error: e.message };
     }
-    dlog('agent stop requested', { session: sessionId });
+    dlog('agent stop requested', { session: sessionId, attempt: run.attemptId || attemptId || null });
     return { ok: true };
 }
 
@@ -992,7 +1379,88 @@ function stitchCompactions(byUuid) {
     return stitched;
 }
 
-function envFor(baseEnv, resumeSessionId, opts) {
+function stripProgressEnvironment(env) {
+    const clean = { ...env };
+    for (const key of Object.keys(clean)) {
+        if (key.startsWith('VANNEVAR_PROGRESS_')) delete clean[key];
+    }
+    return clean;
+}
+
+function progressEnvironment(baseEnv, opts, context) {
+    const env = stripProgressEnvironment(baseEnv);
+    if (!progressAvailable() || !opts || !context || !context.manager || !context.input) return env;
+    const channels = context.manager.pendingChannels;
+    if (!channels || typeof channels.entries !== 'function') return env;
+    const matches = [...channels.entries()].filter(([, record]) => record && record.in === context.input);
+    if (matches.length !== 1) return env;
+    const channelId = matches[0][0];
+    const views = [...S.webviews].filter((view) => view.__ccxChannelId === channelId);
+    if (views.length !== 1) return env;
+    const webview = views[0];
+    const sessionId = opts.resume || opts.sessionId || require('crypto').randomUUID();
+    if (typeof sessionId !== 'string' || !sessionId) return env;
+    if (!opts.resume) opts.sessionId = sessionId;
+    const existing = sessionCapabilities.get(sessionId);
+    if (existing && existing.webview !== webview) return env;
+    const capability = existing ? existing.capability : issueSessionCapability(sessionId, webview);
+    if (!capability) return env;
+    noteSessionId(webview, sessionId);
+    beginRuntimeTransport(webview, sessionId);
+    const info = getProgressBroker().info();
+    env.VANNEVAR_PROGRESS_CAP = capability;
+    env.VANNEVAR_PROGRESS_ENDPOINT = info.endpoint;
+    env.VANNEVAR_PROGRESS_PROTOCOL = String(info.protocol);
+    const reporting = require('./progress-reporting.js').createReportingHooks({
+        ownerSession: sessionId, enabled: progressAvailable, nativeEnabled: nativeSemanticEnabled,
+    });
+    opts.allowedTools = [...new Set([...(opts.allowedTools || []), 'mcp__vannevar__progress'])];
+    opts.hooks ||= {};
+    for (const [event, callback] of [['UserPromptSubmit', reporting.prompt], ['SubagentStart', reporting.start]]) {
+        opts.hooks[event] ||= [];
+        opts.hooks[event].push({ hooks: [callback] });
+    }
+    if (nativeSemanticEnabled()) {
+        const broker = getProgressBroker();
+        nativeBridges.get(sessionId)?.dispose();
+        const bridge = nativeProgress().createNativeProgressBridge({ broker, ownerSession: sessionId,
+            resumed: Boolean(opts.resume), enabled: nativeSemanticEnabled,
+            createClient: (credentials) => {
+                let client;
+                return {
+                    async report(report) {
+                        const { createProgressClient } = await import('./mcp/progress-client.mjs');
+                        client ||= createProgressClient(credentials);
+                        return client.report(report);
+                    },
+                    close() { client?.close(); },
+                };
+            } });
+        context.nativeBridge = bridge;
+        nativeBridges.set(sessionId, bridge);
+        broker.setNativeClassifier(sessionId, (id) => nativeSemanticEnabled() ? bridge.classify(id) : { root: true },
+            opts.resume ? 'unsupported_resume' : 'supported_initial_attempt', nativeSemanticEnabled);
+        opts.hooks ||= {};
+        for (const [event, callback] of [['PreToolUse', bridge.pre], ['PostToolUse', bridge.post],
+            ['PostToolUseFailure', bridge.failure]]) {
+            opts.hooks[event] ||= [];
+            opts.hooks[event].push({ matcher: event === 'PreToolUse'
+                ? 'mcp__vannevar__progress|Agent|Task' : 'mcp__vannevar__progress', hooks: [callback] });
+        }
+    }
+    return env;
+}
+
+function optionalProgressEnvironment(env, opts, context) {
+    try {
+        return progressEnvironment(env, opts, context);
+    } catch {
+        dlog('progress environment failed', { reason: 'initialization_failed' });
+        return stripProgressEnvironment(env);
+    }
+}
+
+function envFor(baseEnv, resumeSessionId, opts, context) {
     // Guarding the resume is independent of the profile: even a plain Anthropic tab can be relaunched
     // by the extension itself with an id whose transcript never came to be. Clearing opts.resume here
     // is what turns `--resume=<id>` into a fresh start — the SDK reads that field after this runs.
@@ -1006,7 +1474,7 @@ function envFor(baseEnv, resumeSessionId, opts) {
     // Ahead of the early return, because a tab with no profile at all is the plainest way back to
     // Anthropic — and the one that would otherwise keep failing with nothing in the log to explain it.
     if (resumeSessionId && targetsAnthropic(profile, baseEnv)) stripForeignMessageIds(resumeSessionId);
-    if (!profile) return baseEnv;
+    if (!profile) return optionalProgressEnvironment(baseEnv, opts, context);
     const env = { ...baseEnv };
     for (const k of managedKeys()) delete env[k];
     if (crossesProvider(profile)) for (const k of CREDENTIAL_KEYS) delete env[k];
@@ -1045,9 +1513,10 @@ function envFor(baseEnv, resumeSessionId, opts) {
     if (!targetsAnthropic(profile, baseEnv) && !('CLAUDE_CODE_DISABLE_ARTIFACT' in env)) {
         env.CLAUDE_CODE_DISABLE_ARTIFACT = '1';
     }
+    const progressEnv = optionalProgressEnvironment(env, opts, context);
     dlog('envFor', { profile, session: resumeSessionId || 'new', baseUrl: profileEnv(profile).ANTHROPIC_BASE_URL });
     console.log(`ccx: spawning with profile "${profile}" (session ${resumeSessionId || 'new'})`);
-    return env;
+    return progressEnv;
 }
 
 // The CLI layers ~/.claude/settings.json's `env` block on top of the spawn environment. Its own
@@ -1852,10 +2321,93 @@ function profileIcons() {
     return out;
 }
 
+function iconProgress(panel) {
+    if (!isProgressEnabled() || !progress.broker) return null;
+    const sessionId = panel.webview && panel.webview.__ccxSessionId;
+    const root = sessionProjections.get(sessionId)?.root;
+    if (!root || !['starting', 'running', 'cancelling'].includes(root.state)) return null;
+    try {
+        const reported = progress.broker.snapshot(sessionId).root;
+        const semantic = reported && reported.rootId === root.rootId && reported.semantic;
+        if (!semantic || !Number.isInteger(semantic.done) || !Number.isInteger(semantic.total)
+            || semantic.total <= 0 || semantic.done < 0 || semantic.done > semantic.total) return null;
+        return Math.round(16 * semantic.done / semantic.total);
+    } catch { return null; }
+}
+
+function progressIcon(src, pixels) {
+    if (!src || pixels === null) return src;
+    const cache = (S.progressIcons ||= new Map());
+    try {
+        const stat = fs.statSync(src);
+        if (stat.size > MAX_ICON_BYTES) return src;
+        const key = `${src}|${pixels}`;
+        const hit = cache.get(key);
+        if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size && fs.existsSync(hit.out)) return hit.out;
+        const data = iconDataUri(src);
+        if (!data) return src;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" data-ccx-progress="${pixels}">`
+            + `<image href="${data}" width="24" height="20"/>`
+            + '<rect x="3" y="20" width="18" height="4" rx="1" fill="#f5f5f5"/>'
+            + '<rect x="4" y="21" width="16" height="2" fill="#303030"/>'
+            + (pixels ? `<rect x="4" y="21" width="${pixels}" height="2" fill="#65b9f3"/>` : '') + '</svg>';
+        const parent = path.join(ICONS_DIR, 'progress');
+        const dir = path.join(parent, String(process.pid));
+        fs.mkdirSync(dir, { recursive: true });
+        if (!S.progressIconDirectoriesChecked) {
+            S.progressIconDirectoriesChecked = true;
+            for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
+                if (!entry.isDirectory() || !/^[1-9]\d*$/.test(entry.name) || entry.name === String(process.pid)) continue;
+                try { process.kill(Number(entry.name), 0); continue; }
+                catch (error) { if (error.code !== 'ESRCH') continue; }
+                const stale = path.join(parent, entry.name);
+                try {
+                    for (const file of fs.readdirSync(stale, { withFileTypes: true })) {
+                        if (file.isFile() && /^[a-f0-9]{24}\.svg$/.test(file.name)) fs.unlinkSync(path.join(stale, file.name));
+                    }
+                    if (!fs.readdirSync(stale).length) fs.rmdirSync(stale);
+                } catch {}
+            }
+        }
+        const digest = crypto.createHash('sha256').update(key).update(svg).digest('hex').slice(0, 24);
+        const out = path.join(dir, `${digest}.svg`);
+        if (!fs.existsSync(out)) fs.writeFileSync(out, svg, 'utf8');
+        if (hit) cache.delete(key);
+        cache.set(key, { mtimeMs: stat.mtimeMs, size: stat.size, out });
+        const displayed = new Set();
+        for (const panel of S.panels.keys()) {
+            const icon = panel.iconPath;
+            for (const uri of [icon, icon && icon.light, icon && icon.dark]) {
+                if (uri && uri.fsPath) displayed.add(uri.fsPath);
+            }
+        }
+        for (const [cachedKey, entry] of cache) {
+            if (cache.size <= Math.max(128, displayed.size + 1)) break;
+            if (entry.out !== out && !displayed.has(entry.out)) cache.delete(cachedKey);
+        }
+        // Each extension host owns its directory; never prune another live window's files.
+        const files = fs.readdirSync(dir).filter((name) => /^[a-f0-9]{24}\.svg$/.test(name));
+        const limit = Math.max(128, displayed.size + 1);
+        if (files.length > limit) {
+            const retained = new Set([...cache.values()].map((entry) => entry.out));
+            const oldest = files.map((name) => ({ file: path.join(dir, name), time: fs.statSync(path.join(dir, name)).mtimeMs }))
+                .sort((a, b) => a.time - b.time);
+            let excess = files.length - limit;
+            for (const entry of oldest) {
+                if (excess <= 0) break;
+                if (entry.file === out || displayed.has(entry.file) || retained.has(entry.file)) continue;
+                fs.unlinkSync(entry.file);
+                excess--;
+            }
+        }
+        return out;
+    } catch { return src; }
+}
+
 function iconFor(panel, state) {
     const brand = brandIconFor(panel);
-    if (brand) return badgedIcon(brand, state);
-    return defaultIcon(state) || defaultIcon();
+    const base = brand ? badgedIcon(brand, state) : defaultIcon(state) || defaultIcon();
+    return progressIcon(base, iconProgress(panel));
 }
 
 function hookIcon(panel) {
@@ -2182,6 +2734,47 @@ function ensureWatchers() {
         // The update may already have landed before this tab was opened, and that write is gone
         repatchAfterUpdate();
     }
+    // Watch vannevar progress settings
+    if (!S.progressSettingsWatcher) {
+        try {
+            S.progressSettingsWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
+                if (e.affectsConfiguration('vannevar.progress.enabled')) {
+                    checkProgressEnabled();
+                }
+            });
+        } catch {}
+    }
+    // Check emergency disable env var at startup
+    checkEmergencyDisable();
+}
+
+function checkProgressEnabled() {
+    const wasDisabled = progress.disableLatched;
+    if (!progressAvailable() || !wasDisabled) return;
+    for (const webview of S.webviews) {
+        const sessionId = webview.__ccxSessionId;
+        if (!sessionId) continue;
+        issueSessionCapability(sessionId, webview);
+        beginRuntimeTransport(webview, sessionId);
+    }
+}
+
+function checkEmergencyDisable() {
+    progressAvailable();
+}
+
+function getChannelsPreference() {
+    // vannevar.progress.channels sticky preference
+    try {
+        const explicitChannels = vscode.workspace.getConfiguration('vannevar').get('progress.channels');
+        const channelsExplicit = explicitChannels === false ? false : true;
+        return { channelsPreference: explicitChannels, channelsExplicit, explicitChannels };
+    } catch (e) { return { channelsPreference: true, channelsExplicit: true, explicitChannels: true }; }
+}
+
+function progressDisabled() {
+    try { return vscode.workspace.getConfiguration('vannevar').get('progress.enabled', true) === false; }
+    catch (e) { return false; }
 }
 
 function panelFor(webview) {
@@ -2342,6 +2935,12 @@ function attachWebview(webview) {
                 const def = loadDefaultProfile();
                 if (def) ensureProxy(def);
             }
+            // Issue session capability for progress broker
+            const sessionId = webview.__ccxSessionId;
+            if (progressAvailable() && sessionId) {
+                issueSessionCapability(sessionId, webview);
+                beginRuntimeTransport(webview, sessionId);
+            }
             return;
         }
         // Launch is not the only moment the adapter has to be up. It is a detached process, so it can
@@ -2388,6 +2987,7 @@ function attachWebview(webview) {
             clearTimeout(pending.timer);
             relayControlReply(pending.message, webview.__ccxSessionId === pending.sessionId ? String(m.text || 'No result') : 'The receiving tab changed.');
         } else if (m.type === 'ccx:get') {
+            webview.__ccxProgressEpochs = new Map();
             // The icon set is sent once per webview and then only when it changes — but the first
             // send happens in renderScript(), while the HTML is still being built and no page exists
             // to receive it. That message is dropped, the stamp is not, and every later postIcons()
@@ -2397,6 +2997,9 @@ function attachWebview(webview) {
             webview.__ccxIconStamp = null;
             postIcons(webview);
             post(webview, { type: 'ccx:state', ...stateFor(sessionId, webview) });
+            // The page has just started and holds no progress state: hand it a fresh epoch and the
+            // full projection rather than waiting for the next ordinary delta.
+            if (progressAvailable()) beginRuntimeTransport(webview, sessionId);
             // A tab that opens while a run is already going gets its frame filled in rather than
             // waiting for the next line of that agent's transcript.
             S.agentRunsStamp = null;
@@ -2419,6 +3022,8 @@ function attachWebview(webview) {
                     decorate(p);
                 }
             post(webview, { type: 'ccx:state', ...stateFor(webview.__ccxSessionId, webview) });
+            // The session is known now: open the transport with a fresh producer epoch.
+            if (progressAvailable()) beginRuntimeTransport(webview, webview.__ccxSessionId);
         } else if (m.type === 'ccx:apply') {
             const name = m.name || null;
             try {
@@ -2461,7 +3066,7 @@ function attachWebview(webview) {
         } else if (m.type === 'ccx:agentTranscript') {
             post(webview, { type: 'ccx:agentReply', seq: m.seq, ...agentTranscript(m.session) });
         } else if (m.type === 'ccx:stopAgent') {
-            post(webview, { type: 'ccx:agentReply', seq: m.seq, ...requestAgentStop(m.session) });
+            post(webview, { type: 'ccx:agentReply', seq: m.seq, ...requestAgentStop(m.session, m.attemptId, webview.__ccxSessionId || null) });
         } else if (m.type === 'ccx:debug') {
             dlog('ccx:debug indicator', m);
         } else if (m.type === 'ccx:pinSession') {
@@ -2544,6 +3149,30 @@ function attachWebview(webview) {
                 addHidden(id, m.uuids);
                 // Echo the authoritative list back so the page's in-memory set converges on the file.
                 post(webview, { type: 'ccx:state', ...stateFor(id, webview) });
+            }
+        } else if (m.type === 'ccx:progressRuntime') {
+            // The page's monotonic runtime projection for its session. Stale epochs and old/equal
+            // runtimeRevisions are rejected here, before the broker ever sees them.
+            applyRuntimeProgress(webview, m);
+        } else if (m.type === 'ccx:requestProgressSnapshot') {
+            // Semantic gap recovery: the page missed a delta and wants the full projection back.
+            answerProgressSnapshotRequest(webview, m);
+        } else if (m.type === 'ccx:rootTaskObserved') {
+            // The page saw a new root task for its session; the broker learns about it so the
+            // snapshot and subsequent deltas carry the root.
+            const target = webview.__ccxSessionId || (typeof m.sessionId === 'string' ? m.sessionId : null);
+            if (progressAvailable() && target && runtimeEpochs.get(target) === m.runtimeEpoch) {
+                ensureProgressBrokerSubscription();
+                if (m.root && m.root.rootId) {
+                    try {
+                        getProgressBroker().observeRoot({
+                            sessionId: target, rootId: m.root.rootId, state: m.root.state,
+                            startedAt: m.root.startedAt, generation: m.root.rootId,
+                        });
+                    } catch (e) {
+                        dlog('root task observe failed', { sessionId: target, error: e && e.message });
+                    }
+                }
             }
         }
     });
@@ -2885,12 +3514,11 @@ async function relayControl(message, command, value) {
     post(target, { type: 'ccx:relayControl', requestId, command, value, sessionId });
 }
 
-function activeAgentRunsForOwner(owner) {
-    if (!owner) return [];
-    const runs = readAgentRuns();
-    const included = new Set(runs.filter((run) => run.owner === owner).map((run) => run.session));
-    let changed = true;
-    while (changed) {
+// The sessions a tab may see delegated work for: its own runs plus everything reachable through
+// the `parent` chain. Shared by the run reader and the projection below.
+function ownerScopedSessions(runs, ownerSession) {
+    const included = new Set(runs.filter((run) => run.owner === ownerSession).map((run) => run.session));
+    for (let changed = true; changed; ) {
         changed = false;
         for (const run of runs) {
             if (run.parent && included.has(run.parent) && !included.has(run.session)) {
@@ -2899,7 +3527,362 @@ function activeAgentRunsForOwner(owner) {
             }
         }
     }
+    return included;
+}
+
+function activeAgentRunsForOwner(owner) {
+    if (!owner) return [];
+    const runs = readAgentRuns();
+    const included = ownerScopedSessions(runs, owner);
     return runs.filter((run) => included.has(run.session) && (run.state || 'running') === 'running');
+}
+
+// --- Session progress projection ---------------------------------------------------------------
+//
+// One pure join of the progress sources this host holds: the session's runtime projection posted
+// by its page (`ccx:progressRuntime`), the broker's semantic snapshot, and the delegated runs of
+// the receiving tab. Enriched Channels and host diagnostics read this shape and nothing else —
+// it never renders a command string (PLAN-001 task 27).
+//
+// The rules are enforced here so no caller can bypass them: retained terminal runs are dropped
+// and a resumed run is never merged with the terminal one it continues; childCount is computed
+// from unique attempts across native and delegated rows, never from a wire field; a served model
+// without evidence of the current provider generation is hidden; a delegated scope's semantic
+// progress attaches by run identity (`scopeId`), never by session id; and elapsed time derives
+// from timestamps at formatting time, so nothing on the wire ever carries an age.
+
+// Identity evidence an observer cannot vouch for is `unknown`, and a served model from another
+// provider generation is stale by definition (PLAN-001 "Execution identity"): hide it rather
+// than inherit it by inference.
+function enforcedExecutionIdentity(execution) {
+    const identity = execution && typeof execution === 'object' ? execution : {};
+    const text = (v) => (typeof v === 'string' && v ? v : null);
+    const generation = (v) => (Number.isFinite(v) ? v : null);
+    const providerGeneration = generation(identity.providerGeneration);
+    const servedGeneration = generation(identity.servedModelGeneration);
+    const servedModel = text(identity.servedModel);
+    const stale =
+        servedModel !== null && servedGeneration !== null && providerGeneration !== null && servedGeneration !== providerGeneration;
+    return {
+        providerProfile: text(identity.providerProfile),
+        requestedModel: text(identity.requestedModel),
+        servedModel: stale ? null : servedModel,
+        effort: text(identity.effort),
+        providerGeneration,
+        servedModelGeneration: servedGeneration,
+        providerEvidence: text(identity.providerEvidence) || 'unknown',
+        requestedModelEvidence: text(identity.requestedModelEvidence) || 'unknown',
+        servedModelEvidence: stale || servedModel === null ? 'unknown' : text(identity.servedModelEvidence) || 'unknown',
+    };
+}
+
+// A read of the clock at formatting time, not a stored field: a recorded age goes stale the
+// moment someone reads it.
+function elapsedFrom(startedAt, now) {
+    return Number.isFinite(startedAt) && Number.isFinite(now) && now >= startedAt ? now - startedAt : null;
+}
+
+// Pure: same inputs, same projection. `runtime` is the page's normalized runtime snapshot,
+// `brokerSnapshot` the broker's `snapshot(sessionId)`, `delegatedRuns` the run rows (normally
+// `activeAgentRunsForOwner(ownerSession)` output), `now` the formatting-time clock.
+function SessionProgressProjection({ sessionId, runtime, brokerSnapshot, delegatedRuns, ownerSession, now, enabled } = {}) {
+    // Disabled progress hands over nothing at all: an absent projection is the one shape that
+    // cannot leak enriched state to Channels.
+    if (enabled === false) return null;
+    if (typeof sessionId !== 'string' || !sessionId) return null;
+    const at = Number.isFinite(now) ? now : Date.now();
+    const snapshot = runtime && typeof runtime === 'object' ? runtime : null;
+    const broker = brokerSnapshot && typeof brokerSnapshot === 'object' ? brokerSnapshot : null;
+
+    const rootRuntime = snapshot && snapshot.root && typeof snapshot.root === 'object' ? snapshot.root : null;
+    const root = rootRuntime
+        ? {
+              rootId: typeof rootRuntime.rootId === 'string' ? rootRuntime.rootId : null,
+              sessionId,
+              title: typeof rootRuntime.title === 'string' ? rootRuntime.title : null,
+              state: typeof rootRuntime.state === 'string' ? rootRuntime.state : 'unknown',
+              activityHealth: typeof rootRuntime.activityHealth === 'string' ? rootRuntime.activityHealth : 'unknown',
+              startedAt: Number.isFinite(rootRuntime.startedAt) ? rootRuntime.startedAt : null,
+              lastActivityAt: Number.isFinite(rootRuntime.lastActivityAt) ? rootRuntime.lastActivityAt : null,
+              elapsedMs: elapsedFrom(rootRuntime.startedAt, at),
+              currentTool: typeof rootRuntime.currentTool === 'string' ? rootRuntime.currentTool : null,
+              runtimeRevision: Number.isFinite(rootRuntime.runtimeRevision) ? rootRuntime.runtimeRevision : null,
+              execution: enforcedExecutionIdentity(rootRuntime.execution || snapshot.execution),
+          }
+        : null;
+
+    // Root semantic lives broker-side; scope semantics are keyed by scope id, which is a run
+    // identity, not a session id.
+    const semanticByScope = broker && broker.semanticByScope && typeof broker.semanticByScope === 'object' ? broker.semanticByScope : {};
+    const semantic = broker && broker.root && broker.root.semantic ? { ...broker.root.semantic } : null;
+
+    // Native rows exist only when the page's runtime carried them: a build without the
+    // `subagentTasks` capability has no native rows to project.
+    const nativeCapability = Array.isArray(snapshot && snapshot.nativeAgents);
+    const native = (nativeCapability ? snapshot.nativeAgents : [])
+        .filter((row) => row && typeof row === 'object' && (row.state || 'running') === 'running')
+        .map((row) => ({
+            kind: 'native',
+            id: typeof row.id === 'string' ? row.id : null,
+            title: typeof row.title === 'string' && row.title ? row.title : 'Agent',
+            state: typeof row.state === 'string' ? row.state : 'running',
+            startedAt: Number.isFinite(row.startedAt) ? row.startedAt : null,
+            lastActivityAt: Number.isFinite(row.lastActivityAt) ? row.lastActivityAt : null,
+            elapsedMs: elapsedFrom(row.startedAt, at),
+            currentTool: typeof row.currentTool === 'string' ? row.currentTool : null,
+            tokens: Number.isFinite(row.tokens) ? row.tokens : 0,
+            toolCalls: Number.isFinite(row.toolCalls) ? row.toolCalls : 0,
+            execution: enforcedExecutionIdentity(row.execution),
+            semantic: broker?.nativeScopes?.[row.id]?.scopeId
+                ? semanticByScope[broker.nativeScopes[row.id].scopeId] || null : null,
+        }));
+
+    const runs = Array.isArray(delegatedRuns) ? delegatedRuns : [];
+    // The caller normally passes owner-scoped rows; the owner rule is repeated here so a
+    // mis-scoped list cannot widen the projection (owner = the receiving tab session plus every
+    // descendant through `parent` — the same closure `activeAgentRunsForOwner` draws).
+    const allowed = ownerSession ? ownerScopedSessions(runs, ownerSession) : null;
+    const seenAttempts = new Set();
+    const delegated = [];
+    for (const run of runs) {
+        if (!run || typeof run !== 'object') continue;
+        if (allowed && !allowed.has(run.session)) continue;
+        // Only active rows are projected: a retained terminal manifest must not sneak back in,
+        // and a resumed run stays its own row — rows key on attempt, so spans never merge.
+        if ((run.state || 'running') !== 'running') continue;
+        const attemptKey = (typeof run.attemptId === 'string' && run.attemptId) || `session:${run.session}`;
+        if (seenAttempts.has(attemptKey)) continue;
+        seenAttempts.add(attemptKey);
+        const scopeSemantic = (typeof run.scopeId === 'string' && run.scopeId && semanticByScope[run.scopeId]) || null;
+        delegated.push({
+            kind: 'delegated',
+            session: typeof run.session === 'string' ? run.session : null,
+            attemptId: typeof run.attemptId === 'string' ? run.attemptId : null,
+            scopeId: typeof run.scopeId === 'string' ? run.scopeId : null,
+            title:
+                typeof run.description === 'string' && run.description
+                    ? run.description
+                    : 'Agent ' + String(run.session || '').slice(0, 8),
+            state: 'running',
+            startedAt: Number.isFinite(run.startedAt) ? run.startedAt : null,
+            elapsedMs: elapsedFrom(run.startedAt, at),
+            contextTokens: Number.isFinite(run.contextTokens) ? run.contextTokens : null,
+            toolUses: Number.isFinite(run.toolUses) ? run.toolUses : 0,
+            execution: enforcedExecutionIdentity({
+                providerProfile: run.profile,
+                requestedModel: run.model,
+                servedModel: run.servedModel,
+                providerEvidence: run.profile ? 'delegated-manifest' : 'unknown',
+                requestedModelEvidence: run.model ? 'delegated-manifest' : 'unknown',
+                servedModelEvidence: run.servedModel ? 'child-assistant-message' : 'unknown',
+            }),
+            semantic: scopeSemantic ? { ...scopeSemantic } : null,
+        });
+    }
+
+    // One child is one attempt, whatever is showing it: the rows are counted, not any wire
+    // `childCount` and not the same attempt twice.
+    const childCount = native.length + delegated.length;
+
+    const health = (broker && broker.health) || {};
+    return {
+        sessionId,
+        generatedAt: at,
+        root,
+        semantic,
+        semanticByScope,
+        agents: { childCount, native, delegated },
+        capabilities: {
+            brokerAvailable: health.available === true,
+            brokerCircuitOpen: health.circuitOpen === true,
+            nativeSubagentTasks: nativeCapability,
+        },
+    };
+}
+
+// --- Channels command enrichment ---------------------------------------------------------------
+// `/session`, `/tabs` and `/agents` answer from the projection above while progress and its
+// channels preference are both on; with either off they keep their pre-feature replies exactly —
+// no half-enriched output (PLAN-001 task 29). Pull-only: nothing here sends a message nobody
+// asked for, and a reply never carries raw prompts or notes beyond the bounded fields the
+// broker and the projection already cap.
+
+// The projection a tab answers from: the page's latest runtime snapshot, the broker's semantic
+// snapshot and that tab's own delegated runs. A missing source degrades to the others; the
+// projection itself decides what an absent input hides. The broker is touched only while
+// progress is available, so a disabled run never spins one up just to answer a command.
+function sessionProgressProjectionFor(sessionId) {
+    let brokerSnapshot = null;
+    if (progressAvailable()) {
+        try { brokerSnapshot = getProgressBroker().snapshot(sessionId); } catch (e) { brokerSnapshot = null; }
+    }
+    return SessionProgressProjection({
+        sessionId,
+        runtime: sessionProjections.get(sessionId) || null,
+        brokerSnapshot,
+        delegatedRuns: activeAgentRunsForOwner(sessionId),
+        ownerSession: sessionId,
+        enabled: true,
+    });
+}
+
+// Enrichment is progress AND its channels preference: either switch off returns the commands to
+// their pre-feature replies.
+function channelsEnrichmentEnabled() {
+    if (!isProgressEnabled()) return false;
+    return getChannelsPreference().channelsPreference !== false;
+}
+
+// Reply budget for one channel reply, read at formatting time: a stored number would go stale
+// behind a settings change. parseInt over booleans and objects is NaN by design; NaN, 0 and
+// negatives fall to the default, everything else clamps to the manifest's 500..16000.
+function channelsResponseBudget() {
+    const DEFAULT = 3500, MIN = 500, MAX = 16000;
+    let raw;
+    try { raw = vscode.workspace.getConfiguration('vannevar').get('channels.responseBudget'); } catch (e) { return DEFAULT; }
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) ? Math.min(MAX, Math.max(MIN, n)) : DEFAULT;
+}
+
+// V1 renders basic Unicode marks; a channel (or an environment, via VANNEVAR_CHANNELS_ASCII=1)
+// that cannot show them gets the ASCII fallback — same words, bracketed marks.
+function channelsMarks() {
+    if (process.env.VANNEVAR_CHANNELS_ASCII === '1') {
+        return { active: '[Working]', done: '[Done]', idle: '[Idle]', bullet: '-', more: '... +' };
+    }
+    return { active: '●', done: '✓', idle: '○', bullet: '•', more: '… +' };
+}
+
+// Labels and notes shown to a channel are bounded here as well: the broker bounds semantic notes,
+// but a title or tool name comes from the page and is capped at the border, not trusted.
+function channelsBounded(text, max, marks) {
+    const s = typeof text === 'string' ? text : '';
+    return s.length > max ? s.slice(0, max - 1) + (marks.more === '... +' ? '...' : '…') : s;
+}
+
+function channelsElapsed(ms) {
+    if (!Number.isFinite(ms) || ms < 0) return null;
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    return minutes > 0 ? minutes + 'm' + String(total % 60).padStart(2, '0') + 's' : total + 's';
+}
+
+// `provider/model` with a served model shown as `requested → served` when both exist and differ.
+// The projection already hides a served model from another provider generation.
+function channelsProviderModel(execution) {
+    const identity = execution && typeof execution === 'object' ? execution : {};
+    const provider = typeof identity.providerProfile === 'string' && identity.providerProfile ? identity.providerProfile : 'unknown';
+    const requested = typeof identity.requestedModel === 'string' && identity.requestedModel ? identity.requestedModel : null;
+    const served = typeof identity.servedModel === 'string' && identity.servedModel ? identity.servedModel : null;
+    const model = served && requested && served !== requested ? requested + ' → ' + served : served || requested || '?';
+    return provider + '/' + model;
+}
+
+function channelsStatusLine(semantic, root, marks) {
+    if (!root) return marks.idle + ' No progress data yet.';
+    if (semantic && Number.isFinite(semantic.total) && semantic.total > 0) {
+        const parts = [marks.active + ' ' + semantic.done + '/' + semantic.total];
+        if (typeof semantic.note === 'string' && semantic.note) parts.push(channelsBounded(semantic.note, 80, marks));
+        return parts.join(' · ');
+    }
+    const state = typeof root.state === 'string' && root.state ? root.state : 'unknown';
+    if (/done|complete/i.test(state)) return marks.done + ' Done';
+    if (state === 'running') {
+        const tool = typeof root.currentTool === 'string' && root.currentTool;
+        return marks.active + ' Working' + (tool ? ' · ' + channelsBounded(tool, 40, marks) : '');
+    }
+    return marks.idle + ' ' + channelsBounded(state, 40, marks);
+}
+
+// The budget caps characters, not lines: whole textual lines drop from the tail until the reply
+// fits, and one closing line counts what was dropped. The head — titles, numbering — never
+// changes, so numbers already shown keep their meaning (`/tab N` reads the full stored mapping).
+function fitChannelsBudget(lines, budget, marks) {
+    const text = lines.join('\n');
+    if (text.length <= budget) return text;
+    const suffix = '\n' + marks.more;
+    let end = lines.length;
+    while (end > 1 && lines.slice(0, end).join('\n').length + suffix.length + 8 > budget) end--;
+    return lines.slice(0, end).join('\n') + suffix + (lines.length - end) + ' more';
+}
+
+function relaySessionReply(tabs, title) {
+    const bound = loadRelayTarget();
+    const tab = bound
+        ? tabs.find((item) => item.sessionId === bound)
+        : tabs.find((item) => S.lastActiveWebview && item.sessionId === S.lastActiveWebview.__ccxSessionId);
+    if (!tab) return 'No active receiving tab. Use /tab <number> to select.';
+    const marks = channelsMarks();
+    const proj = sessionProgressProjectionFor(tab.sessionId);
+    const root = proj && proj.root;
+    const lines = [title(tab), channelsStatusLine(proj && proj.semantic, root, marks)];
+    const meta = [channelsProviderModel(root && root.execution)];
+    if (proj) meta.push(proj.agents.childCount + ' agents');
+    const elapsed = channelsElapsed(root && root.elapsedMs);
+    if (elapsed) meta.push(elapsed);
+    lines.push(meta.join(' · '));
+    return fitChannelsBudget(lines, channelsResponseBudget(), marks);
+}
+
+// Selection mapping is stored by the caller before this builds any text: truncation drops only a
+// textual tail, so `/tab N` keeps mapping onto the full, current list.
+function relayTabsReply(tabs, title) {
+    const marks = channelsMarks();
+    const lines = tabs.map((tab, index) => {
+        const parts = [(index + 1) + '. ' + title(tab)];
+        const proj = sessionProgressProjectionFor(tab.sessionId);
+        if (proj) {
+            const meta = [channelsStatusLine(proj.semantic, proj.root, marks), channelsProviderModel(proj.root && proj.root.execution)];
+            if (proj.agents.childCount > 0) meta.push(proj.agents.childCount + ' agents');
+            parts.push(meta.join(' · '));
+        }
+        return parts.join('   ');
+    });
+    return fitChannelsBudget(lines, channelsResponseBudget(), marks);
+}
+
+// Native rows answer from runtime activity only (V1 native semantic stays off); delegated rows
+// show semantic progress where a scope identity carried one. A build without the `subagentTasks`
+// capability says so once, in a bounded note, instead of silently showing half the picture.
+function relayAgentsReply(target, tabTitle) {
+    const marks = channelsMarks();
+    const proj = sessionProgressProjectionFor(target.sessionId);
+    const native = proj ? proj.agents.native : [];
+    const delegated = proj ? proj.agents.delegated : [];
+    const capabilityNote = proj && proj.capabilities && proj.capabilities.nativeSubagentTasks === false
+        ? '(Note: native agent status unavailable for this Claude Code version)'
+        : null;
+    if (!native.length && !delegated.length) {
+        return capabilityNote ? 'No active agents for ' + tabTitle + '.\n' + capabilityNote : 'No active agents for ' + tabTitle + '.';
+    }
+    const rootProvider = proj && proj.root && proj.root.execution && typeof proj.root.execution.providerProfile === 'string'
+        ? proj.root.execution.providerProfile
+        : null;
+    const lines = ['Agents for ' + tabTitle + ':', ''];
+    for (const row of [...native, ...delegated]) {
+        const identity = row.execution && typeof row.execution === 'object' ? row.execution : {};
+        if (row.kind === 'native') {
+            const provider = typeof identity.providerProfile === 'string' && identity.providerProfile ? identity.providerProfile : rootProvider || 'unknown';
+            const model = typeof identity.servedModel === 'string' && identity.servedModel ? identity.servedModel : '?';
+            const activity = [marks.active + ' Working'];
+            if (typeof row.currentTool === 'string' && row.currentTool) activity.push(channelsBounded(row.currentTool, 40, marks));
+            const elapsed = channelsElapsed(row.elapsedMs);
+            if (elapsed) activity.push(elapsed);
+            lines.push(marks.bullet + ' native · ' + channelsBounded(row.title, 80, marks), '  ' + provider + ' · model ' + model, '  ' + activity.join(' · '));
+        } else {
+            const provider = typeof identity.providerProfile === 'string' && identity.providerProfile ? identity.providerProfile : 'unknown';
+            const requested = typeof identity.requestedModel === 'string' && identity.requestedModel ? identity.requestedModel : null;
+            const served = typeof identity.servedModel === 'string' && identity.servedModel ? identity.servedModel : null;
+            const model = served && requested && served !== requested ? requested + ' → ' + served : served || requested || '?';
+            const semantic = row.semantic && Number.isFinite(row.semantic.total) && row.semantic.total > 0 ? row.semantic : null;
+            const activity = semantic
+                ? [semantic.done + '/' + semantic.total].concat(typeof semantic.note === 'string' && semantic.note ? [channelsBounded(semantic.note, 80, marks)] : [])
+                : [marks.active + ' Working'].concat((elapsed => (elapsed ? [elapsed] : []))(channelsElapsed(row.elapsedMs)));
+            lines.push(marks.bullet + ' delegated · ' + channelsBounded(row.title, 80, marks), '  ' + provider + ' · ' + model, '  ' + activity.join(' · '));
+        }
+    }
+    if (capabilityNote) lines.push(capabilityNote);
+    return fitChannelsBudget(lines, channelsResponseBudget(), marks);
 }
 
 function relayCommand(message, text) {
@@ -2916,6 +3899,7 @@ function relayCommand(message, text) {
             ? tabs.find((tab) => tab.sessionId === bound)
             : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
         if (!target) reply = 'No receiving tab. Run /tabs, then /tab <number>.';
+        else if (channelsEnrichmentEnabled()) reply = relayAgentsReply(target, title(target));
         else {
             const runs = activeAgentRunsForOwner(target.sessionId);
             reply = runs.length
@@ -2927,6 +3911,8 @@ function relayCommand(message, text) {
                 }).join('\n')
                 : 'No active delegated agents for ' + title(target) + '.';
         }
+    } else if (command === 'session' && channelsEnrichmentEnabled()) {
+        reply = relaySessionReply(tabs, title);
     } else if (['session', 'models', 'model', 'effort', 'mode', 'provider'].includes(command)) {
         relayControl(message, command, (match[2] || '').trim()).catch((e) => relayControlReply(message, 'Control failed: ' + e.message));
         return true;
@@ -2938,7 +3924,8 @@ function relayCommand(message, text) {
             reply = 'Vannevar commands:\n/commands — show this list\n/tabs — list open tabs\n/tab <number> — select a tab from the latest /tabs list\n/session — show the receiving tab\n/agents — list active delegated agents for this tab\n/models — list models\n/model <value> — change model\n/effort <level> — change effort\n/mode <mode> — change permission mode (elevated modes require IDE confirmation)\n/providers — list provider profiles\n/provider <name> — switch provider and restart the tab\n\n/agents shows Vannevar delegated runs only, not native Claude Code subagents. Other messages go to the selected tab. Omit a setting value to read it.';
         } else if (command === 'tabs') {
             relayCommandTabs.set(chatId, tabs.map((tab) => tab.sessionId));
-            reply = tabs.length ? tabs.map((tab, index) => (index + 1) + '. ' + title(tab)).join('\n') : 'No open session tabs.';
+            if (!tabs.length) reply = channelsEnrichmentEnabled() ? 'No open tabs.' : 'No open session tabs.';
+            else reply = channelsEnrichmentEnabled() ? relayTabsReply(tabs, title) : tabs.map((tab, index) => (index + 1) + '. ' + title(tab)).join('\n');
         } else if (command === 'tab') {
             const ids = relayCommandTabs.get(chatId);
             const arg = match[2] || '';
@@ -2950,6 +3937,8 @@ function relayCommand(message, text) {
                 broadcast();
                 reply = 'Receiving tab: ' + title(tab);
             }
+        } else if (command === 'session') {
+            // enriched reply already built above; do not overwrite with generic fallback
         } else {
             const bound = loadRelayTarget();
             const tab = bound ? tabs.find((tab) => tab.sessionId === bound) : tabs.find((tab) => S.lastActiveWebview && tab.sessionId === S.lastActiveWebview.__ccxSessionId);
@@ -3293,6 +4282,10 @@ function attachPanel(panel) {
         S.panels.set(panel, true);
         try {
             panel.onDidDispose(() => {
+                // A panel can launch multiple sessions before it closes.
+                for (const [sessionId, entry] of sessionCapabilities) {
+                    if (entry.webview === panel.webview) revokeSessionCapability(sessionId);
+                }
                 S.panels.delete(panel);
                 S.activeSessionByPanel.delete(panel);
             });
@@ -3306,6 +4299,8 @@ module.exports = {
     renderScript,
     attachPanel,
     envFor,
+    bindNativeProducer,
+    observeNativeFrame,
     editorEnv,
     onChannelReady,
     wrapCanUseTool,
@@ -3317,4 +4312,7 @@ module.exports = {
     requestAgentStop,
     historyBeforeCompaction,
     stitchCompactions,
+    replaceProgressBroker,
+    closeProgressBroker,
+    SessionProgressProjection,
 };

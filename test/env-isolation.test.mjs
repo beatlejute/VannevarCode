@@ -55,6 +55,8 @@ Module._load = (request, ...rest) => (request === 'vscode' ? vscodeStub : load(r
 
 const copy = join(tmpdir(), `ccx-host-env-${process.pid}.cjs`);
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
+// Copy progress-broker.js to the runtime directory where host.js expects it
+writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
 
 let envFor;
 let editorEnv;
@@ -141,8 +143,26 @@ assert.equal(
     'an explicit CLAUDE_CODE_DISABLE_ARTIFACT must survive',
 );
 
-// No binding, no profile: the environment is passed through untouched, by identity.
-assert.strictEqual(envFor(ambient, 'sess-unknown'), ambient, 'unbound session must pass the environment through');
+// Optional telemetry failure must not discard the selected provider.
+const brokenProgressContext = { manager: { get pendingChannels() { throw new Error('private-context-marker'); } }, input: {} };
+const telemetryAmbient = { ...ambient, VANNEVAR_PROGRESS_CAP: 'stale-cap', VANNEVAR_PROGRESS_ENDPOINT: 'stale-endpoint' };
+const preserved = envFor(telemetryAmbient, 'sess-third-party', undefined, brokenProgressContext);
+// Supply launch options so the failing telemetry context is actually evaluated.
+const preservedLaunch = envFor(telemetryAmbient, undefined, { sessionId: 'fresh-launch' }, brokenProgressContext);
+assert.equal(preserved.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+assert.equal(preserved.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+assert.equal(preservedLaunch.VANNEVAR_PROGRESS_CAP, undefined);
+globalThis.__ccxState.pendingProfile = 'deepseek';
+const selectedFailure = envFor(telemetryAmbient, undefined, {}, brokenProgressContext);
+globalThis.__ccxState.pendingProfile = null;
+assert.equal(selectedFailure.ANTHROPIC_BASE_URL, 'https://api.deepseek.com/anthropic');
+assert.equal(selectedFailure.ANTHROPIC_AUTH_TOKEN, 'sk-deepseek');
+assert.equal(selectedFailure.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+assert.equal(selectedFailure.VANNEVAR_PROGRESS_CAP, undefined);
+assert.ok(!readFileSync(join(runtime, 'debug.log'), 'utf8').includes('private-context-marker'));
+
+// No binding or profile preserves unrelated environment values.
+assert.deepEqual(envFor(ambient, 'sess-unknown'), ambient, 'unbound session must preserve environment values');
 
 // A stored default provider is what a new tab with no binding and no per-tab pick runs on — the
 // fallback below settings.json's own match. It is applied exactly like a binding, which means the
@@ -156,7 +176,7 @@ assert.ok(!('ANTHROPIC_API_KEY' in def), 'default provider inherited an ambient 
 assert.equal(envFor(ambient, 'sess-second').ANTHROPIC_AUTH_TOKEN, 'sk-ant-second', 'a session binding must outrank the default provider');
 // A default that names a profile nobody has any more is dropped, and the environment passes through.
 writeFileSync(join(runtime, 'default-profile.json'), JSON.stringify({ name: 'gone' }));
-assert.strictEqual(envFor(ambient, 'sess-other'), ambient, 'a stale default must not be applied');
+assert.deepEqual(envFor(ambient, 'sess-other'), ambient, 'a stale default must not be applied');
 
 // editorEnv() is what the host's own network children are spawned with — the local provider adapter
 // and the channel relay. The CLI gets `claudeCode.environmentVariables` from its own spawn (Dm()), but

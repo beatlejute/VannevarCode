@@ -10,7 +10,7 @@
 // machine — extension.js copies runtime/ into ~/.claude/vannevar and writes patch-version.json beside
 // it — and the stamp is where its version, the releases it was verified against and the extensions root
 // all come from.
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -35,9 +35,15 @@ function installPatcher(name, stamp) {
     return path.join(dir, 'apply-patch.mjs');
 }
 
-function run(patcher, args, env) {
-    const out = spawnSync(process.execPath, [patcher, ...args], { encoding: 'utf8', env: { ...process.env, ...env } });
-    return { code: out.status, text: `${out.stdout || ''}${out.stderr || ''}` };
+async function run(patcher, args, env) {
+    const child = spawn(process.execPath, [patcher, ...args], { env: { ...process.env, ...env } });
+    let text = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { text += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { text += chunk; });
+    return new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', (code) => resolve({ code, text }));
+    });
 }
 
 function fixture(name, files) {
@@ -105,7 +111,7 @@ try {
         'webview/index.js': 'void 0;/*__ccx*/\n',
     });
 
-    const upToDate = run(PATCHER, [`--dir=${patched}`, '--if-needed']);
+    const upToDate = await run(PATCHER, [`--dir=${patched}`, '--if-needed']);
     assert.equal(upToDate.code, 0, `--if-needed on a patched bundle failed:\n${upToDate.text}`);
     assert.match(upToDate.text, /^ccx-result: up-to-date$/m, 'no up-to-date line for a patched bundle');
     assert.doesNotMatch(upToDate.text, /^ccx-result: patched$/m, 'a patched bundle must not report a fresh patch');
@@ -118,7 +124,7 @@ try {
         'webview/index.js': SOURCE,
     });
 
-    const refused = run(PATCHER, [`--dir=${moved}`, '--if-needed']);
+    const refused = await run(PATCHER, [`--dir=${moved}`, '--if-needed']);
     assert.notEqual(refused.code, 0, 'a bundle with no matching signature must fail loudly');
     assert.match(refused.text, /signature matched 0 times/, `unexpected failure:\n${refused.text}`);
     assert.doesNotMatch(refused.text, /^ccx-result:/m, 'a refused run must not report a result');
@@ -151,7 +157,7 @@ try {
     writeFileSync(lock, 'crashed');
     const ancient = new Date(Date.now() - 10 * 60 * 1000);
     utimesSync(lock, ancient, ancient);
-    const stale = run(PATCHER, [`--dir=${patched}`, '--if-needed']);
+    const stale = await run(PATCHER, [`--dir=${patched}`, '--if-needed']);
     assert.equal(stale.code, 0, `a stale lock blocked the patcher:\n${stale.text}`);
     assert.match(stale.text, /^ccx-result: up-to-date$/m, 'the run behind a stale lock reported nothing');
     assert.ok(!existsSync(lock), 'the stale lock was not cleared');
@@ -173,7 +179,7 @@ try {
         const ahead = supported.replace(/\d+$/, (last) => Number(last) + 1);
 
         const aheadDir = fixture(`anthropic.claude-code-${ahead}-win32-x64`, source);
-        const onAhead = run(PATCHER, [`--dir=${aheadDir}`, '--if-needed']);
+        const onAhead = await run(PATCHER, [`--dir=${aheadDir}`, '--if-needed']);
         assert.equal(onAhead.code, 0, `the patch did not go onto ${ahead}:\n${onAhead.text.slice(-1500)}`);
         assert.match(onAhead.text, /^ccx-result: patched$/m, 'a fresh patch reported nothing');
         assert.match(
@@ -194,11 +200,18 @@ try {
         // Every release on the list is verified, not only the newest one: a single extension release can
         // carry signatures that fit several Claude Code versions, and flagging the older ones would put a
         // "nothing has checked this" notification in front of someone for whom that is untrue.
-        for (const release of verified) {
-            const named = fixture(`anthropic.claude-code-${release}-win32-x64`, source);
-            const onNamed = run(PATCHER, [`--dir=${named}`, '--if-needed']);
-            assert.equal(onNamed.code, 0, `the patch did not go onto ${release}:\n${onNamed.text.slice(-1500)}`);
-            assert.doesNotMatch(onNamed.text, /^ccx-unverified:/m, `${release} is on the list and was flagged anyway`);
+        // Each version has its own bundle and lock. Bound concurrency while retaining every apply/check.
+        for (let i = 0; i < verified.length; i += 6) {
+            const results = await Promise.all(verified.slice(i, i + 6).map(async (release) => {
+                const named = fixture(`anthropic.claude-code-${release}-win32-x64`, source);
+                const result = await run(PATCHER, [`--dir=${named}`, '--if-needed']);
+                return { release, ...result };
+            }));
+            for (const onNamed of results) {
+                const { release } = onNamed;
+                assert.equal(onNamed.code, 0, `the patch did not go onto ${release}:\n${onNamed.text.slice(-1500)}`);
+                assert.doesNotMatch(onNamed.text, /^ccx-unverified:/m, `${release} is on the list and was flagged anyway`);
+            }
         }
         console.log(`OK — every release in verifiedAgainst (${verified.join(', ')}) applies without a warning`);
 
@@ -213,7 +226,7 @@ try {
             'extension.js': source['extension.js'].replace(/channelInitialized/g, 'channelInitialised'),
             'webview/index.js': source['webview/index.js'],
         });
-        const missing = run(PATCHER, [`--dir=${withoutAnchor}`, '--if-needed']);
+        const missing = await run(PATCHER, [`--dir=${withoutAnchor}`, '--if-needed']);
         assert.equal(missing.code, 0, `a bundle without the channel anchor was refused:\n${missing.text.slice(-1200)}`);
         assert.match(missing.text, /^ccx-result: patched$/m, 'the patch did not apply without the optional anchor');
         assert.match(
@@ -234,7 +247,7 @@ try {
             'extension.js': source['extension.js'],
             'webview/index.js': SOURCE,
         });
-        const refusedHalf = run(PATCHER, [`--dir=${half}`, '--if-needed']);
+        const refusedHalf = await run(PATCHER, [`--dir=${half}`, '--if-needed']);
         assert.notEqual(refusedHalf.code, 0, 'a webview with no matching signature must fail loudly');
         assert.match(refusedHalf.text, /webview\/index\.js: signature matched 0 times/, `unexpected failure:\n${refusedHalf.text}`);
         assert.doesNotMatch(refusedHalf.text, /^ccx-result:/m, 'a refused run must not report a result');
@@ -264,7 +277,7 @@ try {
                 '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
         );
 
-        const rewired = run(PATCHER, [`--dir=${foreign}`, '--if-needed']);
+        const rewired = await run(PATCHER, [`--dir=${foreign}`, '--if-needed']);
         assert.equal(rewired.code, 0, `the foreign patch was not replaced:\n${rewired.text.slice(-1500)}`);
         assert.match(rewired.text, /^ccx-result: patched$/m, 'a bundle wired to another runtime reported up-to-date');
         const rewritten = readFileSync(path.join(foreign, 'extension.js'), 'utf8');
@@ -281,7 +294,7 @@ try {
                 '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
             'webview/index.js': source['webview/index.js'],
         });
-        const refusedOrphan = run(PATCHER, [`--dir=${orphan}`, '--if-needed']);
+        const refusedOrphan = await run(PATCHER, [`--dir=${orphan}`, '--if-needed']);
         assert.notEqual(refusedOrphan.code, 0, 'a foreign patch with no backup was written over');
         assert.match(refusedOrphan.text, /already patched and has no/, `unexpected failure:\n${refusedOrphan.text}`);
         assert.ok(!existsSync(path.join(orphan, 'extension.js.ccx-orig')), 'a patched file was saved as the backup');
@@ -294,7 +307,7 @@ try {
         // flag it sets, and a failed request no longer forces the screen back up. All three have to
         // survive the round trip through the real bundle rather than merely match by inspection.
         const login = fixture('anthropic.claude-code-9.9.7-login', source);
-        const optedOut = run(PATCHER, [`--dir=${login}`, '--if-needed']);
+        const optedOut = await run(PATCHER, [`--dir=${login}`, '--if-needed']);
         assert.equal(optedOut.code, 0, `the login opt-out did not apply:\n${optedOut.text.slice(-1500)}`);
         const patchedWebview = readFileSync(path.join(login, 'webview', 'index.js'), 'utf8');
         assert.ok(patchedWebview.includes('Use without Anthropic login'), 'the login screen gained no opt-out button');
@@ -318,7 +331,7 @@ try {
     }
 
     // --- the stamp is where the patcher reads itself --------------------------------------------
-    const stamped = run(PATCHER, [`--dir=${patched}`, '--status']);
+    const stamped = await run(PATCHER, [`--dir=${patched}`, '--status']);
     assert.match(
         stamped.text,
         new RegExp(`^patcher: +${escape(PKG.version)} \\(verified against ${escape(verified.join(', '))}\\)$`, 'm'),
@@ -339,7 +352,7 @@ try {
         verifiedAgainst: verified,
         extensionPath: inRoot,
     });
-    const found = run(stampedRoot, ['--if-needed']);
+    const found = await run(stampedRoot, ['--if-needed']);
     assert.equal(found.code, 0, `the patcher did not run against the stamped root:\n${found.text}`);
     assert.ok(found.text.includes(`extension: ${inRoot}`), `the wrong bundle was picked:\n${found.text}`);
     console.log('OK — with no --dir, the extensions root comes from the stamp rather than from ~/.vscode');

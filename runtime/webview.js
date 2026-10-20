@@ -67,10 +67,42 @@
     var frameOpen = {};
     var frameTouched = {};
     var claimedRuns = {};
+    var toolBlockIndex = null;
+    var toolBlockIndexSession = null;
+    var nativeEventCache = null;
     // The last progress the app reported for a task-style subagent, by tool_use id. Kept because the
     // app DELETES its entry the moment the task ends (handleTaskNotification), and a frame that blanks
     // itself exactly when the run finishes is the one moment it is worth reading.
+    // Retention policy for that cache: an active run is always kept, terminal runs only down to
+    // the most recent MAX_TASK_SNAPSHOTS entries, so a long session cannot grow without limit.
+    var MAX_TASK_SNAPSHOTS = 100;
     var taskSnapshots = {};
+    var runtimeRevisions = new Map();
+    var runtimeRoots = new Map();
+   var rootProgress = null;
+   var rootProgressRevision = -1;
+   var rootProgressSurface = null;
+   var rootProgressPlanVersion = -1;
+    var rootProgressReplanPending = false;
+    // Semantic progress keyed by delegated scope id (broker-side). A scope's semantic attaches to a
+    // block-frame only after the block's own tool_result confirms its attemptId (PLAN-001 task 24);
+    // before that the frame stays activity-only, with no x/y and no semantic of a foreign attempt.
+    var scopeSemantic = {};
+    var nativeScopes = {};
+    var nativeSemanticStatus = 'disabled';
+    // block.id -> attemptId confirmed by the block's own tool_result.
+    var blockAttempt = {};
+    // The producer epoch the host issued for this page, and the broker instance the current
+    // revision baseline belongs to. A broker instance change invalidates the baseline.
+    var runtimeEpoch = null;
+    var runtimeEpochSession = null;
+    var runtimePublishTimer = null;
+    var runtimeLastPosts = new Map();
+    var progressBrokerInstance = null;
+    var progressDisabled = false;
+    var disabledProgressBroker = null;
+    var nativeGenerations = new Map();
+    var servedModelGenerations = new Map();
     var spellcheckComposer = null;
     var spellcheckText = '';
     var spellcheckUnknown = new Set();
@@ -793,6 +825,7 @@
         }
 
         if (d.type === 'ccx:state') {
+            var previousSessionId = state.sessionId;
             state = {
                 profiles: d.profiles || [],
                 active: d.active || null,
@@ -810,6 +843,7 @@
                 channel: d.channel || null,
                 relay: d.relay || null,
             };
+            if (state.sessionId !== previousSessionId) resetToolBlockCaches();
             rememberHistoryBeforeCompaction(state.historyBeforeCompaction);
             adoptAttachmentPrompts(d.attachmentPrompts);
             adoptPinned(d.pinnedSessions);
@@ -833,6 +867,7 @@
             }
             syncAction();
             syncChip();
+            renderRootProgress();
             // Every push re-answers both questions: whether the profile the tab is on has moved under it
             // (a switch to hold the model indicator for), and whether the held indicator has been earned
             // back by an answer from the new backend.
@@ -847,6 +882,75 @@
             decorateResourcePill();
             decorateChannelPill();
             applyHidden();
+        } else if (d.type === 'ccx:progressSnapshot') {
+            if (d.disabled === true) {
+                progressDisabled = true;
+                disabledProgressBroker = progressBrokerInstance;
+                runtimeEpoch = null;
+                runtimeEpochSession = null;
+                clearTimeout(runtimePublishTimer);
+                runtimePublishTimer = null;
+                progressBrokerInstance = null;
+                rootProgress = null;
+                rootProgressRevision = -1;
+                renderRootProgress();
+                return;
+            }
+            // A full snapshot is the authoritative baseline: it carries the producer epoch this page
+            // was given and the broker instance it came from. A different instance resets whatever
+            // baseline we held, so a revision from a new instance is never measured against the old
+            // instance's counter.
+            if (disabledProgressBroker && d.brokerInstanceId === disabledProgressBroker) return;
+            if (d.sessionId && sessionObj && d.sessionId !== (progressSessionId(sessionObj))) return;
+            progressDisabled = false;
+            adoptProgressBroker(d.brokerInstanceId);
+            var newProducer = typeof d.runtimeEpoch === 'string' && d.runtimeEpoch !== runtimeEpoch;
+            if (typeof d.runtimeEpoch === 'string') {
+                runtimeEpoch = d.runtimeEpoch;
+                runtimeEpochSession = d.sessionId || state.sessionId;
+            }
+            rootProgress = d.root || null;
+            var brokerSnap = d.broker && typeof d.broker === 'object' ? d.broker : {};
+            if (typeof brokerSnap.semanticByScope === 'object') scopeSemantic = brokerSnap.semanticByScope;
+            nativeScopes = brokerSnap.nativeScopes || {};
+            nativeSemanticStatus = brokerSnap.nativeSemanticStatus || 'disabled';
+            rootProgressRevision = typeof d.revision === 'number' ? d.revision : -1;
+            var snapSem = rootProgress && rootProgress.semantic;
+            var snapPV = snapSem && typeof snapSem.planVersion === 'number' ? snapSem.planVersion : (rootProgress && typeof rootProgress.planVersion === 'number' ? rootProgress.planVersion : -1);
+            if (snapPV >= 0 && snapPV !== rootProgressPlanVersion) { rootProgressPlanVersion = snapPV; rootProgressReplanPending = true; }
+            renderRootProgress();
+            if (newProducer) publishRuntimeProgress(true);
+        } else if (d.type === 'ccx:progressDelta') {
+            if (progressDisabled || (disabledProgressBroker && d.brokerInstanceId === disabledProgressBroker)) return;
+            if (d.sessionId && d.sessionId !== (progressSessionId(sessionObj))) return;
+            adoptProgressBroker(d.brokerInstanceId);
+            if (typeof d.revision !== 'number') {
+                renderRootProgress();
+            } else if (d.revision > rootProgressRevision) {
+                // A revision that jumps past the next expected value means a delta was lost between
+                // the host and this page. Ask for the full projection rather than render a hole.
+                if (rootProgressRevision >= 0 && d.revision > rootProgressRevision + 1)
+                    send({ type: 'ccx:requestProgressSnapshot', sessionId: state.sessionId });
+                if (d.payload && Object.prototype.hasOwnProperty.call(d.payload, 'changedRoot'))
+                    rootProgress = d.payload.changedRoot || null;
+                else if (Object.prototype.hasOwnProperty.call(d, 'root')) rootProgress = d.root || null;
+                if (d.payload && typeof d.payload.changedScopes === 'object') {
+                    var scopes = d.payload.changedScopes;
+                    for (var sid in scopes) {
+                        var s = scopes[sid];
+                        if (s === null) delete scopeSemantic[sid];
+                        else scopeSemantic[sid] = s;
+                    }
+                }
+                if (d.payload && d.payload.nativeScopes) nativeScopes = d.payload.nativeScopes;
+                if (d.payload && d.payload.nativeSemanticStatus) nativeSemanticStatus = d.payload.nativeSemanticStatus;
+                var deltaSem = rootProgress && rootProgress.semantic;
+                var deltaPV = deltaSem && typeof deltaSem.planVersion === 'number' ? deltaSem.planVersion : (rootProgress && typeof rootProgress.planVersion === 'number' ? rootProgress.planVersion : -1);
+                if (deltaPV >= 0 && deltaPV !== rootProgressPlanVersion) { rootProgressPlanVersion = deltaPV; rootProgressReplanPending = true; }
+                rootProgressRevision = d.revision;
+                renderRootProgress();
+            }
+            // Older and equal revisions are ignored: the newest state always wins.
         } else if (d.type === 'ccx:icons') {
             icons = d.icons || {};
             fallback = d.fallback || null;
@@ -937,6 +1041,192 @@
             host.dataset.ccxModel = item.model;
         });
     }
+
+    // The revision baseline belongs to one broker instance. When the host reports a different
+    // instance, the old counter is meaningless and the next revision starts a fresh baseline, so a
+    // replacement broker is never confused with a gap in the old one's stream.
+    function adoptProgressBroker(instanceId) {
+        if (typeof instanceId !== 'string' || !instanceId || instanceId === progressBrokerInstance) return;
+        progressBrokerInstance = instanceId;
+        rootProgressRevision = -1;
+    }
+
+    // Publish this page's runtime projection for its session. The revision is monotonic per session
+    // and the host rejects anything that is not from the current producer epoch or not strictly newer,
+    // so a resend after a remount can never roll the host's state back.
+    function progressSessionId(source) {
+        if (source) {
+            var candidates = [source.id, source.sessionId];
+            for (var i = 0; i < candidates.length; i++) {
+                var candidate = candidates[i];
+                if (candidate && typeof candidate === 'object' && 'value' in candidate) candidate = candidate.value;
+                if (typeof candidate === 'string' && candidate) return candidate;
+            }
+        }
+        return typeof state.sessionId === 'string' ? state.sessionId : null;
+    }
+
+    function publishRuntimeProgress(immediate) {
+        if (progressDisabled || !sessionObj) return;
+        var sessionId = progressSessionId(sessionObj);
+        if (!sessionId || runtimeEpochSession !== sessionId || !runtimeEpoch) return;
+        var previous = runtimeLastPosts.get(sessionId);
+        var elapsed = previous ? Date.now() - previous.at : Infinity;
+        if (immediate !== true || (previous && previous.epoch === runtimeEpoch && elapsed < 100)) {
+            if (runtimePublishTimer === null) runtimePublishTimer = setTimeout(function () {
+                runtimePublishTimer = null;
+                publishRuntimeProgress(true);
+            }, Math.max(1, 150 - Math.min(elapsed, 150)));
+            return;
+        }
+        clearTimeout(runtimePublishTimer);
+        runtimePublishTimer = null;
+        var snapshot = buildNormalizedRuntimeSnapshot(sessionObj);
+        if (!snapshot || !snapshot.sessionId || snapshot.sessionId === 'unknown') return;
+        runtimeLastPosts.set(sessionId, { at: Date.now(), epoch: runtimeEpoch });
+        send({
+            type: 'ccx:progressRuntime',
+            sessionId: snapshot.sessionId,
+            runtimeEpoch: runtimeEpoch,
+            runtimeRevision: snapshot.runtimeRevision,
+            root: snapshot.root,
+            projection: snapshot,
+        });
+    }
+
+    // The compact bar is anchored above the composer. The composer is React's and its wrapper class is
+    // per-build, so the stable handle is the input the project already looks up in composerEl(); the
+    // older wrapper id stays as a capability fallback for builds that expose one. With no candidate the
+    // feature degrades without touching the chat.
+    function rootProgressAnchor() {
+        var input = composerEl();
+        if (input && input.parentElement) {
+            var form = typeof input.closest === 'function' ? input.closest('form') : null;
+            return form && form.parentElement ? form : input;
+        }
+        var legacy = document.querySelector('#composer');
+        return legacy && legacy.parentElement ? legacy : null;
+    }
+
+    // Scopes that no transcript card owns: children whose launches never produced a task frame
+    // (background runners). Their broker scopes are real, so they render beside the root bar.
+    function renderRootProgress() {
+        invalidateMapProgress();
+        var root = rootProgress;
+        var anchor = rootProgressAnchor();
+        var terminalRoot = root && ['done', 'failed', 'stopped'].indexOf(root.state) >= 0;
+        if (!root || terminalRoot || !anchor || typeof document.createElement !== 'function') {
+            if (rootProgressSurface) rootProgressSurface.remove();
+            rootProgressSurface = null;
+            return;
+        }
+        var semantic = root.semantic && Number.isInteger(root.semantic.done)
+            && Number.isInteger(root.semantic.total) && root.semantic.total > 0
+            && root.semantic.done >= 0 && root.semantic.done <= root.semantic.total
+            ? root.semantic : (Number.isInteger(root.done) && Number.isInteger(root.total) && root.total > 0 && root.done >= 0 && root.done <= root.total ? root : null);
+        if (!semantic) {
+            if (rootProgressSurface) rootProgressSurface.remove();
+            rootProgressSurface = null;
+            return;
+        }
+        var stageNote = typeof semantic.note === 'string' && semantic.note ? semantic.note : '';
+        if (!stageNote && Array.isArray(semantic.plan)) {
+            var stageIndex = semantic.done < semantic.total ? semantic.done : semantic.total - 1;
+            var plannedStage = semantic.plan[stageIndex];
+            if (typeof plannedStage === 'string' && plannedStage) stageNote = plannedStage;
+        }
+        if (!rootProgressSurface) {
+            rootProgressSurface = document.createElement('div');
+            rootProgressSurface.id = 'ccx-root-progress';
+            rootProgressSurface.setAttribute('role', 'status');
+        }
+        var surface = rootProgressSurface;
+        var planVersion = semantic && typeof semantic.planVersion === 'number' ? semantic.planVersion : rootProgressPlanVersion;
+        var stateName = ['starting', 'running', 'cancelling', 'done', 'failed', 'stopped'].indexOf(root.state) >= 0
+            ? root.state : 'running';
+        var title = document.createElement('div');
+        title.className = 'ccx-root-title';
+        title.textContent = root.showTitle === false ? 'Current task' : ((semantic && semantic.title) || 'Current task');
+        var detail = document.createElement('div');
+        detail.className = 'ccx-root-detail';
+        var terminal = stateName === 'done' || stateName === 'failed' || stateName === 'stopped';
+        var parts = [];
+        if (terminal) parts.push(stateName.charAt(0).toUpperCase() + stateName.slice(1));
+        else if (root.activityHealth === 'stale') parts.push('Working · checking activity');
+        else parts.push('Working');
+        if (root.currentTool) parts.push(String(root.currentTool));
+        if (root.startedAt) {
+            var elapsedMs = Date.now() - (root.startedAt || 0);
+            if (elapsedMs > 0) parts.push(span(elapsedMs));
+        }
+        if (root.execution) {
+            var identity = root.execution.providerProfile || '';
+            var served = root.execution.servedModelGeneration != null
+                && root.execution.providerGeneration != null
+                && root.execution.servedModelGeneration !== root.execution.providerGeneration
+                ? null : root.execution.servedModel;
+            var model = root.execution.requestedModel || served;
+            if (root.execution.requestedModel && served && root.execution.requestedModel !== served)
+                model = root.execution.requestedModel + ' → ' + served;
+            if (identity && model) identity += '/' + model;
+            else identity = identity || model;
+            if (identity) parts.push(identity);
+        }
+        if (Array.isArray(root.nativeAgents) && root.nativeAgents.length) parts.push(root.nativeAgents.length + ' agents');
+        if (rootProgressReplanPending && semantic.total > 1 && !terminal) parts.unshift('Plan updated · ' + semantic.done + '/' + semantic.total);
+        detail.textContent = parts.join(' · ');
+        surface.textContent = '';
+        surface.className = 'ccx-root-progress' + (semantic.total > 1 && !terminal && stageNote ? ' ccx-root-determinate' : '');
+        surface.appendChild(title);
+        surface.appendChild(detail);
+        if (semantic.total > 1 && !terminal && stageNote) {
+            var stage = document.createElement('div');
+            stage.className = 'ccx-root-stage';
+            var count = document.createElement('span');
+            count.className = 'ccx-root-count';
+            count.textContent = semantic.done + '/' + semantic.total;
+            stage.appendChild(count);
+            var note = document.createElement('span');
+            note.className = 'ccx-root-note';
+            note.textContent = stageNote;
+            note.setAttribute('title', stageNote);
+            stage.appendChild(note);
+            var progress = document.createElement('progress');
+            progress.max = semantic.total;
+            progress.value = semantic.done;
+            progress.setAttribute('aria-label', 'Task progress');
+            stage.appendChild(progress);
+            surface.appendChild(stage);
+        } else if (semantic.total === 1 && !terminal && stageNote) {
+            var note = document.createElement('div');
+            note.className = 'ccx-root-note ccx-root-note-only';
+            note.textContent = stageNote;
+            note.setAttribute('title', stageNote);
+            surface.appendChild(note);
+        }
+        if (rootProgressReplanPending) rootProgressReplanPending = false;
+        if (surface.parentElement !== anchor.parentElement || anchor.previousSibling !== surface) {
+            if (typeof anchor.parentElement.insertBefore === 'function') anchor.parentElement.insertBefore(surface, anchor);
+            else anchor.parentElement.appendChild(surface);
+        }
+    }
+
+    var rootProgressStyle = document.createElement('style');
+    rootProgressStyle.textContent = [
+        '#ccx-root-progress{box-sizing:border-box;display:flex;flex-direction:column;align-items:stretch;gap:4px;padding:7px 10px;margin:0 0 6px;border:1px solid var(--vscode-widget-border, rgba(128,128,128,.3));border-radius:5px;background:var(--vscode-editorWidget-background, var(--vscode-editor-background, #202020));color:var(--vscode-foreground);font:11px var(--vscode-font-family)}',
+        '#ccx-root-progress .ccx-root-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;line-height:1.35}',
+        '#ccx-root-progress .ccx-root-detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.65;line-height:1.35;font-variant-numeric:tabular-nums}',
+        '#ccx-root-progress .ccx-root-stage{display:grid;grid-template-columns:5ch minmax(0,1fr);align-items:center;column-gap:8px;row-gap:4px;min-width:0}',
+        '#ccx-root-progress .ccx-root-count{min-width:5ch;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}',
+        '#ccx-root-progress .ccx-root-note{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35}',
+        '#ccx-root-progress .ccx-root-note-only{opacity:.8}',
+        '#ccx-root-progress .ccx-root-stage progress{grid-column:1/-1;display:block;width:100%;height:6px;margin:0;accent-color:var(--vscode-progressBar-background, var(--vscode-textLink-foreground))}',
+        '.ccx-map-progress{box-sizing:border-box;display:grid;grid-template-columns:5ch minmax(0,1fr);align-items:center;column-gap:8px;row-gap:3px;align-self:stretch;width:100%;min-width:0;margin-top:2px}',
+        '.ccx-map-progress-count{min-width:5ch;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}',
+        '.ccx-map-progress-note{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.35}',
+        '.ccx-map-progress progress{grid-column:1/-1;display:block;width:100%;height:5px;margin:0;accent-color:var(--vscode-progressBar-background, var(--vscode-textLink-foreground))}',
+    ].join('');
+    document.head.appendChild(rootProgressStyle);
 
     // The values the composer actually shows are the session's live signals, not settings.json — that
     // file only holds the defaults, so it names whatever chat last changed /model or /effort, which is
@@ -1364,6 +1654,212 @@
         return null;
     }
 
+    function createToolBlockIndex() {
+        var byId = new Map();
+        var rebuildThreshold = 0.4;
+
+        function isToolNode(node) {
+            return Boolean(node && (node.matches
+                ? node.matches('[class*="toolUse_"]')
+                : String(node.className || '').indexOf('toolUse_') >= 0));
+        }
+
+        function connected(node) {
+            return node && node.isConnected !== false;
+        }
+
+        function candidates(root) {
+            var found = [];
+            if (isToolNode(root)) found.push(root);
+            if (root && root.querySelectorAll) {
+                var descendants = root.querySelectorAll('[class*="toolUse_"]');
+                for (var i = 0; i < descendants.length; i++) found.push(descendants[i]);
+            }
+            return found;
+        }
+
+        function entryFor(node) {
+            var found = toolUseOf(node);
+            return found && found.block && typeof found.block.id === 'string'
+                ? { id: found.block.id, node: node }
+                : null;
+        }
+
+        function compareNodes(a, b) {
+            if (a === b) return 0;
+            if (!connected(a)) return 1;
+            if (!connected(b)) return -1;
+            if (typeof a.compareDocumentPosition !== 'function') return 0;
+            var relation = a.compareDocumentPosition(b);
+            return relation & 4 ? -1 : relation & 2 ? 1 : 0;
+        }
+
+        function reconcile(id, nodes) {
+            var unique = [];
+            for (var i = 0; i < nodes.length; i++) {
+                if (connected(nodes[i]) && unique.indexOf(nodes[i]) < 0) unique.push(nodes[i]);
+            }
+            unique.sort(compareNodes);
+            if (unique.length) byId.set(id, { id: id, node: unique[0] });
+            else byId.delete(id);
+        }
+
+        function rebuild() {
+            byId.clear();
+            var nodes = document.querySelectorAll('[class*="toolUse_"]');
+            var groups = new Map();
+            for (var i = 0; i < nodes.length; i++) {
+                var entry = entryFor(nodes[i]);
+                if (!entry) continue;
+                if (!groups.has(entry.id)) groups.set(entry.id, []);
+                groups.get(entry.id).push(entry.node);
+            }
+            groups.forEach(function (group, id) { reconcile(id, group); });
+        }
+
+        function update(records) {
+            var touched = new Map();
+            function touch(node) {
+                var entry = entryFor(node);
+                if (entry) {
+                    if (!touched.has(entry.id)) touched.set(entry.id, []);
+                    touched.get(entry.id).push(entry.node);
+                }
+            }
+            for (var i = 0; records && i < records.length; i++) {
+                var record = records[i];
+                for (var r = 0; r < record.removedNodes.length; r++) {
+                    var removed = candidates(record.removedNodes[r]);
+                    for (var x = 0; x < removed.length; x++) touch(removed[x]);
+                }
+                for (var a = 0; a < record.addedNodes.length; a++) {
+                    var added = candidates(record.addedNodes[a]);
+                    for (var y = 0; y < added.length; y++) touch(added[y]);
+                }
+                if (record.type === 'attributes' && isToolNode(record.target)) touch(record.target);
+            }
+            var churn = touched.size / Math.max(1, byId.size);
+            if (churn > rebuildThreshold) {
+                rebuild();
+                return;
+            }
+            touched.forEach(function (nodes, id) {
+                var current = byId.get(id);
+                if (current && current.node.isConnected) nodes.push(current.node);
+                reconcile(id, nodes);
+            });
+        }
+
+            return {
+            rebuild: rebuild,
+            update: update,
+            clear: function () { byId.clear(); },
+            values: function () {
+                var entries = Array.from(byId.values());
+                if (entries.some(function (entry) { return !('isConnected' in entry.node); })) rebuild();
+                return Array.from(byId.values()).filter(function (entry) { return connected(entry.node); });
+            },
+            threshold: rebuildThreshold,
+        };
+    }
+
+    function resetToolBlockCaches() {
+        if (toolBlockIndex) toolBlockIndex.clear();
+        toolBlockIndex = null;
+        toolBlockIndexSession = null;
+        blockAttempt = {};
+        if (nativeEventCache) nativeEventCache.reset();
+    }
+
+    function createNativeEventCache() {
+        var records = [];
+        var byParent = new Map();
+        var scans = 0;
+
+        function signature(message) {
+            var content = message && message.content;
+            var last = Array.isArray(content) && content.length ? content[content.length - 1] : null;
+            var raw = blockOf(last);
+            return [message && (message.parentToolUseId || message.sdkParentToolUseId) || '',
+                Array.isArray(content) ? content.length : -1, raw && raw.type || '',
+                raw && raw.type === 'text' ? raw.text : raw && raw.id || ''].join('|');
+        }
+
+        function eventsFor(message) {
+            var events = [];
+            var parent = message && (message.parentToolUseId || message.sdkParentToolUseId);
+            var content = message && message.content;
+            if (!parent || !Array.isArray(content)) return { parent: parent, events: events };
+            for (var j = 0; j < content.length; j++) {
+                var raw = blockOf(content[j]);
+                if (!raw) continue;
+                if (raw.type === 'text' && typeof raw.text === 'string' && raw.text.trim())
+                    events.push({ k: message.type === 'user' ? 'prompt' : 'text', t: raw.text.slice(0, 1200) });
+                else if (raw.type === 'thinking') events.push({ k: 'thinking' });
+                else if (raw.type === 'tool_use') events.push({ k: 'tool', n: String(raw.name || 'tool'), t: toolArgument(raw.input) });
+                else if (raw.type === 'tool_result') events.push({ k: 'result', ok: !raw.is_error });
+            }
+            return { parent: parent, events: events };
+        }
+
+        function replaceRecord(record, message, index) {
+            var previousParent = record && record.parent;
+            var next = eventsFor(message);
+            if (record && previousParent && byParent.has(previousParent)) {
+                var oldGroup = byParent.get(previousParent);
+                oldGroup.delete(record);
+                if (!oldGroup.size) byParent.delete(previousParent);
+            }
+            var updated = record || {};
+            updated.message = message;
+            updated.index = index;
+            updated.signature = signature(message);
+            updated.parent = next.parent;
+            updated.events = next.events;
+            if (updated.parent) {
+                if (!byParent.has(updated.parent)) byParent.set(updated.parent, new Set());
+                byParent.get(updated.parent).add(updated);
+            }
+            return updated;
+        }
+
+        function append(message, index) {
+            scans++;
+            var record = replaceRecord(null, message, index);
+            records.push(record);
+        }
+
+        function sync(messages) {
+            if (records.length > messages.length) {
+                records = [];
+                byParent.clear();
+            }
+            while (records.length < messages.length) append(messages[records.length], records.length);
+            if (messages.length) {
+                var index = messages.length - 1;
+                var last = records[index];
+                if (last.message !== messages[index] || last.signature !== signature(messages[index])) {
+                    scans++;
+                    records[index] = replaceRecord(last, messages[index], index);
+                }
+            }
+        }
+
+        return {
+            get: function (messages, parent) {
+                sync(messages);
+                var group = byParent.get(parent);
+                if (!group) return [];
+                var ordered = Array.from(group).sort(function (a, b) { return a.index - b.index; });
+                var result = [];
+                for (var i = 0; i < ordered.length; i++) result = result.concat(ordered[i].events);
+                return result.slice(-160);
+            },
+            reset: function () { records = []; byParent.clear(); scans = 0; },
+            scans: function () { return scans; },
+        };
+    }
+
     // A wrapper exposes its tool result as a signal; its presence is what "this run has ended" means
     // for a native subagent, which reports no state of its own.
     function toolFinished(wrapper) {
@@ -1397,6 +1893,19 @@
     // So the task shape gives a summary, not a transcript: the last few tool names, a one-line summary
     // and running totals. That is what a frame can show for it, and it is still the difference between
     // "working" and "stuck".
+    // Shared retention for the task snapshot cache: keep every active run in full and only the most
+    // recent `limit` terminal entries. Used by the live lookup and the normalized runtime snapshot
+    // alike so the bound lives in one place (PLAN-001 task 2 / REPORT-007).
+    function retainTaskSnapshots(snapshots, limit) {
+        var keys = Object.keys(snapshots);
+        var active = keys.filter(function (key) { return /working|running|active|started/i.test((snapshots[key] && snapshots[key].status) || ''); });
+        var retained = {};
+        active.forEach(function (key) { retained[key] = snapshots[key]; });
+        keys.filter(function (key) { return active.indexOf(key) < 0; }).slice(-limit)
+            .forEach(function (key) { retained[key] = snapshots[key]; });
+        return retained;
+    }
+
     function taskFor(toolUseId) {
         var tasks = sessionField('subagentTasks');
         try {
@@ -1407,6 +1916,7 @@
         } catch (e) {
             /* an unreadable map is one source missing, not a broken frame */
         }
+        taskSnapshots = retainTaskSnapshots(taskSnapshots, MAX_TASK_SNAPSHOTS);
         return taskSnapshots[toolUseId] || null;
     }
 
@@ -1424,25 +1934,8 @@
     function messagesFor(toolUseId) {
         var messages = sessionField('messages');
         if (!Array.isArray(messages)) return null;
-        var events = [];
-        for (var i = 0; i < messages.length; i++) {
-            var m = messages[i];
-            if (!m) continue;
-            var parent = m.parentToolUseId || m.sdkParentToolUseId;
-            if (parent !== toolUseId) continue;
-            var content = m.content;
-            if (!Array.isArray(content)) continue;
-            for (var j = 0; j < content.length; j++) {
-                var raw = blockOf(content[j]);
-                if (!raw) continue;
-                if (raw.type === 'text' && typeof raw.text === 'string' && raw.text.trim())
-                    events.push({ k: m.type === 'user' ? 'prompt' : 'text', t: raw.text.slice(0, 1200) });
-                else if (raw.type === 'thinking') events.push({ k: 'thinking' });
-                else if (raw.type === 'tool_use') events.push({ k: 'tool', n: String(raw.name || 'tool'), t: toolArgument(raw.input) });
-                else if (raw.type === 'tool_result') events.push({ k: 'result', ok: !raw.is_error });
-            }
-        }
-        return events.slice(-160);
+        if (!nativeEventCache) nativeEventCache = createNativeEventCache();
+        return nativeEventCache.get(messages, toolUseId);
     }
 
     // Messages first: where they exist they are the whole conversation, which no progress feed can
@@ -1496,7 +1989,7 @@
         var s = Math.round(ms / 1000);
         if (s < 60) return s + 's';
         var m = Math.floor(s / 60);
-        return m + 'm ' + (s % 60) + 's';
+        return m + 'm' + (s % 60) + 's';
     }
 
     // A run the tab started can itself delegate, and then it spends the whole time dispatching while
@@ -1634,9 +2127,11 @@
         return frameTouched[id] ? Boolean(frameOpen[id]) : running;
     }
 
+    // Only host-issued scope bindings can put semantic progress on a native frame.
+
     function nativeMeta(block, running, events, task) {
         var input = block.input || {};
-        var name = typeof input.subagent_type === 'string' && input.subagent_type ? input.subagent_type : 'subagent';
+        var name = typeof input.subagent_type === 'string' && input.subagent_type ? input.subagent_type : 'Agent';
         var description = typeof input.description === 'string' && input.description ? input.description : task && task.description;
         // The task's own totals beat anything counted here: they cover the whole run, including the
         // tool calls whose names never made it into the last-three list.
@@ -1647,11 +2142,74 @@
         // Grouped the same way the delegated run's own report groups its totals ('en-US', not the
         // runtime locale), so two frames side by side read as one thing.
         var tokens = usage && usage.totalTokens ? Number(usage.totalTokens).toLocaleString('en-US') + ' tok' : '';
+
+        // Calculate activity health based on task timestamps
+        var activityHealth = '';
+        if (task && task.startTime) {
+            var now = Date.now();
+            var startTime = task.startTime;
+            var endTime = startTime + (usage && usage.durationMs ? usage.durationMs : 0);
+            var timeSinceEnd = now - endTime;
+
+            if (running) {
+                activityHealth = 'active';
+            } else if (task.status === 'failed') {
+                activityHealth = 'unhealthy';
+            } else if (timeSinceEnd < 30000) { // less than 30 seconds
+                activityHealth = 'healthy';
+            } else {
+                activityHealth = 'stale';
+            }
+        }
+
+        // Calculate elapsed time
+        var elapsedMs = 0;
+        if (task && task.startTime) {
+            if (running) {
+                elapsedMs = Date.now() - task.startTime;
+            } else if (usage && usage.durationMs) {
+                elapsedMs = usage.durationMs;
+            }
+        }
+        var elapsedStr = span(elapsedMs);
+
+        // Build usage string
+        var usageStr = '';
+        if (usage) {
+            var usageParts = [];
+            if (usage.toolUses) usageParts.push(usage.toolUses + ' tools');
+            if (usage.totalTokens) usageParts.push(Number(usage.totalTokens).toLocaleString('en-US') + ' tok');
+            if (usage.durationMs) usageParts.push(span(usage.durationMs));
+            usageStr = usageParts.join(' · ');
+        }
+
+        var identity = '';
+        var execution = task && task.execution || task || block && block.execution;
+        if (execution && execution.providerEvidence === 'same-session-provider') {
+            var sessionId = progressSessionId(sessionObj) || 'unknown';
+            var generationKey = sessionId + ':' + block.id;
+            if (!nativeGenerations.has(generationKey)) {
+                var firstGeneration = execution.pinnedProviderGeneration != null
+                    ? execution.pinnedProviderGeneration : execution.providerGeneration;
+                if (firstGeneration != null) nativeGenerations.set(generationKey, firstGeneration);
+            }
+            var pinnedGeneration = nativeGenerations.get(generationKey);
+            var generationMatches = pinnedGeneration != null
+                && execution.providerGeneration === pinnedGeneration
+                && (execution.pinnedProviderGeneration == null || execution.pinnedProviderGeneration === pinnedGeneration);
+            if (generationMatches && execution.providerProfile && execution.providerEvidence === 'same-session-provider') {
+                var servedModel = execution.servedModelGeneration === pinnedGeneration ? execution.servedModel : null;
+                identity = execution.providerProfile + (servedModel ? '/' + servedModel : '');
+            }
+        }
+        var binding = nativeScopes[block.id];
+        var semantic = binding && scopeSemantic[binding.scopeId];
+        var semanticNote = semantic ? semantic.done + '/' + semantic.total : '';
         return {
             running: running,
             state: running ? 'running' : 'done',
             title: name + (description ? ' · ' + description : ''),
-            note: [running ? 'running' : 'done', tools ? tools + ' tool calls' : '', tokens].filter(Boolean).join(' · '),
+            note: [activityHealth, elapsedStr, tools ? tools + ' tool calls' : '', tokens, usageStr, semanticNote, identity].filter(Boolean).join(' · '),
         };
     }
 
@@ -1691,8 +2249,15 @@
         // Every moment a frame can change is a moment the agent map can, so the two ride the same passes.
         syncAgentMap();
         try {
+            if (!toolBlockIndex || toolBlockIndexSession !== sessionObj) {
+                resetToolBlockCaches();
+                toolBlockIndex = createToolBlockIndex();
+                toolBlockIndexSession = sessionObj;
+                toolBlockIndex.rebuild();
+            }
             claimedRuns = {};
-            var nodes = document.querySelectorAll('[class*="toolUse_"]');
+            var entries = toolBlockIndex.values();
+            var nodes = entries.map(function (entry) { return entry.node; });
             for (var i = 0; i < nodes.length; i++) {
                 var host = nodes[i];
                 var found = toolUseOf(host);
@@ -1717,13 +2282,40 @@
                     if (open && !events) continue;
                     paintFrame(host, block.id, open, nativeMeta(block, running, events, task), events);
                 } else if (block.name === MCP_AGENT_TOOL) {
-                    var run = runForPrompt(block.input && block.input.prompt);
+                    var prompt = block.input && block.input.prompt;
+                    var run = runForPrompt(prompt);
                     if (!run) {
                         dropFrame(host);
                         continue;
                     }
                     var tree = withChildren(run, 0);
-                    paintFrame(host, block.id, frameIsOpen(block.id, run.state === 'running'), runMeta(run, tree), tree);
+                    var running = run.state === 'running';
+                    var open = frameIsOpen(block.id, running);
+                    // Confirm block↔attempt once this block's own tool_result is in: the result names
+                    // the attempt and corrects the provisional prompt-matching association
+                    // (PLAN-001 task 24). Before confirmation the frame stays activity-only, with no
+                    // x/y and no semantic of a foreign attempt.
+                    var confirmedId = blockAttempt[block.id];
+                    if (!confirmedId && toolFinished(found.wrapper) && run.attemptId) {
+                        blockAttempt[block.id] = run.attemptId;
+                        confirmedId = run.attemptId;
+                    }
+                    if (confirmedId) {
+                        for (var k = 0; k < agentRuns.length; k++) {
+                            if (agentRuns[k].attemptId === confirmedId) { run = agentRuns[k]; break; }
+                        }
+                    }
+                    var meta = runMeta(run, tree);
+                    var semantic = null;
+                    if (run.attemptId === confirmedId && typeof run.scopeId === 'string' && run.scopeId) {
+                        semantic = scopeSemantic[run.scopeId] || null;
+                    }
+                    if (semantic && Number.isFinite(semantic.total) && semantic.total > 0) {
+                        meta.note = semantic.done + '/' + semantic.total
+                            + (typeof semantic.note === 'string' && semantic.note ? ' · ' + semantic.note : '')
+                            + ' · ' + meta.note;
+                    }
+                    paintFrame(host, block.id, open, meta, tree);
                 } else {
                     dropFrame(host);
                 }
@@ -1867,6 +2459,67 @@
     // times sorts and lines up by being the same width every time.
     var MAP_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+    // Resolve only broker-issued scope identities; row labels and activity never select semantics.
+    function mapSemantic(entry, session) {
+        if (progressDisabled || (session && session !== sessionObj)) return null;
+        var semantic;
+        if (!entry) semantic = rootProgress && rootProgress.semantic;
+        else if (isMapEntry(entry.taskId)) {
+            if (!entry.ccxScopeId || !entry.ccxAttemptId) return null;
+            var run = agentRuns.find(function (r) {
+                return r.scopeId === entry.ccxScopeId && r.attemptId === entry.ccxAttemptId
+                    && r.session === entry.ccxSession && r.state === 'running';
+            });
+            if (!run) return null;
+            semantic = scopeSemantic[entry.ccxScopeId];
+        } else {
+            var binding = nativeScopes[entry.toolUseId];
+            if (!binding || !binding.scopeId) return null;
+            semantic = scopeSemantic[binding.scopeId];
+        }
+        return semantic && Number.isInteger(semantic.done) && Number.isInteger(semantic.total)
+            && semantic.total > 0 && semantic.done >= 0 && semantic.done <= semantic.total ? semantic : null;
+    }
+
+    function mapProgress(entry, session, factory) {
+        var h = factory || jsx;
+        if (typeof h !== 'function') return null;
+        var semantic = mapSemantic(entry, session);
+        // No stages reported yet: no element at all, so the row stays as the app drew it.
+        if (!semantic) return null;
+        var count = semantic.done + '/' + semantic.total;
+        var note = typeof semantic.note === 'string' && semantic.note ? semantic.note : '';
+        if (!note && Array.isArray(semantic.plan)) {
+            var stageIndex = semantic.done < semantic.total ? semantic.done : semantic.total - 1;
+            var stage = semantic.plan[stageIndex];
+            if (typeof stage === 'string' && stage) note = stage;
+        }
+        // A count and bar without a stage label or note are not meaningful to the user.
+        if (!note) return null;
+        var text = count + ' · ' + note;
+        return h('span', { className: 'ccx-map-progress', title: text, children: [
+            h('span', { className: 'ccx-map-progress-count', children: count }),
+            h('span', { className: 'ccx-map-progress-note', title: note || undefined, children: note }),
+            h('progress', { max: semantic.total, value: semantic.done, 'aria-label': 'Task progress' }),
+        ] });
+    }
+
+    var mapSemanticStamp = null;
+    function invalidateMapProgress() {
+        var signal = sessionObj && sessionObj.agentMapAgents;
+        if (!signal || !signal.value) return;
+        if (!rootProgress && !Object.keys(scopeSemantic).length && !Object.keys(nativeScopes).length && mapSemanticStamp === null) return;
+        var identities = [];
+        signal.value.forEach(function (entry, key) {
+            identities.push([key, entry.toolUseId, entry.ccxScopeId, entry.ccxAttemptId, mapSemantic(entry)]);
+        });
+        var stamp = JSON.stringify([rootProgress && rootProgress.rootId, mapSemantic(null), nativeScopes, identities]);
+        if (stamp === mapSemanticStamp) return;
+        mapSemanticStamp = stamp;
+        // A new Map invalidates the open stock dialog without replacing its entries or handlers.
+        signal.value = new Map(signal.value);
+    }
+
     function callTime(startTime) {
         var ms = Number(startTime);
         if (!Number.isFinite(ms) || ms <= 0) return undefined;
@@ -1906,6 +2559,8 @@
                     ? run.error || (run.state === 'timeout' ? 'The run was killed when its time ran out.' : undefined)
                     : undefined,
             ccxSession: run.session,
+            ccxAttemptId: run.attemptId || undefined,
+            ccxScopeId: run.scopeId || undefined,
             ccxLive: status === 'working',
         };
     }
@@ -2061,7 +2716,7 @@
             var entry = mapEntry(taskId);
             if (!entry) return stop.apply(this, arguments);
             if (!entry.ccxLive) return Promise.reject(new Error('the run is not running'));
-            return askHost({ type: 'ccx:stopAgent', session: entry.ccxSession }).then(function () {});
+            return askHost({ type: 'ccx:stopAgent', session: entry.ccxSession, attemptId: entry.ccxAttemptId }).then(function () {});
         };
     }
 
@@ -3870,10 +4525,19 @@
     }
 
     function watchPicker() {
+        // Observe runtime on a bounded cadence, independently of the one-second display clock.
+        if (typeof setInterval === 'function') setInterval(function () { publishRuntimeProgress(true); }, 150);
         // Busy and terminal state can change without a host push or visible DOM mutation.
         if (typeof setInterval === 'function') setInterval(function () { syncRelayBusy(); syncRelayError(); }, 500);
         var timer = null;
-        new MutationObserver(function () {
+        new MutationObserver(function (records) {
+            if (!toolBlockIndex) {
+                toolBlockIndex = createToolBlockIndex();
+                toolBlockIndex.rebuild();
+                toolBlockIndexSession = sessionObj;
+            } else {
+                toolBlockIndex.update(records);
+            }
             clearTimeout(timer);
             timer = setTimeout(function () {
                 decorateModelPicker();
@@ -3888,7 +4552,7 @@
                 decorateResourcePill();
                 decorateChannelPill();
             }, 60);
-        }).observe(document.body, { childList: true, subtree: true });
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
         watchRunningFrames();
     }
 
@@ -5114,7 +5778,15 @@
             // move across with it — the fresh session brought an unguarded slot with it.
             var swapped = !!(session && sessionObj && session !== sessionObj);
             if (session) sessionObj = session;
+            if (swapped) resetToolBlockCaches();
             if (swapped) reholdServedModelSlot();
+            // A mount or a remount is exactly when the host's projection may be stale, so the page
+            // republishes its runtime state under this page's producer epoch.
+            if (session) {
+                var progressSession = progressSessionId(session);
+                if (progressSession && runtimeEpochSession !== progressSession) send({ type: 'ccx:session', sessionId: progressSession });
+                publishRuntimeProgress(true);
+            }
             if (registry || !host || !host.commandRegistry) return;
             ctx = host;
             registry = host.commandRegistry;
@@ -5131,6 +5803,8 @@
         keepEveryMessage: keepEveryMessage,
         beforeCompaction: beforeCompaction,
         callTime: callTime,
+        mapProgress: mapProgress,
+        publishRuntimeProgress: publishRuntimeProgress,
     };
 
     // styles
@@ -5314,4 +5988,143 @@
             watchPicker();
         });
     }
+    // Build a normalized in-memory snapshot from the session signals used by the webview.
+    function buildNormalizedRuntimeSnapshot(source) {
+        source = source || sessionObj;
+        if (!source) return null;
+        function value(name) {
+            var field = source[name];
+            return field && typeof field === 'object' && 'value' in field ? field.value : field;
+        }
+        var sessionId = progressSessionId(source) || 'unknown';
+        var messages = value('messages');
+        if (!Array.isArray(messages)) messages = [];
+        var now = Date.now();
+        var revision = (runtimeRevisions.get(sessionId) || 0) + 1;
+        runtimeRevisions.set(sessionId, revision);
+
+        var root = runtimeRoots.get(sessionId) || null;
+        var latestUser = null;
+        var currentTool = null;
+        var completedTools = new Set();
+        for (var i = 0; i < messages.length; i++) {
+            var message = messages[i];
+            if (!message) continue;
+            if (message.type === 'user' && !message.parentToolUseId && !message.sdkParentToolUseId && !message.parent_tool_use_id &&
+                message.isMeta !== true && message.isSynthetic !== true && message.synthetic !== true &&
+                message.notAPrompt !== true && message.isInternal !== true && message.internal !== true) {
+                var content = message.message && message.message.content != null ? message.message.content : message.content;
+                var text = typeof content === 'string' ? content : Array.isArray(content)
+                    ? content.map(function (part) {
+                        var raw = blockOf(part) || part;
+                        return raw && raw.type === 'text' && typeof raw.text === 'string' ? raw.text : '';
+                    }).join(' ')
+                    : '';
+                // Task notifications and system reminders may arrive as ordinary user-role text.
+                // Remove only complete internal blocks: a real user sentence beside one remains eligible.
+                text = text.replace(/<task-notification\b[^>]*>[\s\S]*?<\/task-notification\s*>/gi, '')
+                    .replace(/<system-reminder\b[^>]*>[\s\S]*?<\/system-reminder\s*>/gi, '');
+                if (text.trim()) latestUser = { id: message.uuid || message.id || null, title: text.trim().split(/\r?\n/)[0].slice(0, 120) };
+            }
+            var messageContent = message.message && message.message.content != null ? message.message.content : message.content;
+            var blocks = Array.isArray(messageContent) ? messageContent : [];
+            for (var j = 0; j < blocks.length; j++) {
+                var block = blockOf(blocks[j]) || (blocks[j] && blocks[j].type ? blocks[j] : null);
+                if (!block) continue;
+                if (block.type === 'tool_use' && block.id) currentTool = { id: block.id, name: block.name || null };
+                if (block.type === 'tool_result' && block.tool_use_id) completedTools.add(block.tool_use_id);
+            }
+        }
+        if (latestUser && (!root || root.userId !== latestUser.id)) {
+            root = { rootId: latestUser.id || sessionId, userId: latestUser.id, title: latestUser.title, startedAt: now };
+            runtimeRoots.set(sessionId, root);
+        }
+        if (!latestUser) root = null;
+        if (currentTool && completedTools.has(currentTool.id)) currentTool = null;
+
+        var busy = value('busy') === true;
+        var explicitState = value('runtimeState') || value('status');
+        var stateValue = ['starting', 'running', 'cancelling', 'done', 'failed', 'stopped'].indexOf(explicitState) >= 0
+            ? explicitState : busy ? 'running' : root ? 'done' : 'unknown';
+        var health = value('activityHealth') || 'fresh';
+        if (['fresh', 'quiet', 'stale'].indexOf(health) < 0) health = 'unknown';
+
+        function textValue(name) {
+            var result = value(name);
+            return typeof result === 'string' && result ? result : null;
+        }
+        var requestedModel = textValue('requestedModel') || textValue('modelSelection') || textValue('model');
+        var rawGeneration = value('providerGeneration');
+        var generation = rawGeneration == null ? null : rawGeneration;
+        var servedModel = textValue('lastServedModel') || textValue('servedModel');
+        if (servedModel && !servedModelGenerations.has(sessionId)) servedModelGenerations.set(sessionId, generation);
+        var servedGeneration = value('servedModelGeneration');
+        if (servedGeneration == null && servedModelGenerations.has(sessionId)) servedGeneration = servedModelGenerations.get(sessionId);
+        var execution = {
+            providerProfile: textValue('providerProfile'),
+            requestedModel: requestedModel,
+            servedModel: generation != null && servedGeneration != null && servedGeneration !== generation ? null : servedModel || null,
+            providerGeneration: generation,
+            servedModelGeneration: servedGeneration == null ? generation : servedGeneration,
+            providerEvidence: generation == null ? 'unknown' : 'root-session-state',
+            requestedModelEvidence: requestedModel ? 'root-session-state' : 'unknown',
+            servedModelEvidence: servedModel ? 'root-session-state' : 'unknown',
+        };
+        var rootSnapshot = root ? {
+            rootId: root.rootId, sessionId: sessionId, title: root.title, state: stateValue,
+            activityHealth: health, startedAt: root.startedAt, lastActivityAt: now,
+            currentTool: currentTool && currentTool.name || null, runtimeRevision: revision, execution: execution,
+        } : null;
+
+        var tasks = value('subagentTasks');
+        var nativeAgents = [];
+        if (tasks && typeof tasks.forEach === 'function') tasks.forEach(function (task) {
+            if (!task || !task.toolUseId) return;
+            var id = task.toolUseId;
+            if (!nativeGenerations.has(sessionId + ':' + id)) nativeGenerations.set(sessionId + ':' + id, generation);
+            var pinnedGeneration = nativeGenerations.get(sessionId + ':' + id);
+            nativeAgents.push({
+                id: id, title: typeof task.description === 'string' && task.description ? task.description : 'Agent',
+                state: task.status === 'failed' ? 'failed' : /complete|success|done/i.test(task.status || '') ? 'done' : 'running',
+                activityHealth: task.status === 'failed' ? 'stale' : 'fresh',
+                startedAt: task.startTime || now, lastActivityAt: task.lastActivityTime || now,
+                currentTool: task.recentTools && task.recentTools.length ? task.recentTools[task.recentTools.length - 1] : null,
+                tokens: task.usage && task.usage.totalTokens || 0,
+                toolCalls: task.usage && task.usage.toolUses || 0,
+                recentTools: task.recentTools || [],
+                execution: { providerProfile: null, requestedModel: null,
+                    servedModel: task.servedModelGeneration === pinnedGeneration ? task.servedModel || null : null,
+                    providerGeneration: pinnedGeneration, servedModelGeneration: task.servedModelGeneration == null ? null : task.servedModelGeneration,
+                    providerEvidence: pinnedGeneration == null ? 'unknown' : 'same-session-provider',
+                    requestedModelEvidence: 'unknown', servedModelEvidence: task.servedModel && task.servedModelGeneration === pinnedGeneration ? 'child-assistant-message' : 'unknown' },
+            });
+        });
+
+        var snapshots = value('taskSnapshots') || taskSnapshots;
+        var retained = retainTaskSnapshots(snapshots, MAX_TASK_SNAPSHOTS);
+        var transportSnapshots = {};
+        Object.keys(retained).forEach(function (key) {
+            var task = retained[key];
+            if (!task || typeof task !== 'object') return;
+            var clean = {};
+            ['toolUseId', 'description', 'status', 'prompt', 'summary', 'servedModel'].forEach(function (field) {
+                if (typeof task[field] === 'string') clean[field] = task[field];
+            });
+            ['startTime', 'lastActivityTime', 'servedModelGeneration'].forEach(function (field) {
+                if (typeof task[field] === 'number' && Number.isFinite(task[field])) clean[field] = task[field];
+            });
+            clean.recentTools = Array.isArray(task.recentTools)
+                ? task.recentTools.filter(function (tool) { return typeof tool === 'string'; }) : [];
+            clean.usage = {};
+            ['totalTokens', 'toolUses', 'durationMs'].forEach(function (field) {
+                if (task.usage && typeof task.usage[field] === 'number' && Number.isFinite(task.usage[field])) clean.usage[field] = task.usage[field];
+            });
+            transportSnapshots[key] = clean;
+        });
+        return { sessionId: sessionId, runtimeRevision: revision, activityHealth: health, providerGeneration: generation,
+            state: stateValue, currentTool: currentTool && currentTool.name || null, root: rootSnapshot,
+            rootLifecycle: rootSnapshot ? rootSnapshot.rootId : null,
+            nativeAgents: nativeAgents, taskSnapshots: transportSnapshots, execution: execution, timestamp: now };
+    }
+    globalThis.buildNormalizedRuntimeSnapshot = buildNormalizedRuntimeSnapshot;
 })();

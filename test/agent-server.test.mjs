@@ -105,7 +105,10 @@ async function main() {
     // --- tools/list
     out = await capture(() => handle({ jsonrpc: '2.0', id: 2, method: 'tools/list' }));
     const names = out[0].result.tools.map((t) => t.name).sort();
-    assert.deepStrictEqual(names, ['channel_call', 'channel_send', 'channel_tools', 'check_agent', 'list_profiles', 'run_agent', 'stop_agent'], 'every tool listed');
+    assert.deepStrictEqual(names, ['channel_call', 'channel_send', 'channel_tools', 'check_agent', 'list_profiles', 'progress', 'run_agent', 'stop_agent'], 'every tool listed');
+    const progressTool = TOOLS.find((t) => t.name === 'progress');
+    assert.ok(progressTool.inputSchema.properties.title, 'progress accepts a semantic task gist');
+    assert.match(progressTool.inputSchema.properties.title.description, /2–3 word task gist/);
     const runAgent = TOOLS.find((t) => t.name === 'run_agent');
     assert.ok(runAgent.inputSchema.properties.files, 'run_agent accepts explicit channel attachment paths');
     assert.match(runAgent.description, /discover `download_attachment` with channel_tools/);
@@ -164,7 +167,7 @@ async function main() {
     process.env = saved;
 
     // --- modes map to the flags that bound what a delegated agent may do
-    assert.deepStrictEqual(MODES.read, ['--allowedTools', 'Read,Grep,Glob,WebFetch,WebSearch'], 'read mode is a read-only allowlist');
+    assert.deepStrictEqual(MODES.read, ['--allowedTools', 'Read,Grep,Glob,WebFetch,WebSearch,mcp__vannevar__progress'], 'read mode is a read-only allowlist');
     assert.deepStrictEqual(MODES.full, ['--permission-mode', 'bypassPermissions']);
 
     // exec is read plus a shell that can only collect. The commands a data-gathering task actually

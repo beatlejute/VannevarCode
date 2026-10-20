@@ -1,13 +1,9 @@
 // Pins the data-URI contract the history-list icons ride on, and prints the live payload budget.
 //
-// Two things make loading host.js here awkward, and both are artefacts of the test, not of the runtime:
-// it requires('vscode'), which only exists inside the extension host, and this package is "type": "module",
-// so Node reads src/host.js as ESM — whereas in production it is copied to ~/.claude/vannevar/host.js
-// and required by the extension host as CommonJS. A .cjs copy plus a 'vscode' stub reproduces that.
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import * as path from 'node:path';
 import assert from 'node:assert';
 
 const require = createRequire(import.meta.url);
@@ -17,15 +13,27 @@ const load = Module._load;
 Module._load = (request, ...rest) =>
     request === 'vscode' ? { Uri: { file: (p) => ({ fsPath: p }) }, window: {} } : load(request, ...rest);
 
+// Create a mock home directory for the test
+const mockHome = fs.mkdtempSync(path.join(tmpdir(), 'ccx-home-'));
+const mockVannevar = path.join(mockHome, '.claude', 'vannevar');
+fs.mkdirSync(mockVannevar, { recursive: true });
 const src = new URL('../runtime/host.js', import.meta.url);
-const copy = join(tmpdir(), `ccx-host-${process.pid}.cjs`);
-writeFileSync(copy, readFileSync(src));
+const brokerSrc = new URL('../runtime/progress-broker.js', import.meta.url);
+const copy = path.join(mockVannevar, 'host.cjs');
+const brokerCopy = path.join(mockVannevar, 'progress-broker.js');
+fs.writeFileSync(copy, fs.readFileSync(src));
+fs.writeFileSync(brokerCopy, fs.readFileSync(brokerSrc));
+
+// Mock os.homedir on Windows via USERPROFILE
+const originalUserProfile = process.env.USERPROFILE;
+process.env.USERPROFILE = mockHome;
 
 let profileIcons;
 try {
     ({ profileIcons } = require(copy));
 } finally {
-    rmSync(copy, { force: true });
+    process.env.USERPROFILE = originalUserProfile;
+    fs.rmSync(mockHome, { recursive: true, force: true });
 }
 
 const icons = profileIcons();

@@ -20,6 +20,8 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createProgressClient } from './progress-client.mjs';
+import reporting from '../progress-reporting.js';
 
 const HOME = os.homedir();
 // Overridable so the test suite can point at a fixture tree instead of the user's real profiles
@@ -203,6 +205,72 @@ function envForProfile(profile, depth) {
         env.no_proxy = env.NO_PROXY;
     }
     env[DEPTH_VAR] = String(depth + 1);
+    return env;
+}
+
+// A delegated scope is bounded: minting or closing it is granted a hard 500 ms deadline, and a
+// broker that cannot answer inside it never delays the run it exists to describe (PLAN-001 task 20).
+const SCOPE_DEADLINE_MS = 500;
+const DEFAULT_SCOPE_LIFETIME_MS = 4 * 60 * 60 * 1000;
+
+// Run one broker control request under a hard deadline, closing the client on either outcome so a
+// slow or absent broker leaves neither a pending socket nor a stuck promise behind.
+function boundedScopeRequest(input, deadlineMs) {
+    const client = createProgressClient(process.env);
+    return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+            client.close();
+            resolve({ ok: false, accepted: false, reason: 'deadline_exceeded' });
+        }, deadlineMs);
+        timer.unref?.();
+        client.request(input).then(
+            (result) => { clearTimeout(timer); client.close(); resolve(result); },
+            () => { clearTimeout(timer); client.close(); resolve({ ok: false, accepted: false, reason: 'telemetry_unavailable' }); },
+        );
+    });
+}
+
+// Create a delegated scope capability for a child run. One atomic createScope on the broker mints
+// the scope and returns its own capability; a broker that is down or slower than the deadline is
+// not fatal — the caller starts the run activity-only instead.
+async function createDelegatedScope(scopeId, lifetimeMs = DEFAULT_SCOPE_LIFETIME_MS) {
+    const result = await boundedScopeRequest({ type: 'createScope', scopeId, lifetimeMs }, SCOPE_DEADLINE_MS);
+    if (!result.ok || !result.capability) {
+        throw new Error(`failed to create scope: ${result.reason || 'unknown'}`);
+    }
+    return { scopeId, capability: result.capability, expiresAt: result.expiresAt };
+}
+
+// Close a delegated scope capability when the run ends. Bounded like creation: a broker that does
+// not answer must not stall the run's result, and a missed close still expires by TTL fallback.
+async function closeDelegatedScope(scopeId) {
+    const result = await boundedScopeRequest({ type: 'closeScope', scopeId }, SCOPE_DEADLINE_MS);
+    if (!result.ok) {
+        log('closeScope failed', { scopeId, reason: result.reason });
+    }
+    return result.ok;
+}
+
+// The child authenticates as its own scope, never as the session that spawned it: the inherited
+// parent session capability is scrubbed, and the scope capability plus the broker endpoint,
+// protocol and scope id are handed over so a delegated run reports under its own scope
+// (PLAN-001 task 20).
+function envForChild(scope, profile, depth) {
+    const env = envForProfile(profile, depth);
+    delete env.VANNEVAR_PROGRESS_CAP;
+    delete env.VANNEVAR_PROGRESS_CAPABILITY;
+    delete env.VANNEVAR_PROGRESS_SCOPE;
+    const endpoint = process.env.VANNEVAR_PROGRESS_ENDPOINT;
+    const protocol = process.env.VANNEVAR_PROGRESS_PROTOCOL;
+    if (scope && scope.capability && endpoint && protocol) {
+        env.VANNEVAR_PROGRESS_CAPABILITY = scope.capability;
+        env.VANNEVAR_PROGRESS_SCOPE = scope.scopeId;
+        env.VANNEVAR_PROGRESS_ENDPOINT = endpoint;
+        env.VANNEVAR_PROGRESS_PROTOCOL = protocol;
+    } else {
+        delete env.VANNEVAR_PROGRESS_ENDPOINT;
+        delete env.VANNEVAR_PROGRESS_PROTOCOL;
+    }
     return env;
 }
 
@@ -909,6 +977,8 @@ function openRun(ctx, background) {
         mode: ctx.mode,
         cwd: ctx.cwd,
         depth: ctx.depth,
+        attemptId: ctx.attemptId || null,
+        scopeId: ctx.scopeId || null,
         resumed: Boolean(ctx.session),
         prompt: ctx.promptPreview.slice(0, MAX_RUN_PROMPT),
         promptLength: ctx.promptPreview.length,
@@ -975,7 +1045,11 @@ function abandonRuns() {
 
 // ------------------------------------------------------------------------------------ run modes
 
+// Delegated read/exec/write modes grant exactly one MCP tool beyond the read tools: the bundled
+// `mcp__vannevar__progress` telemetry tool. No other MCP tool rides along, so a delegated run
+// cannot reach a server the user did not allow (PLAN-001 task 16).
 const READ_TOOLS = ['Read', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+const DELEGATED_MCP_TOOLS = ['mcp__vannevar__progress'];
 
 // What `exec` adds to `read`. Read-only by intent, not by enforcement — the tool description says
 // so out loud. Everything here reads, searches or aggregates; nothing that copies, moves, deletes,
@@ -1062,11 +1136,11 @@ function execAllowlist() {
 // and because the provider on the other end is not the one the user is currently supervising. The
 // ladder is cumulative: read ⊂ exec ⊂ write ⊂ full.
 const MODES = {
-    read: ['--allowedTools', READ_TOOLS.join(',')],
-    exec: ['--allowedTools', [...READ_TOOLS, ...execAllowlist()].join(',')],
+    read: ['--allowedTools', [...READ_TOOLS, ...DELEGATED_MCP_TOOLS].join(',')],
+    exec: ['--allowedTools', [...READ_TOOLS, ...DELEGATED_MCP_TOOLS, ...execAllowlist()].join(',')],
     // acceptEdits auto-accepts edits and nothing else — without the same allowlist a `write` run
     // could rewrite a file but not run the test that proves it still works.
-    write: ['--permission-mode', 'acceptEdits', '--allowedTools', [...READ_TOOLS, ...execAllowlist()].join(',')],
+    write: ['--permission-mode', 'acceptEdits', '--allowedTools', [...READ_TOOLS, ...DELEGATED_MCP_TOOLS, ...execAllowlist()].join(',')],
     full: ['--permission-mode', 'bypassPermissions'],
 };
 
@@ -1238,7 +1312,18 @@ async function prepare(params) {
     await ensureProxy(profile);
 
     const bin = resolveClaudeBinary();
-    const env = envForProfile(profile, depth);
+    // A scope is minted per run attempt, not per session: two parallel run_agent calls, and a
+    // resumed call, each get their own scope. A broker that is unavailable or slower than the
+    // deadline leaves scopeId null, so the run starts activity-only and there is nothing to close.
+    let scopeId = `scope_${randomUUID()}`;
+    let scope = null;
+    try {
+        scope = await createDelegatedScope(scopeId);
+    } catch (e) {
+        log('scope creation failed, continuing without semantic progress', { error: e && e.message });
+        scopeId = null;
+    }
+    const env = envForChild(scope, profile, depth);
 
     const refused = await preflight(env, model, profile);
     if (refused) throw new Error(`the "${profile}" provider refused a test call, so the task was not started — ${refused}`);
@@ -1249,6 +1334,10 @@ async function prepare(params) {
     // resumed run already has one — passing --session-id alongside --resume would be two answers to
     // the same question.
     const liveSession = session || randomUUID();
+    // A run attempt is identified separately from its session: a resumed run reuses the child
+    // session id, so only a fresh attempt id can tell this run apart from the one it continues.
+    // It is what a Stop and the writer of the manifest address (PLAN-001 task 20).
+    const attemptId = randomUUID();
     // Inherited by everything the delegate spawns, its own copy of this server included, which is
     // what lets a nested run name the run it belongs to.
     env[PARENT_VAR] = liveSession;
@@ -1279,6 +1368,8 @@ async function prepare(params) {
         env,
         args,
         depth,
+        scopeId,
+        attemptId,
     };
 }
 
@@ -1359,12 +1450,12 @@ async function channelRequest(request) {
 }
 
 async function execute(ctx, task) {
-    const { profile, mode, cwd, timeout, model, session, bin, env } = ctx;
+    const { profile, mode, cwd, timeout, model, session, bin, env, scopeId, attemptId } = ctx;
     log('run', { profile, mode, model, session: session || null, cwd, depth: ctx.depth, background: !!task });
 
     const staged = stageAgentFiles(ctx.attachments);
     const args = agentArgsWithAttachments(ctx.args, staged.directory);
-    const agentPrompt = promptWithAttachments(ctx.prompt, staged.files);
+    const agentPrompt = reporting.withReportingBrief(promptWithAttachments(ctx.prompt, staged.files), Boolean(ctx.scopeId));
     const startedAt = Date.now();
     const run = openRun(ctx, Boolean(task));
     let child;
@@ -1373,6 +1464,7 @@ async function execute(ctx, task) {
     } catch (error) {
         if (staged.directory) fs.rmSync(staged.directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
         closeRun(run, 'failed', { error: error.message });
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw error;
     }
     running.add(child);
@@ -1384,7 +1476,17 @@ async function execute(ctx, task) {
     let stopRequested = false;
     const stopWatch = run
         ? setInterval(() => {
-              if (!fs.existsSync(stopFile(run))) return;
+              // A request names the attempt it was clicked on. A Stop left behind by an earlier
+              // attempt of the same child session must not end the one running now, so a request
+              // that does not name this attempt is ignored and its file left for its own attempt
+              // (PLAN-001 task 20).
+              let requested = null;
+              try {
+                  requested = fs.readFileSync(stopFile(run), 'utf8').trim();
+              } catch {
+                  return;
+              }
+              if (attemptId && requested !== attemptId) return;
               stopRequested = true;
               if (task) task.stopped = true;
               clearInterval(stopWatch);
@@ -1437,22 +1539,27 @@ async function execute(ctx, task) {
 
     if (outcome.spawnError) {
         closeRun(run, 'failed', { error: outcome.spawnError });
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`could not start the CLI (${bin}): ${outcome.spawnError}`);
     }
     if (stopRequested) {
         closeRun(run, 'stopped');
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`the "${profile}" agent was stopped by the user after ${span(Date.now() - startedAt)}`);
     }
     if (task?.stopped) {
         closeRun(run, 'stopped');
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`the "${profile}" agent was stopped after ${span(Date.now() - startedAt)}`);
     }
     if (abandoned.has(run)) {
         closeRun(run, 'stopped');
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`the "${profile}" agent was stopped when the session that asked for it ended`);
     }
     if (outcome.timedOut) {
         closeRun(run, 'timeout');
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`the "${profile}" agent was killed after ${Math.round(timeout / 1000)}s${stderr ? `: ${stderr.slice(-500)}` : ''}`);
     }
 
@@ -1464,6 +1571,7 @@ async function execute(ctx, task) {
     if (!payload) {
         const detail = (stderr || stdout).trim().slice(-800);
         closeRun(run, 'failed', { error: detail || `exit ${outcome.code}` });
+        if (scopeId) await closeDelegatedScope(scopeId);
         throw new Error(`the "${profile}" agent produced no result (exit ${outcome.code})${detail ? `: ${detail}` : ''}`);
     }
 
@@ -1488,7 +1596,11 @@ async function execute(ctx, task) {
     });
 
     const text = typeof payload.result === 'string' ? payload.result : JSON.stringify(payload.result ?? '');
-    if (payload.is_error) throw new Error(`the "${profile}" agent reported an error — ${text.slice(0, 800)}`);
+    if (payload.is_error) {
+        if (scopeId) await closeDelegatedScope(scopeId);
+        throw new Error(`the "${profile}" agent reported an error — ${text.slice(0, 800)}`);
+    }
+    if (scopeId) await closeDelegatedScope(scopeId);
     return `${text}\n\n---\n${report(ctx, payload, Date.now() - startedAt)}`;
 }
 
@@ -1771,6 +1883,24 @@ const TOOLS = [
         },
     },
     {
+        name: 'progress',
+        description: 'Report meaningful stage progress for the current root or delegated scope through the bundled mcp__vannevar__progress telemetry path with stage boundaries. Nonfatal: a telemetry failure must not interrupt the main task.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                done: { type: 'integer', description: 'Completed stages (0..total)' },
+                total: { type: 'integer', description: 'Total stages (1..50); meaningful range 3..12' },
+                title: { type: 'string', description: 'Optional concise 2–3 word task gist in the user’s language; do not quote or summarize by copying the user message' },
+                note: { type: 'string', description: 'Optional short note, max 240 UTF-16 code units' },
+                plan: { type: 'array', items: { type: 'string' }, description: 'Optional plan steps, max 50 entries, 160 chars each' },
+                replan: { type: 'boolean', description: 'Whether to start a new plan version' },
+                scope: { type: 'string', description: 'Explicit child scope id' },
+            },
+            required: ['done', 'total'],
+            additionalProperties: false,
+        },
+    },
+    {
         name: 'stop_agent',
         description:
             'Kill a background run that is no longer wanted. Without this it keeps working — and keeps spending the provider — until its own timeout.',
@@ -1783,7 +1913,7 @@ const TOOLS = [
     },
 ];
 
-async function callTool(name, args) {
+async function callTool(name, args, metadata) {
     const params = args || {};
     if (name === 'list_profiles') {
         const names = listProfiles();
@@ -1812,6 +1942,22 @@ async function callTool(name, args) {
     if (name === 'run_agent') return runAgent(params);
     if (name === 'check_agent') return checkAgent(params);
     if (name === 'stop_agent') return stopAgent(params);
+    if (name === 'progress') {
+        const client = createProgressClient(process.env);
+        const result = await client.report({
+            done: params.done,
+            total: params.total,
+            title: params.title,
+            note: params.note,
+            plan: params.plan,
+            replan: params.replan,
+            scope: params.scope,
+            engine: metadata?.engine,
+            toolUseId: metadata?.toolUseId,
+        });
+        if (!result.ok) return `Progress telemetry unavailable: ${result.reason || 'unknown'} (nonfatal — main task continues)`;
+        return `Progress reported (${result.accepted ? 'accepted' : 'rejected'}): ${JSON.stringify(result)}`;
+    }
     throw new Error(`unknown tool "${name}"`);
 }
 
@@ -1854,7 +2000,10 @@ async function handle(message) {
         case 'tools/call': {
             if (!isRequest) return;
             try {
-                const text = await callTool(params?.name, params?.arguments);
+                const text = await callTool(params?.name, params?.arguments, {
+                    engine: typeof params?._meta?.['claudecode/toolUseId'] === 'string' ? 'claudecode' : undefined,
+                    toolUseId: params?._meta?.['claudecode/toolUseId'],
+                });
                 return reply(id, typeof text === 'object' && text !== null ? text : { content: [{ type: 'text', text }] });
             } catch (e) {
                 log('tool failed', params?.name, e.message);

@@ -31,6 +31,29 @@ const CHANNEL_INITIALIZED = /channelInitialized\(([\w$]+)\)\{/;
 
 const PATCHES = [
     {
+        file: 'extension.js',
+        optional: true,
+        find: /(async readMessages\(\)\{try\{for await\(let ([\w$]+) of this\.transport\.readMessages\(\)\)\{)/,
+        replace: (found, _prefix, frame) => found + 'try{' + HOST_LOAD +
+            `require(__p).observeNativeFrame(this,${frame})}catch(__e){}`,
+        where: 'replace',
+    },
+    {
+        file: 'extension.js',
+        optional: true,
+        find: /let ([\w$]+)=\(await ([\w$]+)\(\{options:([\w$]+)\}\)\)\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
+        replace: (found, query) => found.replace(';return', ';try{' + HOST_LOAD +
+            `require(__p).bindNativeProducer(${query},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){}return`),
+        where: 'replace',
+    },
+    {
+        file: 'extension.js',
+        find: /async spawnClaude\(([\w$]+),([^)]*)\)\{/,
+        replace: (_found, input, rest) =>
+            `async spawnClaude(${input},${rest}){const __ccxSpawnContext={manager:this,input:${input}};`,
+        where: 'replace',
+    },
+    {
         // Was a plain literal until 2.1.245, which renamed every local in it: the nonce (`u` → `U`), the
         // bundle's own script URI (`a` → `G`) and — the one that actually matters — the webview parameter
         // the injected call is handed (`e` → `$`). That release is also where `$`-prefixed names reached
@@ -102,7 +125,7 @@ const PATCHES = [
         replace: (_found, opts, bin, args, env, tail) =>
             `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=(()=>{try{` +
             HOST_REQUIRE +
-            `return require(__p).envFor(${env},${opts}.resume,${opts})}catch(__e){return ${env}}})()${tail}`,
+            `return require(__p).envFor(${env},${opts}.resume,${opts},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){return ${env}}})()${tail}`,
         where: 'replace',
     },
     {
@@ -455,6 +478,26 @@ const PATCHES = [
             `${tokens}=${agent}.usage?.totalTokens,` +
             `__ccxAt=globalThis.__ccx&&globalThis.__ccx.callTime?globalThis.__ccx.callTime(${agent}.startTime):void 0;` +
             `return[__ccxAt,`,
+        where: 'replace',
+    },
+    {
+        // Anchor the row's status and meta child together, not an arbitrary text-producing helper.
+        file: 'webview/index.js',
+        find: /function ([\w$]+)\(\{agent:([\w$]+),waiting:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,900}?"data-agent-status":[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:([\w$]+)\(([\w$]+),\{agent:\2\}\)\}\)\]\}\)\}/,
+        replace: (_found, fn, agent, waiting, click, body, h, styles, metaH, meta) =>
+            `function ${fn}({agent:${agent},waiting:${waiting},onClick:${click}}){${body},` +
+            `${h}("span",{className:${styles}.rowMeta,children:${metaH}(${meta},{agent:${agent}})}),` +
+            `globalThis.__ccx?.mapProgress(${agent},void 0,${h})]})}`,
+        where: 'replace',
+    },
+    {
+        // The root subscribes to the same map signal as the dialog's child list.
+        file: 'webview/index.js',
+        find: /function ([\w$]+)\(\{session:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,600}?\.rowMain[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:(\[[\s\S]{0,150}?\.join\(" · "\))\}\)\]\}\)\}/,
+        replace: (_found, fn, session, click, body, h, styles, meta) =>
+            `function ${fn}({session:${session},onClick:${click}}){${session}.agentMapAgents.value;${body},` +
+            `${h}("span",{className:${styles}.rowMeta,children:${meta}}),` +
+            `globalThis.__ccx?.mapProgress(null,${session},${h})]})}`,
         where: 'replace',
     },
     // --- Plugin channels: the session's own `enableChannel` control request ----------------------
