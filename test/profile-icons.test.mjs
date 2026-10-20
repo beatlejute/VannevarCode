@@ -10,13 +10,19 @@ const require = createRequire(import.meta.url);
 const Module = require('node:module');
 
 const load = Module._load;
+const os = require('node:os');
 Module._load = (request, ...rest) =>
-    request === 'vscode' ? { Uri: { file: (p) => ({ fsPath: p }) }, window: {} } : load(request, ...rest);
+    request === 'vscode' ? { Uri: { file: (p) => ({ fsPath: p }) }, window: {} }
+        : request === 'os' ? { ...os, homedir: () => mockHome } : load(request, ...rest);
 
 // Create a mock home directory for the test
 const mockHome = fs.mkdtempSync(path.join(tmpdir(), 'ccx-home-'));
 const mockVannevar = path.join(mockHome, '.claude', 'vannevar');
 fs.mkdirSync(mockVannevar, { recursive: true });
+const profiles = path.join(mockHome, '.claude', 'profiles');
+fs.mkdirSync(profiles, { recursive: true });
+fs.writeFileSync(path.join(profiles, 'fixture.json'), JSON.stringify({ env: {} }));
+fs.writeFileSync(path.join(profiles, 'fixture.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7"/></svg>');
 const src = new URL('../runtime/host.js', import.meta.url);
 const brokerSrc = new URL('../runtime/progress-broker.js', import.meta.url);
 const copy = path.join(mockVannevar, 'host.cjs');
@@ -32,22 +38,17 @@ let profileIcons;
 try {
     ({ profileIcons } = require(copy));
 } finally {
-    process.env.USERPROFILE = originalUserProfile;
-    fs.rmSync(mockHome, { recursive: true, force: true });
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    Module._load = load;
 }
 
 const icons = profileIcons();
+fs.rmSync(mockHome, { recursive: true, force: true });
 const MAX_ICON_BYTES = 512 * 1024;
 const names = Object.keys(icons);
 
-// profileIcons() reads the machine's own ~/.claude/profiles, so there is nothing to measure on a CI
-// runner or a fresh checkout. Skipping loudly is the right answer there: the contract this pins is about
-// what the icons look like on the wire, and with no icons there is no wire. Failing instead would mean a
-// suite that cannot go green until somebody configures a profile by hand.
-if (names.length === 0) {
-    console.log('SKIP — no profiles under ~/.claude/profiles; the icon payload was not measured');
-    process.exit(0);
-}
+assert.deepEqual(names, ['fixture'], 'the isolated fixture profile must be measured on every platform');
 
 for (const name of names) {
     const uri = icons[name];
