@@ -163,6 +163,33 @@
       ]
     },
     {
+      "id": "PATCH-WEBVIEW-MODEL-PILL",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-MODEL-PILL-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "shared composer model pill props and click event",
+          "moduleScope": null,
+          "preconditions": [
+            "composer model pill has access to its session"
+          ],
+          "postconditions": [
+            "composer model label resolves against the active profile"
+          ],
+          "negativeFixtures": [],
+          "knownVersions": [],
+          "justification": "Required for the composer to display the active provider model"
+        }
+      ]
+    },
+    {
       "id": "PATCH-WEBVIEW-ACTION-ORDER",
       "targetFile": "webview/index.js",
       "surface": "WEBVIEW",

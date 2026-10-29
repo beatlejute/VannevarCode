@@ -171,6 +171,16 @@ const PATCHES = [
         where: 'replace',
     },
     {
+        // Both footer placements share these props. Resolve only the label; the native picker,
+        // effort indicator and layout keep their original values and handlers.
+        id: 'PATCH-WEBVIEW-MODEL-PILL',
+        file: 'webview/index.js',
+        find: /let ([\w$]+)=\{label:([\w$]+),effort:([\w$]+),isOpen:([\w$]+)\.isOpen,onToggle:\(\)=>\{([\w$]+)\.logEvent\("model_pill_clicked"/,
+        replace: (found, _props, label, _effort, _menu, session) =>
+            found.replace(`label:${label},`, `label:globalThis.__ccx&&globalThis.__ccx.modelLabel?globalThis.__ccx.modelLabel(${label},${session}):${label},`),
+        where: 'replace',
+    },
+    {
         // Not a hook — a sort order. registerAction() ranks the "Model" section by this list and puts
         // anything it does not name at the end, so an entry added from the page would otherwise land
         // below Account & Usage in whatever order it happened to register. "Switch provider…" opens

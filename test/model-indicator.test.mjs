@@ -205,4 +205,42 @@ const CODEX_MODELS = { opus: 'gpt-6.1-sol', sonnet: 'gpt-6-luna', haiku: 'gpt-6-
     assert.equal(page.modelLabel('Claude Opus'), 'Claude Opus');
 }
 
+// Execute the product patch against the shared props used by both composer placements.
+{
+    const patcher = readFileSync(new URL('../runtime/apply-patch.mjs', import.meta.url), 'utf8');
+    const patches = vm.runInNewContext(patcher.slice(patcher.indexOf('const PATCHES = ['), patcher.indexOf('\n];', patcher.indexOf('const PATCHES = [')) + 3) + '\nPATCHES;', { HOST_REQUIRE: '', CHANNEL_INITIALIZED: /channelInitialized\(([\w$]+)\)\{/ });
+    const patch = patches.find((p) => p.id === 'PATCH-WEBVIEW-MODEL-PILL');
+    assert.ok(patch, 'the composer model pill must have its own patch');
+    const session = { modelSelection: { value: 'fable' }, messages: { value: [] }, busy: { value: false }, send() {} };
+    const page = makePage(session);
+    const deepseek = { opus: 'deepseek-flash[1m]', sonnet: 'deepseek-flash[1m]', haiku: 'deepseek-flash', fable: 'deepseek-flash[1m]' };
+    page.pushState({ active: 'deepseek', models: deepseek });
+    for (const [s, props] of [['s', 'pill'], ['$', 'H0']]) {
+        const code = `function render(${s},ownRow){let stale="gpt-6.1-sol[1m]",effort="Extra high",menu={isOpen:false};let ${props}={label:stale,effort:effort,isOpen:menu.isOpen,onToggle:()=>{${s}.logEvent("model_pill_clicked",{})}};return ownRow?{...${props},ownRow:true}:${props}}`;
+        const matches = [...code.matchAll(new RegExp(patch.find.source, 'g'))];
+        assert.equal(matches.length, 1, 'one shared props object covers both badge placements');
+        const patched = code.replace(patch.find, patch.replace);
+        assert.notEqual(patched, code);
+        const stockRender = vm.runInNewContext(patched + ';render');
+        assert.equal(stockRender(session, false).label, 'gpt-6.1-sol[1m]', 'without the runtime the stock label remains available');
+        const render = vm.runInNewContext(patched + ';render', { __ccx: { modelLabel: (stock, currentSession) => {
+            assert.equal(currentSession, session, 'the composer passes its own session');
+            return page.modelLabel(stock);
+        } } });
+        for (const ownRow of [false, true]) {
+            assert.equal(render(session, ownRow).label, 'deepseek-flash[1m]');
+            assert.equal(render(session, ownRow).effort, 'Extra high');
+            session.modelSelection.value = 'haiku';
+            assert.equal(render(session, ownRow).label, 'deepseek-flash');
+            page.pushState({ active: 'codex', models: CODEX_MODELS });
+            assert.equal(render(session, ownRow).label, 'gpt-6-luna');
+            page.pushState({ active: 'claude', models: null });
+            assert.equal(render(session, ownRow).label, 'gpt-6.1-sol[1m]');
+            session.modelSelection.value = 'fable';
+            page.pushState({ active: 'deepseek', models: deepseek });
+        }
+        assert.equal(code.replace(patch.find, patch.replace).replace(patch.find, patch.replace), patched, 'the patch must not wrap twice');
+    }
+}
+
 console.log('\nOK — the model indicator resolves aliases against the active profile');
