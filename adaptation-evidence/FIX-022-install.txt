@@ -1,0 +1,81 @@
+FIX-022 install evidence — DoD п.4 (повторный прогон 2026-10-27)
+=================================================================
+
+Шаг 1: сборка VSIX
+Команда: npm run package
+Вывод:
+> vannevarcode@2.1.296 package
+> node scripts/build-vsix.mjs
+
+vannevarcode-2.1.296.vsix: 30 file(s), 300 KB
+  package.json
+  extension.js
+  README.md
+  LICENSE
+  DISCLAIMER.md
+  PRIVACY.md
+  CHANGELOG.md
+  images/icon.png
+  runtime/apply-patch.mjs
+  runtime/ast-locator.mjs
+  runtime/channel-proxy.cjs
+  runtime/channel-relay.js
+  runtime/chatgpt-signin.js
+  runtime/host.js
+  runtime/login-chatgpt.mjs
+  runtime/mcp/agent-server.mjs
+  runtime/mcp/progress-client.mjs
+  runtime/native-progress.js
+  runtime/patch-points-registry.json
+  runtime/progress-broker.js
+  runtime/progress-reporting.js
+  runtime/proxy/auth-chatgpt.mjs
+  runtime/proxy/server.mjs
+  runtime/proxy/translate-gemini.mjs
+  runtime/proxy/translate-responses.mjs
+  runtime/proxy/translate.mjs
+  runtime/webview.js
+  templates/profiles/codex.json
+  templates/profiles/gemini.json
+  templates/profiles/openai.json
+exit code: 0
+
+Шаг 2: установка VSIX
+Команда: codium --install-extension vannevarcode-2.1.296.vsix --force
+Вывод:
+Installing extensions...
+Extension 'vannevarcode-2.1.296.vsix' was successfully installed.
+(node:30076) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `VSCodium --trace-deprecation ...` to show where the warning was created)
+exit code: 0
+
+Шаг 3: обновление runtime с резервной копией
+Команда: node runtime/apply-patch.mjs
+Вывод:
+extension: C:\Users\Denis\.vscode\extensions\anthropic.claude-code-2.1.281-win32-x64
+patcher:   unknown (verified against unknown)
+patched extension.js (10 hook(s))
+patched webview/index.js (17 hook(s))
+ccx-result: patched
+
+Done. Reload VS Code window (Ctrl+Shift+P → Developer: Reload Window).
+exit code: 0
+Резервная копия: extension.js.ccx-orig рядом с патченным extension.js (суффикс .ccx-orig, runtime/apply-patch.mjs:676-678).
+
+Шаг 4: статус патча
+Команда: node runtime/apply-patch.mjs --status
+Вывод:
+extension: C:\Users\Denis\.vscode\extensions\anthropic.claude-code-2.1.281-win32-x64
+patcher:   unknown (verified against unknown)
+patched   extension.js
+patched   webview/index.js
+exit code: 0
+
+Шаг 5: сверка установленной копии с рабочим деревом
+Команда: sha256sum runtime/host.js "C:/Users/Denis/.vscode-oss/extensions/beatlejute.vannevarcode-2.1.296/runtime/host.js"
+Вывод:
+6eafb94ad73c3e704380ef3d6d7e065f509276643779401fa6b2300aa00a2f13 *runtime/host.js
+6eafb94ad73c3e704380ef3d6d7e065f509276643779401fa6b2300aa00a2f13 *C:/Users/Denis/.vscode-oss/extensions/beatlejute.vannevarcode-2.1.296/runtime/host.js
+exit code: 0
+
+Итог: сборка собрана (300 KB), VSIX установлен в VSCodium, патч Claude Code применён с резервной копией .ccx-orig, статус патча patched, SHA-256 установленного runtime/host.js совпадает с рабочим деревом. HUMAN-001 остаётся для живой приёмки.

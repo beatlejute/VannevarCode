@@ -1,0 +1,18 @@
+command: node test/patch-registry-runtime.test.mjs
+✔ valid mapping uses the real runtime and registry (127.9916ms)
+ℹ Measured mapping: 27 runtime patches, 27 registry entries
+✔ missing runtime ID is rejected by the product (111.5342ms)
+✔ missing registry entry is rejected by the product (114.4452ms)
+✔ duplicate runtime ID is rejected by the product (113.8853ms)
+✔ malformed registry JSON is rejected by the product loader (101.9346ms)
+✔ validation succeeds without HOME or a Claude installation (109.487ms)
+✔ registry lookup follows the copied runtime, not CWD (112.1908ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 7
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 804.9905
+exit code: 0

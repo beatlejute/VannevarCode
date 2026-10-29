@@ -1,0 +1,33 @@
+QA-061 whitespace check evidence
+
+Note on the recorded check: the pattern "[ 	]+$" of the original check does not mean
+space-or-tab in a POSIX extended regex — the backslash-t is read as a plain "t", so the
+class matches space, backslash and t, and every line ending in "t" counts as a hit.
+Measured below: the original pattern reports 20 hits in this file, all of them comment
+lines ending in "t"; the equivalent POSIX class [[:blank:]] finds none. Both runs are
+recorded so the difference is visible rather than assumed.
+
+=== git diff --check (whole tree) ===
+command: git diff --check
+exit code: 0
+
+=== git diff --check (file) ===
+command: git diff --check -- runtime/apply-patch.mjs
+exit code: 0
+
+=== trailing whitespace, original pattern ===
+command: git grep -nE "[ 	]+$" -- runtime/apply-patch.mjs
+runtime/apply-patch.mjs:115:        // 2.1.274 made the assigned env an *expression* rather than a local: `M.env=Ba$(E,H===!0)`, where that
+runtime/apply-patch.mjs:122:        // A bare call capture stopped matching `{`, so the env half is now an alternation — a one-level object
+runtime/apply-patch.mjs:157:        // is now `N_(cfg,sel)?.value??sel` — the selection resolved through the config first. The argument
+runtime/apply-patch.mjs:177:        // the section; "Provider status…" sits beside the stock account panel, which is the entry it
+runtime/apply-patch.mjs:194:    // query the user actually typed to find a conversation is usually neither — it is something that
+exit code: 0 (hits, as explained above)
+
+=== trailing whitespace, POSIX blank class ===
+command: git grep -qE "[[:blank:]]+$" -- runtime/apply-patch.mjs
+exit code: 1
+
+=== trailing whitespace, all text files in the tree ===
+command: git grep -qIE "[[:blank:]]+$"
+exit code: 1

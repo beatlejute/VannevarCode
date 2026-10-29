@@ -2,15 +2,22 @@
 // Tests idempotency, cross-session isolation, delegated env scrubbing, Stop-turn behavior,
 // and all revoke triggers including broker replacement.
 //
+// The second half drives the host the way the editor does: a tab asks to launch, the session
+// manager hands over a channel, and the CLI is spawned with the environment it is to run under.
+// That is where a capability is born — the id a launch runs under is decided when the tab asks
+// for it, so the id the capability is issued for and the id the CLI is told to use are one and
+// the same, and a spawn no tab asked for gets nothing at all.
+//
 // Isolation: unique temp root, redirected HOME/USERPROFILE/runtime paths, teardown in `finally`.
 // The real ~/.claude is never read or written.
 //
 // Run: node test/progress-session-capability.test.mjs
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, cpSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import assert from 'node:assert';
 
@@ -52,6 +59,7 @@ function cleanup() {
     live.servers.clear();
     for (const broker of live.brokers) { try { broker.close(); } catch { } }
     live.brokers.clear();
+    if (host) { try { host.closeProgressBroker(); } catch { } }
 }
 
 function startBroker(options = {}) { return trackBroker(createProgressBroker(options)); }
@@ -589,6 +597,187 @@ test('circuit breaker: circuit closes after cooldown', async () => {
     assert.equal(broker.metrics().circuitOpen, false, 'circuit closed after cooldown');
 });
 
+// ============================================================================================
+// The launch path — the tab, the session id and the capability, before the CLI is started.
+// ============================================================================================
+
+const HOST_HOME = mkdtempSync(join(tmpdir(), 'vpr-launch-cap-'));
+const HOST_RUNTIME = join(HOST_HOME, '.claude', 'vannevar');
+const HOST_PROJECTS = join(HOST_HOME, '.claude', 'projects');
+let host = null;
+
+// The host, loaded from a copy in a home of its own: the real ~/.claude is never touched.
+function loadHost() {
+    mkdirSync(HOST_RUNTIME, { recursive: true });
+    mkdirSync(HOST_PROJECTS, { recursive: true });
+    cpSync(new URL('../runtime/host.js', import.meta.url), join(HOST_RUNTIME, 'host.cjs'));
+    cpSync(new URL('../runtime/progress-broker.js', import.meta.url), join(HOST_RUNTIME, 'progress-broker.js'));
+    cpSync(new URL('../runtime/progress-reporting.js', import.meta.url), join(HOST_RUNTIME, 'progress-reporting.js'));
+    cpSync(new URL('../runtime/native-progress.js', import.meta.url), join(HOST_RUNTIME, 'native-progress.js'));
+    writeFileSync(join(HOST_RUNTIME, 'webview.js'), '// isolated page');
+    const Module = require('node:module');
+    const os = require('node:os');
+    const load = Module._load;
+    Module._load = function (id, ...args) {
+        if (id === 'vscode') return {
+            workspace: { getConfiguration: () => ({ get: (key, fallback) => key === 'progress.nativeSemantic' ? false : fallback }) },
+            Uri: { file: (file) => ({ fsPath: file }) },
+        };
+        if (id === 'os') return { ...os, homedir: () => HOST_HOME };
+        return load.call(this, id, ...args);
+    };
+    try {
+        delete require.cache[require.resolve(join(HOST_RUNTIME, 'host.cjs'))];
+        host = require(join(HOST_RUNTIME, 'host.cjs'));
+    } finally { Module._load = load; }
+    return host;
+}
+
+// A tab: a webview the host is given, and the messages it sends.
+function makeTab() {
+    const sent = [];
+    const handlers = [];
+    const webview = {
+        postMessage: (m) => { sent.push(m); return Promise.resolve(true); },
+        onDidReceiveMessage: (fn) => { handlers.push(fn); return { dispose() { } }; },
+    };
+    host.renderScript(webview, 'nonce');
+    return { webview, sent, send: (message) => handlers.forEach((fn) => fn(message)) };
+}
+
+// The session manager's own record of a launch: the channel, and the input queue the CLI is
+// started with. The queue is what ties a spawn to its channel.
+function launchContext(channelId) {
+    const input = {};
+    return { manager: { pendingChannels: new Map([[channelId, { in: input }]]) }, input };
+}
+
+// A transcript on disk: the only source that can say a session is there to be resumed.
+function writeTranscript(sessionId) {
+    const dir = join(HOST_PROJECTS, 'project');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${sessionId}.jsonl`), '{}\n');
+}
+
+// The capability a tab holds, and the session it was issued for.
+function capabilityFor(webview) {
+    const state = globalThis.__ccxState.progress;
+    for (const [sessionId, entry] of state.sessionCapabilities) {
+        if (entry.webview === webview) return { sessionId, capability: entry.capability };
+    }
+    return null;
+}
+
+loadHost();
+
+test('launch: a new tab is given its session id and its capability before the CLI is started', () => {
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'fresh-tab', resume: null });
+    const issued = capabilityFor(tab.webview);
+    assert.ok(issued, 'the tab holds a capability before any CLI was started');
+    assert.match(issued.sessionId, /^[0-9a-f-]{36}$/i, 'the session id is one the CLI can be told to use');
+    const opts = {};
+    const env = host.envFor({ ...process.env }, undefined, opts, launchContext('fresh-tab'));
+    assert.equal(opts.sessionId, issued.sessionId, 'the CLI runs under the id the capability was issued for');
+    assert.equal(env.VANNEVAR_PROGRESS_CAP, issued.capability, 'the tab\'s own capability reaches the CLI');
+    assert.ok(env.VANNEVAR_PROGRESS_ENDPOINT, 'the CLI is told where the broker is');
+    assert.equal(env.VANNEVAR_PROGRESS_PROTOCOL, '2');
+});
+
+test('launch: two tabs are isolated — each capability belongs to its own session', () => {
+    const first = makeTab();
+    const second = makeTab();
+    first.send({ type: 'launch_claude', channelId: 'tab-one', resume: null });
+    second.send({ type: 'launch_claude', channelId: 'tab-two', resume: null });
+    const firstIssued = capabilityFor(first.webview);
+    const secondIssued = capabilityFor(second.webview);
+    assert.ok(firstIssued && secondIssued, 'both tabs hold a capability');
+    assert.notEqual(firstIssued.sessionId, secondIssued.sessionId, 'the tabs run under different sessions');
+    assert.notEqual(firstIssued.capability, secondIssued.capability, 'the tabs hold different capabilities');
+    const firstOpts = {};
+    const secondOpts = {};
+    const firstEnv = host.envFor({ ...process.env }, undefined, firstOpts, launchContext('tab-one'));
+    const secondEnv = host.envFor({ ...process.env }, undefined, secondOpts, launchContext('tab-two'));
+    assert.equal(firstEnv.VANNEVAR_PROGRESS_CAP, firstIssued.capability, 'a tab gets its own capability, not the neighbour\'s');
+    assert.equal(secondEnv.VANNEVAR_PROGRESS_CAP, secondIssued.capability);
+    assert.equal(firstOpts.sessionId, firstIssued.sessionId);
+    assert.equal(secondOpts.sessionId, secondIssued.sessionId);
+});
+
+test('launch: a spawn no tab asked for — a probe — gets no capability', () => {
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'probe-tab', resume: null });
+    const probe = { manager: { pendingChannels: new Map([['probe-tab', { in: {} }]]) }, input: {} };
+    const env = host.envFor({ ...process.env }, undefined, {}, probe);
+    assert.equal(env.VANNEVAR_PROGRESS_CAP, undefined, 'a probe has no tab to attribute a capability to');
+    assert.equal(env.VANNEVAR_PROGRESS_ENDPOINT, undefined);
+});
+
+test('launch: a resume keeps the session it resumes', () => {
+    const sessionId = '11111111-2222-4333-8444-555555555555';
+    writeTranscript(sessionId);
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'resume-tab', resume: sessionId });
+    const issued = capabilityFor(tab.webview);
+    assert.equal(issued?.sessionId, sessionId, 'the capability is for the session being resumed');
+    const opts = {};
+    const env = host.envFor({ ...process.env }, sessionId, opts, launchContext('resume-tab'));
+    assert.equal(opts.sessionId, undefined, 'a resume is left to the CLI\'s own --resume');
+    assert.equal(env.VANNEVAR_PROGRESS_CAP, issued.capability);
+});
+
+test('launch: a resume whose transcript is missing starts fresh under a new id', () => {
+    const sessionId = '99999999-8888-4777-8666-555555555555';
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'reset-tab', resume: sessionId });
+    const opts = {};
+    const env = host.envFor({ ...process.env }, sessionId, opts, launchContext('reset-tab'));
+    assert.equal(opts.resume, undefined, 'there is no transcript to resume');
+    assert.match(opts.sessionId, /^[0-9a-f-]{36}$/i, 'the session runs under a new id');
+    assert.notEqual(opts.sessionId, sessionId, 'not under the id that is not there');
+    assert.ok(env.VANNEVAR_PROGRESS_CAP, 'the fresh session holds a capability');
+    const state = globalThis.__ccxState.progress;
+    assert.ok(state.sessionCapabilities.has(opts.sessionId), 'the capability is for the fresh session');
+    assert.equal(state.sessionCapabilities.has(sessionId), false, 'no capability for the id that is not there');
+});
+
+test('launch: a tab without a profile still gets the capability', () => {
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'no-profile-tab', resume: null });
+    const opts = {};
+    const env = host.envFor({ ...process.env }, undefined, opts, launchContext('no-profile-tab'));
+    assert.ok(env.VANNEVAR_PROGRESS_CAP, 'a tab with no profile still reports progress');
+    assert.ok(env.VANNEVAR_PROGRESS_ENDPOINT);
+});
+
+test('launch: credentials inherited from the ambient environment are scrubbed', () => {
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'inherited-tab', resume: null });
+    const ambient = { ...process.env, VANNEVAR_PROGRESS_CAP: 'inherited-capability', VANNEVAR_PROGRESS_ENDPOINT: 'inherited-endpoint' };
+    const opts = {};
+    const env = host.envFor(ambient, undefined, opts, launchContext('inherited-tab'));
+    assert.notEqual(env.VANNEVAR_PROGRESS_CAP, 'inherited-capability', 'the inherited capability is not passed on');
+    assert.notEqual(env.VANNEVAR_PROGRESS_ENDPOINT, 'inherited-endpoint');
+    assert.ok(env.VANNEVAR_PROGRESS_CAP, 'the tab\'s own capability is there instead');
+});
+
+test('launch: a real child process with the launch environment transfers a report and receives an ack', async () => {
+    const tab = makeTab();
+    tab.send({ type: 'launch_claude', channelId: 'child-tab', resume: null });
+    const opts = {};
+    const env = host.envFor({ ...process.env }, undefined, opts, launchContext('child-tab'));
+    // The tab publishes the root it is working on when it starts; the broker answers a report
+    // against the root that is current, so the root has to be there before the report lands.
+    globalThis.__ccxState.progress.broker.observeRoot({ sessionId: opts.sessionId, rootId: 'root-launch' });
+    const clientPath = new URL('../runtime/mcp/progress-client.mjs', import.meta.url).href;
+    const code = `import {createProgressClient} from ${JSON.stringify(clientPath)}; const c=createProgressClient(process.env); const r=await c.report({done:0,total:3,plan:['one','two','three']}); c.close(); if(!r.accepted){console.error(r.reason);process.exitCode=1;}`;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stderr.on('data', (data) => { output += data; });
+    const status = await new Promise((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+    assert.equal(status, 0, output);
+});
+
 async function main() {
     const failures = [];
     for (const { name, fn } of cases) {
@@ -604,6 +793,12 @@ async function main() {
         }
     }
     rmSync(ROOT, { recursive: true, force: true });
+    rmSync(HOST_HOME, { recursive: true, force: true });
+    const state = globalThis.__ccxState;
+    if (state) {
+        for (const key of ['extensionsWatcher', 'agentRunsWatcher', 'settingsWatcher', 'bindingsWatcher', 'defaultWatcher', 'profilesWatcher', 'healthWatcher']) state[key]?.close();
+        clearTimeout(state.agentRunsTimer);
+    }
     console.log(`\n${cases.length - failures.length}/${cases.length} session capability lifecycle cases passed`);
     if (failures.length) {
         console.error('\nFAIL — the session capability lifecycle suite has failures:');

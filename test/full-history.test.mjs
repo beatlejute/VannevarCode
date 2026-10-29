@@ -7,19 +7,23 @@
 // bundle with the hook patched in, the page, and the patcher wiring between them.
 //   node test/full-history.test.mjs
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, existsSync, mkdtempSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path, { join } from 'node:path';
 import vm from 'node:vm';
 import assert from 'node:assert';
 
-// The installed extension is looked up before HOME is pointed at the sandbox below.
-const EXTENSIONS_ROOT = join(homedir(), '.vscode', 'extensions');
+// Real-bundle coverage is opt-in Level B, never discovered from the user's home.
+// Pass an explicit pristine bundle directory; a bad explicit input must fail, not skip.
+const BUNDLE_DIR = process.env.VANNEVAR_TEST_BUNDLE_DIR;
 
 // --- Part 1: the host — the switch on disk, and the stitch -------------------------------------
 
-const home = join(tmpdir(), `ccx-history-${process.pid}`);
+const home = mkdtempSync(join(tmpdir(), 'ccx-history-'));
+const savedEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+let restoreLoader = () => {};
+try {
 const runtime = join(home, '.claude', 'vannevar');
 mkdirSync(runtime, { recursive: true });
 copyFileSync(new URL('../runtime/webview.js', import.meta.url), join(runtime, 'webview.js'));
@@ -29,11 +33,14 @@ process.env.USERPROFILE = home;
 const require = createRequire(import.meta.url);
 const Module = require('node:module');
 const load = Module._load;
-Module._load = (request, ...rest) =>
-    request === 'vscode'
-        ? { Uri: { file: (p) => ({ fsPath: p }) }, window: { showWarningMessage() {}, showErrorMessage() {} } }
-        : load(request, ...rest);
-const copy = join(tmpdir(), `ccx-host-history-${process.pid}.cjs`);
+const realOs = require('node:os');
+restoreLoader = () => { Module._load = load; };
+Module._load = (request, ...rest) => {
+    if (request === 'vscode') return { Uri: { file: (p) => ({ fsPath: p }) }, window: { showWarningMessage() {}, showErrorMessage() {} } };
+    if (request === 'os' || request === 'node:os') return { ...realOs, homedir: () => home };
+    return load(request, ...rest);
+};
+const copy = join(home, 'host.cjs');
 writeFileSync(copy, readFileSync(new URL('../runtime/host.js', import.meta.url)));
 // Copy progress-broker.js to the runtime directory where host.js expects it
 writeFileSync(join(runtime, 'progress-broker.js'), readFileSync(new URL('../runtime/progress-broker.js', import.meta.url)));
@@ -153,33 +160,17 @@ console.log('OK — the host keeps the switch on disk and joins a boundary to wh
 // the stand-in agrees. So the patcher runs over a copy of the real bundle, and the patched walk is lifted
 // out of it along with whatever it calls.
 //
-// Returns null where there is no Claude Code to read — a CI runner, a fresh checkout — and Parts 2 and 4
-// are skipped loudly rather than failing, exactly as auto-repatch.test.mjs does it. Parts 1 and 3 need
-// nothing but this repository and still run.
+// Parts 2 and 4 require an explicit pristine bundle (Level B). Parts 1 and 3 need
+// nothing but this repository. No installed extension directory is searched.
 
 function cleanExtension() {
-    let obsolete = {};
-    try {
-        obsolete = JSON.parse(readFileSync(join(EXTENSIONS_ROOT, '.obsolete'), 'utf8')) || {};
-    } catch {}
-    const version = (name) => (name.match(/-(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
-    let entries = [];
-    try {
-        entries = readdirSync(EXTENSIONS_ROOT);
-    } catch {
-        return null;
-    }
-    const dir = entries
-        .filter((name) => name.startsWith('anthropic.claude-code-') && !obsolete[name])
-        .sort((a, b) => {
-            const [x, y] = [version(a), version(b)];
-            return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
-        })
-        .pop();
-    if (!dir) return null;
+    if (!BUNDLE_DIR) return null;
+    assert.ok(path.isAbsolute(BUNDLE_DIR), 'VANNEVAR_TEST_BUNDLE_DIR must be an absolute pristine bundle path');
+    const dir = BUNDLE_DIR;
     const pick = (rel) => {
-        const file = join(EXTENSIONS_ROOT, dir, rel);
-        return existsSync(`${file}.ccx-orig`) ? `${file}.ccx-orig` : file;
+        const file = join(dir, rel);
+        assert.ok(existsSync(file), `explicit bundle input missing: ${file}`);
+        return file;
     };
     return { dir, extension: pick('extension.js'), webview: pick(join('webview', 'index.js')) };
 }
@@ -217,9 +208,9 @@ const stock = cleanExtension();
 let patchedPage = null;
 
 if (!stock) {
-    console.log(`SKIP — no Claude Code extension under ${EXTENSIONS_ROOT}; the stock walk was not exercised`);
+    console.log('SKIP — stock walk is explicit Level B: set VANNEVAR_TEST_BUNDLE_DIR to a pristine bundle directory');
 } else {
-    const fixture = join(tmpdir(), `ccx-history-bundle-${process.pid}`, path.basename(stock.dir));
+    const fixture = join(home, 'bundle', path.basename(stock.dir));
     mkdirSync(join(fixture, 'webview'), { recursive: true });
     copyFileSync(stock.extension, join(fixture, 'extension.js'));
     copyFileSync(stock.webview, join(fixture, 'webview', 'index.js'));
@@ -473,6 +464,13 @@ if (!patchedPage) {
 }
 
 console.log('\nOK — history before compaction reaches the page, and only as a view');
-rmSync(home, { recursive: true, force: true });
+} finally {
+    restoreLoader();
+    for (const [key, value] of Object.entries(savedEnv)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+    }
+    rmSync(home, { recursive: true, force: true });
+}
 // attachWebview leaves fs.watch handles behind; nothing unrefs them.
 process.exit(0);

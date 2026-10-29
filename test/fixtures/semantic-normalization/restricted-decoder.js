@@ -1,0 +1,12 @@
+const decoderMap = ["zero", "one", "two", "three", "four", "five"];
+const index = 2;
+const resolved = decoderMap[index];
+const negativeIndex = -1;
+const negativeResolved = decoderMap[negativeIndex];
+const outOfRange = decoderMap[100];
+const hexIndex = decoderMap[2];
+const hexResolved = decoderMap[3];
+const computedIndex = 1 + 1;
+const computedResolved = decoderMap[computedIndex];
+const literalZero = decoderMap[0];
+const literalFive = decoderMap[5];

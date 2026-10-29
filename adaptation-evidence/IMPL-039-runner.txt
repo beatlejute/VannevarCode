@@ -1,0 +1,22 @@
+=== Run 1: node scripts/adaptation/run.mjs --help ===
+Usage: node scripts/adaptation/run.mjs --dir <dir> --out <out>
+Options:
+  --dir  (required) path to the pristine copy to adapt
+  --out  (required) path where the runner report is written
+  --help show this help and exit
+exit code: 0
+
+=== Run 2: node scripts/adaptation/run.mjs (no args) ===
+Error: --dir and --out are required.
+Usage: node scripts/adaptation/run.mjs --dir <dir> --out <out>
+Options:
+  --dir  (required) path to the pristine copy to adapt
+  --out  (required) path where the runner report is written
+  --help show this help and exit
+
+exit code: 2
+
+=== Run 3: node scripts/adaptation/validate-report.mjs --help ===
+Usage: node scripts/adaptation/validate-report.mjs [--help]
+Validates compatibility report. Prohibits final AMBIGUOUS.
+exit code: 0

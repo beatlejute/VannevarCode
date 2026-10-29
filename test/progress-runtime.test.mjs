@@ -130,6 +130,25 @@ test('task snapshots do not transport live session objects', (build) => {
     assert.equal(snap.taskSnapshots.a.toolUseId, task.toolUseId);
 });
 
+test('native agents do not transport reactive accessors or functions in snapshot', (build) => {
+    const servedModelFn = function () { return this.connection.value?.claudeConfig.value; };
+    const task = nativeTask({
+        servedModel: servedModelFn,
+        servedModelGeneration: 7,
+        recentTools: ['Read', 'Grep', servedModelFn],
+    });
+    const snap = build(session({
+        id: 'sess-reactive-agent', providerGeneration: 7,
+        subagentTasks: new Map([['a', task]]),
+    }));
+    assert.doesNotThrow(() => structuredClone(snap));
+    const agent = snap.nativeAgents[0];
+    assert.equal(agent.execution.servedModel, null);
+    assert.equal(agent.currentTool, 'Grep');
+    assert.equal(agent.recentTools.length, 2);
+    assert.ok(!agent.recentTools.some((t) => typeof t !== 'string'));
+});
+
 test('session identity unwraps a signal without transporting its reactive graph', (build) => {
     const signal = { v: 'sess-reactive', dependency: { x: () => ({}) } };
     Object.defineProperty(signal, 'value', { get() { return this.v; } });

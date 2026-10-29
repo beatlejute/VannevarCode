@@ -100,6 +100,24 @@ function runtimeMatches(source, target) {
     return true;
 }
 
+// A release may ship a file where the copy on disk keeps a directory, or the reverse. cpSync cannot
+// replace a path that changed its kind — the native copy on current Node fails it with EIO "Access is
+// denied" instead — and a failed copy leaves the extension with no runtime at all. So paths whose kind
+// changed are cleared before the copy; anything the release does not carry is left exactly as it was.
+function clearChangedKinds(source, target) {
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+        const to = path.join(target, entry.name);
+        let stats;
+        try {
+            stats = fs.statSync(to);
+        } catch {
+            continue;
+        }
+        if (entry.isDirectory() !== stats.isDirectory()) fs.rmSync(to, { recursive: true, force: true });
+        else if (entry.isDirectory()) clearChangedKinds(path.join(source, entry.name), to);
+    }
+}
+
 function syncRuntime(context, bundle) {
     const stamp = currentStamp();
     const fresh = stamp.version !== pkg.version || !fs.existsSync(PATCHER)
@@ -107,6 +125,7 @@ function syncRuntime(context, bundle) {
 
     fs.mkdirSync(RUNTIME, { recursive: true });
     if (fresh) {
+        clearChangedKinds(runtimeSource(context), RUNTIME);
         fs.cpSync(runtimeSource(context), RUNTIME, { recursive: true, force: true });
         log(`runtime: ${stamp.version || 'none'} → ${pkg.version}`);
     }
@@ -435,6 +454,41 @@ function activate(context) {
     command('vannevar.installMcp', () => registerMcp(claudeBundle(), { explicit: true }));
 
     command('vannevar.loginChatgpt', loginChatgpt);
+
+    command('vannevar.panicRestore', async () => {
+        const confirmed = await vscode.window.showInformationMessage(
+            'Vannevar: Panic restore - restore from .ccx-orig backup? This will restore modified files from backup and remove Vannevar markers.',
+            'Restore',
+            'Cancel'
+        );
+        if (confirmed !== 'Restore') return;
+
+        const bundle = claudeBundle();
+        if (!bundle) {
+            vscode.window.showWarningMessage('Vannevar: the Claude Code extension is not installed.');
+            return;
+        }
+
+        const result = await runPatcher(['--panic-restore'], bundle);
+        log(`panic-restore → ${result.ok ? 'ok' : 'FAILED'}\n${result.out}`);
+
+        if (!result.ok) {
+            vscode.window.showWarningMessage(
+                `Vannevar: panic restore failed — ${result.out}`,
+                'Show log'
+            ).then((choice) => choice === 'Show log' && showLog());
+            return;
+        }
+
+        if (result.out.includes('восстановл')) {
+            vscode.window.showInformationMessage(
+                `Vannevar: panic restore completed. Reload the window to activate the changes.`,
+                'Reload'
+            ).then((choice) => {
+                if (choice === 'Reload') vscode.commands.executeCommand('workbench.action.reloadWindow');
+            });
+        }
+    });
 
     // The patch is what makes every other part of this extension exist, so the only thing the setting
     // turns off is re-applying it unattended — the command still does it on demand, and the runtime is

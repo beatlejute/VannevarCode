@@ -6064,8 +6064,8 @@
             providerProfile: textValue('providerProfile'),
             requestedModel: requestedModel,
             servedModel: generation != null && servedGeneration != null && servedGeneration !== generation ? null : servedModel || null,
-            providerGeneration: generation,
-            servedModelGeneration: servedGeneration == null ? generation : servedGeneration,
+            providerGeneration: typeof generation === 'number' ? generation : null,
+            servedModelGeneration: typeof servedGeneration === 'number' ? servedGeneration : null,
             providerEvidence: generation == null ? 'unknown' : 'root-session-state',
             requestedModelEvidence: requestedModel ? 'root-session-state' : 'unknown',
             servedModelEvidence: servedModel ? 'root-session-state' : 'unknown',
@@ -6083,18 +6083,21 @@
             var id = task.toolUseId;
             if (!nativeGenerations.has(sessionId + ':' + id)) nativeGenerations.set(sessionId + ':' + id, generation);
             var pinnedGeneration = nativeGenerations.get(sessionId + ':' + id);
+            var agentRecentTools = Array.isArray(task.recentTools)
+                ? task.recentTools.filter(function (tool) { return typeof tool === 'string'; }) : [];
             nativeAgents.push({
                 id: id, title: typeof task.description === 'string' && task.description ? task.description : 'Agent',
                 state: task.status === 'failed' ? 'failed' : /complete|success|done/i.test(task.status || '') ? 'done' : 'running',
                 activityHealth: task.status === 'failed' ? 'stale' : 'fresh',
                 startedAt: task.startTime || now, lastActivityAt: task.lastActivityTime || now,
-                currentTool: task.recentTools && task.recentTools.length ? task.recentTools[task.recentTools.length - 1] : null,
+                currentTool: agentRecentTools.length ? agentRecentTools[agentRecentTools.length - 1] : null,
                 tokens: task.usage && task.usage.totalTokens || 0,
                 toolCalls: task.usage && task.usage.toolUses || 0,
-                recentTools: task.recentTools || [],
+                recentTools: agentRecentTools,
                 execution: { providerProfile: null, requestedModel: null,
-                    servedModel: task.servedModelGeneration === pinnedGeneration ? task.servedModel || null : null,
-                    providerGeneration: pinnedGeneration, servedModelGeneration: task.servedModelGeneration == null ? null : task.servedModelGeneration,
+                    servedModel: task.servedModelGeneration === pinnedGeneration && typeof task.servedModel === 'string' ? task.servedModel : null,
+                    providerGeneration: typeof pinnedGeneration === 'number' ? pinnedGeneration : null,
+                    servedModelGeneration: typeof task.servedModelGeneration === 'number' ? task.servedModelGeneration : null,
                     providerEvidence: pinnedGeneration == null ? 'unknown' : 'same-session-provider',
                     requestedModelEvidence: 'unknown', servedModelEvidence: task.servedModel && task.servedModelGeneration === pinnedGeneration ? 'child-assistant-message' : 'unknown' },
             });
@@ -6121,7 +6124,7 @@
             });
             transportSnapshots[key] = clean;
         });
-        return { sessionId: sessionId, runtimeRevision: revision, activityHealth: health, providerGeneration: generation,
+        return { sessionId: sessionId, runtimeRevision: revision, activityHealth: health, providerGeneration: typeof generation === 'number' ? generation : null,
             state: stateValue, currentTool: currentTool && currentTool.name || null, root: rootSnapshot,
             rootLifecycle: rootSnapshot ? rootSnapshot.rootId : null,
             nativeAgents: nativeAgents, taskSnapshots: transportSnapshots, execution: execution, timestamp: now };

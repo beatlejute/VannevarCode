@@ -1,0 +1,1 @@
+{"patchPoints":[{"id":"P2","targetFile":"miss-target.js","surface":"test","owner":"t","required":true,"variants":[{"id":"V2","matcherKind":"legacy-textual","semanticAnchor":"MISS_ANCHOR","moduleScope":"test"}]}]}

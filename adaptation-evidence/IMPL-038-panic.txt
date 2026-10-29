@@ -1,0 +1,40 @@
+IMPL-038 panic-restore evidence (режим --panic-restore с --pristine-dir)
+=====================================================================
+Запуск на disposable-копии в system tmp; без записи в реальный ~/.claude,
+без реального пользовательского Claude CLI. Панический режим никогда не
+запускается автоматически — только по явному флагу --panic-restore.
+
+Запуск 1 — --panic-restore (восстановление из точной резервной копии *.ccx-orig,
+приоритет 1 Recovery priority, postcondition: маркеры Vannevar удалены +
+синтаксис валиден):
+Команда: node runtime/apply-patch.mjs --dir="C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/T" --panic-restore --pristine-dir="C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/P"
+Вывод:
+  extension: C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/T
+  patcher:   unknown (verified against unknown)
+  panic-restore: восстановлено 2 файл(ов); маркеры Vannevar удалены, синтаксис валиден
+exit code: 0
+
+Постусловие проверено: __ccx маркеров в T/extension.js и T/webview/index.js нет;
+node --check проходит для обоих файлов.
+
+Запуск 2 — нормальный --revert (режим отделён от --panic-restore, отдельная ветка
+диспетчера, неизвестный флаг не молчит):
+Команда: node runtime/apply-patch.mjs --dir="C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/T2" --revert
+Вывод:
+  extension: C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/T2
+  patcher:   unknown (verified against unknown)
+  Restored 2 file(s) from backup.
+exit code: 0
+
+Запуск 3 — отказ на неизвестном флаге: ничего не пишет в бандл, reinstall guidance,
+ненулевой код:
+Команда: node runtime/apply-patch.mjs --dir="C:\Users\Denis\AppData\Local\Temp\kilo\impl-038/T" --bogus-flag
+Вывод:
+  unknown flag(s): --bogus-flag
+  reinstall guidance: reinstall the Claude Code extension from the marketplace/VSIX or restore the exact pristine bundle — safe recovery is unprovable and nothing was written.
+exit code: 1
+
+Приоритет восстановления реализован: exact backup (*.ccx-orig) ->
+явный --pristine-dir той же сборки -> registry-governed self-contained raw cleanup
+(restorePolicy: self-contained) -> отказ с reinstall guidance. Восстановление
+транзакционное: все источники читаются перед первой записью.

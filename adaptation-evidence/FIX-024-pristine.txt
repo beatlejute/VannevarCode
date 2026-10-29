@@ -1,0 +1,51 @@
+case 1 exact backup restore: PASS
+case 2 explicit matching pristine restore: PASS
+case 3 safe registered marker cleanup: PASS
+case 4 foreign/unknown marker refusal: PASS
+case 5 pristine build mismatch: PASS
+case 6 multi-file failure rollback: PASS
+case 7 idempotent second run: PASS
+case 8 syntax failure rejects result: PASS
+panic-restore.test.mjs: 8/8 recovery/refusal cases passed against runtime/apply-patch.mjs
+pristine version mismatch without markers: observed exit=1
+pristine version mismatch without markers: PASS
+rollback after second target write failure: observed exit=1, firstUnchanged=false, secondUnchanged=true
+rollback after second target write failure: FAIL: first target must be rolled back
++ actual - expected
+
++ 'const ext=1;console.log(ext);\n'
+- 'const ext=1;/*__ccx*/console.log(ext);\n'
+               ^
+
+missing recovery file refuses before writes: observed exit=1
+missing recovery file refuses before writes: PASS
+read-only recovery source remains readable and unchanged: observed exit=0
+read-only recovery source remains readable and unchanged: PASS
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: rollback after second target write failure: first target must be rolled back
++ actual - expected
+
++ 'const ext=1;console.log(ext);\n'
+- 'const ext=1;/*__ccx*/console.log(ext);\n'
+               ^
+
+
+1 !== 0
+
+    at file:///D:/Dev/VannevarCode/test/panic-restore.test.mjs:344:8
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.21.0
+exit code: 1

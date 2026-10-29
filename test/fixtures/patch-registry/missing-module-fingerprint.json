@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "patchPoints": [
+    {
+      "id": "PATCH-TEST-NO-FP",
+      "targetFile": "test.js",
+      "surface": "HOST",
+      "owner": "third-party",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-TEST-NO-FP-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "test anchor",
+          "moduleScope": null,
+          "preconditions": [],
+          "postconditions": [],
+          "negativeFixtures": [],
+          "knownVersions": [
+            "2.1.296"
+          ],
+          "justification": "test justification"
+        }
+      ]
+    }
+  ]
+}

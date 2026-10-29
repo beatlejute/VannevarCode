@@ -1,0 +1,4 @@
+=== Run 1: node scripts/adaptation/run.mjs --dir .fix-029-tmp-copy --out .fix-029-tmp-copy/report.json ===
+runner: VERIFIED_UNCHANGED — dry-run: bundle already up to date
+
+exit code: 0

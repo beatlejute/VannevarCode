@@ -123,6 +123,10 @@ const progress = (S.progress ||= {
     disableLatched: false,
 });
 const nativeBridges = (progress.nativeBridges ||= new Map());
+// Launches this host started, keyed by the channel id the session manager hands over with:
+// channelId -> { sessionId, webview, fresh }. It lives in the shared state because the hooks
+// reload this module independently, and a launch outlives the module that recorded it.
+const launchRecords = (progress.launchRecords ||= new Map());
 const nativeProgress = () => require(path.join(DIR, 'native-progress.js'));
 function nativeSemanticEnabled() {
     try { return progressAvailable() && vscode.workspace.getConfiguration('vannevar').get('progress.nativeSemantic', true) === true; }
@@ -1387,66 +1391,132 @@ function stripProgressEnvironment(env) {
     return clean;
 }
 
+// The launch a CLI spawn belongs to.
+//
+// The session manager keeps a record for every channel it starts: the launch sits in
+// `pendingChannels` until the CLI is up and in `channels` afterwards, and the record's input
+// queue is the very queue the CLI was started with. That queue ties a spawn to a channel, and
+// the launch record — written when the tab asked to launch — ties the channel to the tab.
+// Nothing else decides it: not the tab that was last in the foreground, and not the profile
+// that happens to be pending.
+function resolveLaunch(context, opts) {
+    if (!context || !context.manager || !context.input) return null;
+    const manager = context.manager;
+    for (const source of [manager.pendingChannels, manager.channels]) {
+        if (!source || typeof source.entries !== 'function') continue;
+        for (const [channelId, record] of source.entries()) {
+            if (!record || record.in !== context.input) continue;
+            const recorded = launchRecords.get(channelId);
+            if (recorded) {
+                // The tab that asked for this launch is the one the capability belongs to. A tab
+                // that has since moved on to another channel is not it.
+                if (recorded.webview && recorded.webview.__ccxChannelId
+                    && recorded.webview.__ccxChannelId !== channelId) return null;
+                return recorded;
+            }
+            // A launch this host never saw the request for — a session restored in a new window,
+            // a session taken over from another holder — still names its channel, and the channel
+            // names the tab. The id it will report is the one it resumes, or a fresh one: the
+            // same rule the launch itself follows.
+            const views = [...S.webviews].filter((view) => view.__ccxChannelId === channelId);
+            if (views.length !== 1) return null;
+            const resume = opts && typeof opts.resume === 'string' && opts.resume ? opts.resume : null;
+            const launch = { sessionId: resume || require('crypto').randomUUID(), webview: views[0], fresh: !resume };
+            launchRecords.set(channelId, launch);
+            return launch;
+        }
+    }
+    return null;
+}
+
 function progressEnvironment(baseEnv, opts, context) {
     const env = stripProgressEnvironment(baseEnv);
-    if (!progressAvailable() || !opts || !context || !context.manager || !context.input) return env;
-    const channels = context.manager.pendingChannels;
-    if (!channels || typeof channels.entries !== 'function') return env;
-    const matches = [...channels.entries()].filter(([, record]) => record && record.in === context.input);
-    if (matches.length !== 1) return env;
-    const channelId = matches[0][0];
-    const views = [...S.webviews].filter((view) => view.__ccxChannelId === channelId);
-    if (views.length !== 1) return env;
-    const webview = views[0];
-    const sessionId = opts.resume || opts.sessionId || require('crypto').randomUUID();
+    if (!progressAvailable() || !opts) return env;
+    const launch = resolveLaunch(context, opts);
+    // A spawn that no launch of ours started — a config probe, an auth-only spawn — gets no
+    // credentials: there is no tab to attribute them to.
+    if (!launch) return env;
+    const { sessionId, webview, fresh } = launch;
     if (typeof sessionId !== 'string' || !sessionId) return env;
-    if (!opts.resume) opts.sessionId = sessionId;
-    const existing = sessionCapabilities.get(sessionId);
-    if (existing && existing.webview !== webview) return env;
+    // The CLI is told which session id to run under, so the id the capability is issued for and
+    // the id the session reports afterwards are one and the same. A resume keeps the id it
+    // resumes and is left to the CLI's own --resume.
+    if (fresh) opts.sessionId = sessionId;
+    // A capability belongs to the tab it was issued for. Once that tab is disposed, the token can no
+    // longer be presented — and keeping it would leave the session without telemetry for good, since
+    // every later tab fails the same lookup and walks away empty. A live holder still keeps its tab's
+    // capability, which is what stops a second launch from stealing a session that is still running.
+    let existing = sessionCapabilities.get(sessionId);
+    if (existing && existing.webview !== webview) {
+        if (webviewAlive(existing.webview)) return env;
+        revokeSessionCapability(sessionId);
+        existing = null;
+    }
     const capability = existing ? existing.capability : issueSessionCapability(sessionId, webview);
     if (!capability) return env;
-    noteSessionId(webview, sessionId);
-    beginRuntimeTransport(webview, sessionId);
-    const info = getProgressBroker().info();
+    // Everything past this point decorates the capability. A failure in one of them — the
+    // transport, the reporting hooks, the native bridge — must not take the capability with it:
+    // the tab would go back to reporting nothing, with nothing in the log to say why.
+    try {
+        noteSessionId(webview, sessionId);
+        beginRuntimeTransport(webview, sessionId);
+    } catch (e) {
+        dlog('progress transport failed', { sessionId, error: e && e.message });
+    }
+    let info;
+    try {
+        info = getProgressBroker().info();
+    } catch (e) {
+        dlog('progress broker unavailable', { sessionId, error: e && e.message });
+        return env;
+    }
     env.VANNEVAR_PROGRESS_CAP = capability;
     env.VANNEVAR_PROGRESS_ENDPOINT = info.endpoint;
     env.VANNEVAR_PROGRESS_PROTOCOL = String(info.protocol);
-    const reporting = require('./progress-reporting.js').createReportingHooks({
-        ownerSession: sessionId, enabled: progressAvailable, nativeEnabled: nativeSemanticEnabled,
-    });
-    opts.allowedTools = [...new Set([...(opts.allowedTools || []), 'mcp__vannevar__progress'])];
-    opts.hooks ||= {};
-    for (const [event, callback] of [['UserPromptSubmit', reporting.prompt], ['SubagentStart', reporting.start]]) {
-        opts.hooks[event] ||= [];
-        opts.hooks[event].push({ hooks: [callback] });
-    }
-    if (nativeSemanticEnabled()) {
-        const broker = getProgressBroker();
-        nativeBridges.get(sessionId)?.dispose();
-        const bridge = nativeProgress().createNativeProgressBridge({ broker, ownerSession: sessionId,
-            resumed: Boolean(opts.resume), enabled: nativeSemanticEnabled,
-            createClient: (credentials) => {
-                let client;
-                return {
-                    async report(report) {
-                        const { createProgressClient } = await import('./mcp/progress-client.mjs');
-                        client ||= createProgressClient(credentials);
-                        return client.report(report);
-                    },
-                    close() { client?.close(); },
-                };
-            } });
-        context.nativeBridge = bridge;
-        nativeBridges.set(sessionId, bridge);
-        broker.setNativeClassifier(sessionId, (id) => nativeSemanticEnabled() ? bridge.classify(id) : { root: true },
-            opts.resume ? 'unsupported_resume' : 'supported_initial_attempt', nativeSemanticEnabled);
+    try {
+        const reporting = require('./progress-reporting.js').createReportingHooks({
+            ownerSession: sessionId, enabled: progressAvailable, nativeEnabled: nativeSemanticEnabled,
+        });
+        opts.allowedTools = [...new Set([...(opts.allowedTools || []), 'mcp__vannevar__progress'])];
         opts.hooks ||= {};
-        for (const [event, callback] of [['PreToolUse', bridge.pre], ['PostToolUse', bridge.post],
-            ['PostToolUseFailure', bridge.failure]]) {
+        for (const [event, callback] of [['UserPromptSubmit', reporting.prompt], ['SubagentStart', reporting.start]]) {
             opts.hooks[event] ||= [];
-            opts.hooks[event].push({ matcher: event === 'PreToolUse'
-                ? 'mcp__vannevar__progress|Agent|Task' : 'mcp__vannevar__progress', hooks: [callback] });
+            opts.hooks[event].push({ hooks: [callback] });
         }
+    } catch (e) {
+        dlog('progress reporting hooks failed', { sessionId, error: e && e.message });
+    }
+    try {
+        if (nativeSemanticEnabled()) {
+            const broker = getProgressBroker();
+            nativeBridges.get(sessionId)?.dispose();
+            const bridge = nativeProgress().createNativeProgressBridge({ broker, ownerSession: sessionId,
+                resumed: Boolean(opts.resume), enabled: nativeSemanticEnabled,
+                createClient: (credentials) => {
+                    let client;
+                    return {
+                        async report(report) {
+                            const { createProgressClient } = await import('./mcp/progress-client.mjs');
+                            client ||= createProgressClient(credentials);
+                            return client.report(report);
+                        },
+                        close() { client?.close(); },
+                    };
+                } });
+            context.nativeBridge = bridge;
+            nativeBridges.set(sessionId, bridge);
+            broker.setNativeClassifier(sessionId, (id) => nativeSemanticEnabled() ? bridge.classify(id) : { root: true },
+                opts.resume ? 'unsupported_resume' : 'supported_initial_attempt', nativeSemanticEnabled);
+            opts.hooks ||= {};
+            for (const [event, callback] of [['PreToolUse', bridge.pre], ['PostToolUse', bridge.post],
+                ['PostToolUseFailure', bridge.failure]]) {
+                opts.hooks[event] ||= [];
+                opts.hooks[event].push({ matcher: event === 'PreToolUse'
+                    ? 'mcp__vannevar__progress|Agent|Task' : 'mcp__vannevar__progress', hooks: [callback] });
+            }
+        }
+    } catch (e) {
+        dlog('native progress bridge failed', { sessionId, error: e && e.message });
     }
     return env;
 }
@@ -1454,8 +1524,11 @@ function progressEnvironment(baseEnv, opts, context) {
 function optionalProgressEnvironment(env, opts, context) {
     try {
         return progressEnvironment(env, opts, context);
-    } catch {
-        dlog('progress environment failed', { reason: 'initialization_failed' });
+    } catch (e) {
+        // Only the kind of failure and where it was raised. The message can quote whatever context the
+        // throw came from — a tab's state, a session record — and debug.log is not the place for that.
+        const frame = e && typeof e.stack === 'string' ? (e.stack.split('\n')[1] || '').trim() : '';
+        dlog('progress environment failed', { reason: 'initialization_failed', error: (e && e.name) || typeof e, frame });
         return stripProgressEnvironment(env);
     }
 }
@@ -2624,20 +2697,42 @@ function syncRuntimeFromNewestExtension(claudeDir) {
     }
     const installed = pkg.version;
     const running = readJson(STAMP_FILE)?.version || null;
-    if (!installed || !newer(installed, running)) return null;
-
+    const sameBytes = (a, b) => {
+        try { return fs.readFileSync(a).equals(fs.readFileSync(b)); } catch { return false; }
+    };
+    const written = [];
     try {
-        fs.cpSync(source, DIR, { recursive: true, force: true });
-        writeJson(STAMP_FILE, {
-            version: installed,
-            verifiedAgainst: Array.isArray(pkg.verifiedAgainst) ? pkg.verifiedAgainst : [],
-            extensionPath: claudeDir,
-        });
+        const walk = (from, to) => {
+            for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+                const src = path.join(from, entry.name);
+                const dst = path.join(to, entry.name);
+                let stat = fs.statSync(dst, { throwIfNoEntry: false });
+                if (entry.isDirectory()) {
+                    if (stat && !stat.isDirectory()) { fs.rmSync(dst, { recursive: true, force: true }); stat = undefined; }
+                    if (!stat) fs.mkdirSync(dst, { recursive: true });
+                    walk(src, dst); continue;
+                }
+                if (stat && stat.isDirectory()) fs.rmSync(dst, { recursive: true, force: true });
+                else if (stat && sameBytes(src, dst)) continue;
+                fs.rmSync(dst, { recursive: true, force: true });
+                fs.cpSync(src, dst, { recursive: false, force: true });
+                written.push(path.relative(source, src).split(path.sep).join('/'));
+            }
+        };
+        walk(source, DIR);
+        if (written.length || installed !== running) {
+            writeJson(STAMP_FILE, {
+                version: installed,
+                verifiedAgainst: Array.isArray(pkg.verifiedAgainst) ? pkg.verifiedAgainst : [],
+                extensionPath: claudeDir,
+            });
+        }
+        if (written.length) dlog('runtime sync from newest extension written', { files: written.length, version: installed, filesWritten: written.slice(0, 10) });
     } catch (e) {
-        dlog('runtime sync failed', { dir, error: String(e && e.message) });
+        dlog('runtime sync from newest extension failed', { error: String(e && e.message) });
         return null;
     }
-    dlog('runtime synced', { from: running, to: installed });
+    dlog('runtime sync from newest extension', { installed, running, written: written.length });
     return installed;
 }
 
@@ -2777,9 +2872,44 @@ function progressDisabled() {
     catch (e) { return false; }
 }
 
+// VS Code flags a panel disposed before it fires onDidDispose, and from that moment every getter on
+// ExtHostWebviewPanel throws "Webview is disposed" — including `panel.webview`. Reading the webview
+// through this is what keeps one closed tab from taking down every caller that walks the panel list.
+function readPanelWebview(panel) {
+    try { return panel.webview; } catch { return null; }
+}
+
 function panelFor(webview) {
-    for (const p of S.panels.keys()) if (p.webview === webview) return p;
+    for (const p of S.panels.keys()) {
+        const view = readPanelWebview(p);
+        if (!view) {
+            dropPanel(p);
+            continue;
+        }
+        if (view === webview) return p;
+    }
     return null;
+}
+
+// The panel list outlives a copy of this module, so a panel whose dispose handler died partway can
+// still be sitting in it. Dropping it also gives back the capabilities issued to its tab: they can
+// never be used again, and leaving them registered is what used to silence the window's telemetry.
+function dropPanel(panel) {
+    const stale = S.panels.get(panel);
+    S.panels.delete(panel);
+    S.activeSessionByPanel.delete(panel);
+    if (stale && stale !== true) {
+        for (const [sessionId, entry] of sessionCapabilities) {
+            if (entry.webview === stale) revokeSessionCapability(sessionId);
+        }
+    }
+}
+
+// Any property read on a disposed ExtHostWebview throws, so touching one is the only liveness probe
+// available on this side of the editor.
+function webviewAlive(webview) {
+    if (!webview) return false;
+    try { void webview.options; return true; } catch { return false; }
 }
 
 // `weak` marks an id lifted out of a request envelope rather than out of this tab's own channel.
@@ -2913,7 +3043,17 @@ function attachWebview(webview) {
         }
 
         if (m.type === 'launch_claude') {
-            if (m.resume) webview.__ccxSessionId = m.resume;
+            // The id this launch will run under is decided here, before the CLI starts. A resume
+            // keeps the id it resumes — unless its transcript never came to be, which is a fresh
+            // start under a new id rather than a resume of nothing. The CLI is told this id
+            // later, so the id the capability is issued for and the id the session reports are
+            // one and the same.
+            const resume = typeof m.resume === 'string' && m.resume ? m.resume : null;
+            const fresh = !(resume && transcriptExists(resume));
+            const sessionId = fresh ? require('crypto').randomUUID() : resume;
+            // The tab keeps the id it resumes: the session is still that one until the CLI says
+            // otherwise, and the profile that goes with it is looked up under that id.
+            if (resume) webview.__ccxSessionId = resume;
             // The channel id was only ever logged before this. It is the key the session manager will
             // hand over with, so it is kept — and the previous one dropped, unless another tab is still
             // pointing at it, because a relaunch is a new channel with a new id.
@@ -2925,9 +3065,12 @@ function attachWebview(webview) {
                     (S.channels ||= new Map()).delete(previous);
                     (S.channelManagers ||= new Map()).delete(previous);
                 }
+                // The launch record is the honest answer to "which tab is this CLI for": the tab
+                // that asked to launch, under the id that launch will report.
+                launchRecords.set(m.channelId, { sessionId, webview, fresh });
             }
-            S.pendingProfile = S.profileByWebview.get(webview) || getBinding(m.resume) || null;
-            dlog('launch_claude', { channelId: m.channelId, resume: m.resume || null, profile: S.pendingProfile });
+            S.pendingProfile = S.profileByWebview.get(webview) || getBinding(resume) || null;
+            dlog('launch_claude', { channelId: m.channelId, resume: resume || null, session: sessionId, profile: S.pendingProfile });
             // A default provider routes through the same local adapter as a picked one, so its proxy has
             // to be up before the first request; envFor will resolve to it the same way.
             if (S.pendingProfile) ensureProxy(S.pendingProfile);
@@ -2935,8 +3078,8 @@ function attachWebview(webview) {
                 const def = loadDefaultProfile();
                 if (def) ensureProxy(def);
             }
-            // Issue session capability for progress broker
-            const sessionId = webview.__ccxSessionId;
+            // The capability is issued before the CLI is started and belongs to this tab alone:
+            // a new tab gets its own session id and its own capability.
             if (progressAvailable() && sessionId) {
                 issueSessionCapability(sessionId, webview);
                 beginRuntimeTransport(webview, sessionId);
@@ -3016,11 +3159,14 @@ function attachWebview(webview) {
             webview.__ccxSessionWeak = false;
             const forTab = S.profileByWebview.get(webview);
             if (webview.__ccxSessionId && forTab) setBinding(webview.__ccxSessionId, forTab);
-            for (const p of S.panels.keys())
-                if (p.webview === webview) {
+            for (const p of S.panels.keys()) {
+                const view = readPanelWebview(p);
+                if (!view) { dropPanel(p); continue; }
+                if (view === webview) {
                     S.activeSessionByPanel.set(p, webview.__ccxSessionId);
                     decorate(p);
                 }
+            }
             post(webview, { type: 'ccx:state', ...stateFor(webview.__ccxSessionId, webview) });
             // The session is known now: open the transport with a fresh producer epoch.
             if (progressAvailable()) beginRuntimeTransport(webview, webview.__ccxSessionId);
@@ -4211,12 +4357,15 @@ function wrapCanUseTool(inner, context) {
             if (signal.aborted) cancelDialog();
             else signal.addEventListener('abort', cancelDialog, { once: true });
         }
+        // The dialog's promise is kept rather than discarded: a channel that drops out of the race
+        // settles it with nothing, and that is not an answer. When it happens the question stays
+        // with the dialog, which is the fallback this wrapper promises. Waiting on the same promise
+        // is what makes that work; calling `inner` again would open a second dialog.
+        const fromDialog = inner(toolName, input, Object.assign({}, options, { signal: dialogController.signal }));
         let answer;
         try {
-            answer = await Promise.race([
-                inner(toolName, input, Object.assign({}, options, { signal: dialogController.signal })),
-                fromChannel,
-            ]);
+            answer = await Promise.race([fromDialog, fromChannel]);
+            if (answer === null || answer === undefined) answer = await fromDialog;
             if (answer && answer.viaChannel) dialogController.abort('Answered via channel');
         } finally {
             state.pending.delete(shortId);
@@ -4278,13 +4427,17 @@ function attachPanel(panel) {
             dlog('relay resume failed', (e && e.message) || String(e));
         }
     }, 3000);
-    if (!S.panels.has(panel)) {
-        S.panels.set(panel, true);
+    // Read once, before the dispose handler exists: the handler runs after VS Code has already
+    // flagged the panel disposed, and by then every read of panel.webview throws — which used to
+    // kill the handler before its cleanup and leave the dead panel in the list for good.
+    const webview = readPanelWebview(panel);
+    if (webview && !S.panels.has(panel)) {
+        S.panels.set(panel, webview);
         try {
             panel.onDidDispose(() => {
                 // A panel can launch multiple sessions before it closes.
                 for (const [sessionId, entry] of sessionCapabilities) {
-                    if (entry.webview === panel.webview) revokeSessionCapability(sessionId);
+                    if (entry.webview === webview) revokeSessionCapability(sessionId);
                 }
                 S.panels.delete(panel);
                 S.activeSessionByPanel.delete(panel);

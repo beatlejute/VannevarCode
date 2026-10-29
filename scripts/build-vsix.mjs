@@ -6,6 +6,7 @@ import { deflateRawSync } from 'node:zlib';
 import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { crc32 } from './png.mjs';
 
 // 1980-01-01, the DOS epoch: a fixed stamp keeps the archive byte-identical between builds
@@ -203,7 +204,32 @@ export function shippedFiles(root) {
         if (existsSync(path.join(root, item.file))) names.push(item.file);
         else if (!item.optional) throw Error(`missing ${item.file}`);
     }
-    return names.map((name) => ({ name, data: readFileSync(path.join(root, name)) }));
+    const files = names.map((name) => ({ name, data: readFileSync(path.join(root, name)) }));
+    const visited = new Set();
+    function shipDependencies(manifestFile) {
+        const pkg = JSON.parse(readFileSync(manifestFile, 'utf8'));
+        const require = createRequire(manifestFile);
+        for (const dependency of Object.keys(pkg.dependencies || {})) {
+            const manifest = require.resolve(`${dependency}/package.json`);
+            if (visited.has(manifest)) continue;
+            visited.add(manifest);
+            const directory = path.dirname(manifest);
+            const relative = path.relative(path.join(root, 'node_modules'), directory).replace(/\\/g, '/');
+            if (relative.startsWith('../') || path.isAbsolute(relative)) throw Error(`dependency outside node_modules: ${manifest}`);
+            const entries = [];
+            walk(directory, '', entries);
+            for (const entry of entries) {
+                files.push({ name: `runtime/node_modules/${relative}/${entry}`, data: readFileSync(path.join(directory, entry)) });
+            }
+            if (existsSync(path.join(directory, 'LICENSE'))) {
+                files.push({ name: `runtime/node_modules/${relative}/LICENSE.txt`, data: readFileSync(path.join(directory, 'LICENSE')) });
+            }
+            shipDependencies(manifest);
+        }
+    }
+    // Runtime is copied as a unit to ~/.claude/vannevar, so dependencies must live inside it.
+    shipDependencies(path.join(root, 'package.json'));
+    return files;
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

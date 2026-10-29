@@ -1,0 +1,30 @@
+=== Test 1: Valid report (expect exit 0) ===
+Command: node scripts/adaptation/validate-report.mjs /tmp/valid-report.json
+Report validation passed.
+exit code: 0
+
+=== Test 2: Report with final AMBIGUOUS (expect non-zero) ===
+Command: node scripts/adaptation/validate-report.mjs /tmp/ambiguous-report.json
+Validation failed:
+  - Invalid final status: AMBIGUOUS. Allowed: VERIFIED_UNCHANGED, VERIFIED_ADAPTED, ARCHITECTURE_REVIEW, BLOCKED, REJECTED_INCOMPATIBLE
+  - Final status AMBIGUOUS is prohibited (incomplete/non-eligible per v3 §§1,12)
+exit code: 1
+
+=== Test 3: Report without hash (expect non-zero) ===
+Command: node scripts/adaptation/validate-report.mjs /tmp/no-hash-report.json
+Validation failed:
+  - provenance[0]: missing or invalid sha256
+exit code: 1
+
+=== Test 4: Report with unknown status (expect non-zero) ===
+Command: node scripts/adaptation/validate-report.mjs /tmp/unknown-status-report.json
+Validation failed:
+  - Invalid final status: UNKNOWN_STATUS. Allowed: VERIFIED_UNCHANGED, VERIFIED_ADAPTED, ARCHITECTURE_REVIEW, BLOCKED, REJECTED_INCOMPATIBLE
+exit code: 1
+
+=== Test 5: Report with incomplete compatibility draft (expect non-zero) ===
+Command: node scripts/adaptation/validate-report.mjs /tmp/incomplete-draft-report.json
+Validation failed:
+  - Missing or empty compatibility draft
+exit code: 1
+

@@ -1,0 +1,88 @@
+criterion 6 - automatic tests implicit real-install path source-check
+
+Scope: top-level test/*.mjs, excluding subdirectories and test/fixtures.
+Method: candidate scan below, followed by manual Read/Grep classification of
+indirect path origins, loader stubs and environment initialization. A separate
+read-only audit inspected the candidates independently. The scanner alone is
+not a data-flow proof; the classifications below are part of this source-check.
+
+Command (executed from repository root):
+node -e "const fs=require('node:fs'); const files=fs.readdirSync('test').filter(f=>f.endsWith('.mjs')); let implicit=0; console.log('criterion 6: top-level test/*.mjs source-check'); for(const f of files){const lines=fs.readFileSync('test/'+f,'utf8').split(/\r?\n/); lines.forEach((s,i)=>{if(/homedir|USERPROFILE|process\.env\.HOME|\.vscode|~\/.claude|VANNEVAR_TEST_BUNDLE_DIR/.test(s))console.log('test/'+f+':'+(i+1)+': '+s.trim()); if(/(?:join|resolve)\s*\(\s*homedir\s*\(\s*\)/.test(s)&&!/^\s*\/\//.test(s)){implicit++;console.log('IMPLICIT direct ambient-home path: '+f+':'+(i+1));}});} console.log('direct ambient-home joins: '+implicit); console.log('Manual classification of indirect paths and stubs is required; see evidence artifact.'); console.log('exit code: '+(implicit?1:0)); process.exitCode=implicit?1:0;"
+
+Observed command summary:
+criterion 6: top-level test/*.mjs source-check
+direct ambient-home joins: 0
+Manual classification of indirect paths and stubs is required; see evidence artifact.
+exit code: 0
+
+Candidate classifications (all paths relative to repository root):
+implicit: none found in the top-level test source.
+
+explicit / sandbox / stub (line groups include comments and saved/restored env
+references; comments and bookkeeping are not real-install I/O):
+test/activation.test.mjs:2,28,156 - temp HOME at 27; extensions and runtime below it; loader homedir stub.
+test/agent-live-frame.test.mjs:30-31 - temp home initialized at 22-35 before import.
+test/agent-map.test.mjs:32-33 - temp profiles/runtime/projects at 25-38 before import.
+test/attachment-prompt.test.mjs:2,22-23 - temp settings/profiles/runtime at 13-23; line 2 is commentary.
+test/auth-chatgpt.test.mjs:15,17,74-76,358,376 - saved/restored home and direct homedir stub; child env explicitly sandboxed.
+test/auto-repatch.test.mjs:10 - comment only; WORK is system tmp at 24; even no-dir discovery uses a temp extensionPath stamp at 147-160.
+test/autocompact.test.mjs:23-24 - temp home at 17-25 before host load.
+test/channel-approvals.test.mjs:73-74 - temp home; synthetic installed plugins at 17-28,69-74.
+test/channel-launch.test.mjs:45-46 - temp home; synthetic plugin installation at 18-26,36.
+test/channel-send.test.mjs:15-16 - temp HOME/USERPROFILE and runtime at 13-21 before import.
+test/content-search.test.mjs:25-26 - temp projects/runtime at 17-26.
+test/env-isolation.test.mjs:8,41-42 - temp profiles/runtime at 15-19; line 8 commentary.
+test/foreign-message-id.test.mjs:26-27 - temp home; transcript/settings I/O under it at 14-27,106-112.
+test/fresh-tab-switch.test.mjs:22-23 - temp profiles/runtime and home at 15-23.
+test/full-history.test.mjs:19,24,30-31,40,168,211,235 - explicit operator bundle path, no fallback; temp HOME and os loader/VM stubs. Read-only external input at 166-175 copied into system tmp at 213-224 before patching. Cleanup and env restoration at 467-474.
+test/native-progress-integration.test.mjs:24,67 - temp host homedir stub at 11-27, sandboxed env before MCP import at 66-81.
+test/native-progress.test.mjs:20-22 - explicit operator bundle path only, no fallback or directory scan. Default transport/query sources are repository-owned inline fixtures at 24-25. External execution still separately gated at 35-44.
+test/panic-restore-command.test.mjs:28,151 - temp HOME at 27-32; extensionPath/homedir/processes stubbed at 93,149-153.
+test/panic-restore.test.mjs:15 - comment only; synthetic bundles/backups/pristine under system tmp at 46,59-83.
+test/patch-registry-runtime.test.mjs:31,41,114,116 - guard, not user access: home env removed, homedir throws, no-outside-root I/O asserted.
+test/pinned-sessions.test.mjs:23-24 - temp runtime/home at 17-24.
+test/profile-icons.test.mjs:16,33-35,41-42 - host loader homedir stub to mockHome; USERPROFILE saved/restored.
+test/progress-agent-frame.test.mjs:10,19-20 - saved/restored sandbox HOME/USERPROFILE/runtime/profiles at 8-22,216-221.
+test/progress-channels.test.mjs:27-28 - temp runtime/home at 21-28.
+test/progress-delegated-scope.test.mjs:31-33 - temp ROOT/HOME/runtime/profiles at 24-36; line 31 commentary.
+test/progress-launch.test.mjs:33 - loader homedir stub to temp home at 14-17; transcript writes at 145-146 under same home.
+test/progress-performance.test.mjs:7-8,21-22,270-271,284 - temp HOME/USERPROFILE/runtime/profiles at 19-27; loader stub uses redirected HOME at 269-288; originalHomedir is saved, not invoked.
+test/progress-projection.test.mjs:15-16 - temp home and runtime broker at 13-16,25-34 before host load.
+test/progress-runtime.test.mjs:7-8,19-20 - sandbox home/runtime/profiles at 18-22; leading matches commentary.
+test/progress-semantic-ui.test.mjs:8,27-28 - temp HOME/USERPROFILE at 18-28 before host load at 251-263; line 8 commentary.
+test/progress-semantic.test.mjs:15,30 - explicit temp profiles/runtime at 16-30; HOME only is redirected (see limitation below); no direct real-install I/O in this test source.
+test/progress-session-capability.test.mjs:11-12,609,626 - temp HOST_HOME/runtime/projects and loader homedir stub at 604-631; comments only in other hits.
+test/progress-settings.test.mjs:17,152-153 - saved/restored HOME/USERPROFILE; temp home before host load at 150-169,381-384.
+test/progress-snapshot-contract.test.mjs:11-12 - temp home/runtime/profiles at 10-14.
+test/progress-state-transport.test.mjs:66 - VM require('os') stub returns temp ROOT homedir at 14,43,60-76.
+test/provider-health.test.mjs:24-25 - temp runtime/profiles and home at 18-25.
+test/proxy-revival.test.mjs:9,49-50,90,204,207,218 - temp home and loader/direct homedir stub; original restored after import, builtin exports synced at 200-219.
+test/resume-guard.test.mjs:21-22 - temp projects/profiles/runtime/bindings at 14-22,34-45.
+test/runtime-sync.test.mjs:31 - loader stub with temp runtime and extensionPath at 10-14,30-33.
+test/session-resources.test.mjs:32-33 - temp runtime/home at 26-33.
+test/spellcheck.test.mjs:20-21 - temp settings/profiles/runtime at 13-21.
+test/tab-icon-progress.test.mjs:20 - VM stub with temp extensionPath/homedir at 8-21,71,91-93.
+test/update-watcher.test.mjs:13,27,73,81,177 - temp HOME at 26-34, loader stub at 75-81; synthetic extension/runtime trees at 181-223. Other hits commentary.
+
+Additional process.env candidates inspected by the independent audit:
+test/agent-server.test.mjs:18-22,45-46,70,599 - explicit temp runtime/profiles; test binary deliberately absent, no install discovery in test source.
+test/adaptation-runner.test.mjs:16,25,56,196 - inherited env with explicit fixture input paths; not home-based install discovery.
+test/channel-relay.test.mjs:18,80-103,113-115 - inherited env/PATH for a relay in a temp cwd; no home/install lookup in test source.
+
+Scope limitation, not counted as a confirmed implicit path:
+test/progress-semantic.test.mjs:28-30 sets temp profiles/runtime and HOME but not
+USERPROFILE or a homedir stub. This does not prove Windows isolation of all
+transitive production imports. runtime/mcp/agent-server.mjs:26,76,1381 derives
+additional paths from os.homedir; this audit did not establish actual I/O on
+those paths in progress-semantic scenarios. No universal dynamic no-home-I/O
+claim is made. Future isolation verification should cover this separately.
+
+Previous violations resolved:
+full-history: ambient homedir()/extensions lookup removed; explicit pristine
+input only. native-progress: .vscode/.vscode-oss scan removed; explicit input
+only. No assertion removed, no suite removed from the runner. Existing optional
+external-bundle checks remain visible Level B work and are NOT claimed as PASS
+without explicit input. Repository host/webview and broker/bridge scenarios run.
+
+Final manually classified implicit violations in top-level test source: 0
+exit code: 0

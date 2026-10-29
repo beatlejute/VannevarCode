@@ -31,7 +31,8 @@
             { "command": "vannevar.showLog", "title": "Vannevar: Show log" },
             { "command": "vannevar.openProfiles", "title": "Vannevar: Open profiles folder" },
             { "command": "vannevar.installMcp", "title": "Vannevar: Register the delegated-agent MCP server" },
-            { "command": "vannevar.loginChatgpt", "title": "Vannevar: Sign in to ChatGPT (subscription mode)" }
+            { "command": "vannevar.loginChatgpt", "title": "Vannevar: Sign in to ChatGPT (subscription mode)" },
+            { "command": "vannevar.panicRestore", "title": "Vannevar: Panic restore / Safe mode" }
         ],
         "configuration": {
             "title": "Vannevar Code",
@@ -80,6 +81,10 @@
                 }
             }
         }
+    },
+    "dependencies": {
+        "@babel/parser": "^7.28.5",
+        "@babel/traverse": "^7.28.5"
     },
     "scripts": {
         "apply": "node runtime/apply-patch.mjs",

@@ -1,0 +1,1 @@
+{"patchPoints":[{"id":"P5","targetFile":"optional-target.js","surface":"test","owner":"t","required":false,"variants":[{"id":"V5","matcherKind":"legacy-textual","semanticAnchor":"NO_MATCH","moduleScope":"test"}]}]}

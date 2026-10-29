@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import vm from 'node:vm';
@@ -17,16 +16,10 @@ vm.runInContext(patcher.slice(patcher.indexOf('const HOST_REQUIRE'), patcher.ind
 const rawPatch = patchContext.patches.find((p) => p.find.source.includes('async readMessages'));
 const queryPatch = patchContext.patches.find((p) => p.find.source.includes('trackClaudeProcess'));
 assert.ok(rawPatch && queryPatch);
-let installed;
-for (const base of ['.vscode-oss', '.vscode']) {
-    const root = path.join(homedir(), base, 'extensions');
-    if (!existsSync(root)) continue;
-    const dir = readdirSync(root).find((entry) => entry.startsWith('anthropic.claude-code-2.1.296-'));
-    if (!dir) continue;
-    const file = path.join(root, dir, 'extension.js');
-    installed = readFileSync(existsSync(file + '.ccx-orig') ? file + '.ccx-orig' : file, 'utf8');
-    break;
-}
+// Level B signature checks require an explicit pristine input, not home discovery.
+const bundleDir = process.env.VANNEVAR_TEST_BUNDLE_DIR;
+if (bundleDir) assert.ok(path.isAbsolute(bundleDir), 'VANNEVAR_TEST_BUNDLE_DIR must be an absolute pristine bundle path');
+const installed = bundleDir ? readFileSync(path.join(bundleDir, 'extension.js'), 'utf8') : null;
 // Exercise the patch contract even on clean runners with no editor installation.
 const fixtureReader = 'async readMessages(){try{for await(let frame of this.transport.readMessages()){if(frame.type==="control_request"){this.handleControlRequest(frame);continue}this.inputStream.enqueue(frame)}this.inputStream.done();this.cleanup()}catch(error){this.inputStream.error(error)}}';
 const fixtureQuery = 'let query=(await factory({options:options})).query(input);return this.trackClaudeProcess(query),query';

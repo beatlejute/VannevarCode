@@ -12,9 +12,9 @@
 // all come from.
 import { spawn } from 'node:child_process';
 import { inflateRawSync } from 'node:zlib';
-import { mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, existsSync, utimesSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, utimesSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { homedir, tmpdir } from 'node:os';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import assert from 'node:assert';
 import { buildVsix, shippedFiles } from '../scripts/build-vsix.mjs';
@@ -31,6 +31,7 @@ function installPatcher(name, stamp) {
     const dir = path.join(WORK, name);
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, 'apply-patch.mjs'), readFileSync(SOURCE_PATCHER));
+    writeFileSync(path.join(dir, 'ast-locator.mjs'), readFileSync(path.join(ROOT, 'runtime', 'ast-locator.mjs')));
     writeFileSync(path.join(dir, 'patch-version.json'), JSON.stringify(stamp, null, 4));
     return path.join(dir, 'apply-patch.mjs');
 }
@@ -56,50 +57,8 @@ function fixture(name, files) {
     return dir;
 }
 
-// The apply path needs a bundle the signatures actually match, and the only one in existence is the
-// installed extension. Where Vannevar is installed the untouched copy is the backup; where it is not,
-// extension.js is itself untouched. Both are real releases, which is the point — a hand-written stand-in
-// would only prove that the stand-in matches.
-// Returns null where there is no Claude Code to read — a CI runner, a fresh checkout — and the cases
-// that need a real bundle are skipped loudly rather than failing. They are the ones that matter most,
-// so skipping them is not free; what would be worse is a release workflow that cannot run at all and a
-// suite nobody can go green on before installing an editor extension by hand.
-function cleanBundle() {
-    const root = path.join(homedir(), '.vscode', 'extensions');
-    let obsolete = {};
-    try {
-        obsolete = JSON.parse(readFileSync(path.join(root, '.obsolete'), 'utf8')) || {};
-    } catch {}
-    let entries = [];
-    try {
-        entries = readdirSync(root);
-    } catch {
-        return null;
-    }
-    const dir = entries
-        .filter((name) => name.startsWith('anthropic.claude-code-') && !obsolete[name])
-        .sort((a, b) => {
-            const version = (name) => (name.match(/-(\d+)\.(\d+)\.(\d+)/) || []).slice(1).map(Number);
-            const [x, y] = [version(a), version(b)];
-            return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
-        })
-        .pop();
-    if (!dir) return null;
-
-    const files = {};
-    for (const rel of ['extension.js', 'webview/index.js']) {
-        const file = path.join(root, dir, rel);
-        const backup = `${file}.ccx-orig`;
-        const body = readFileSync(existsSync(backup) ? backup : file, 'utf8');
-        assert.ok(!body.includes('__ccx'), `${rel} is patched and has no backup beside it`);
-        files[rel] = body;
-    }
-    return files;
-}
-
 const verified = PKG.verifiedAgainst;
 assert.ok(Array.isArray(verified) && verified.length, 'package.json carries no verifiedAgainst list');
-const supported = verified[0];
 const escape = (v) => v.replace(/\./g, '\\.');
 
 try {
@@ -163,172 +122,16 @@ try {
     assert.ok(!existsSync(lock), 'the stale lock was not cleared');
     console.log('OK — a lock left behind by a crashed run is taken over, not waited on forever');
 
-    // --- an update to a version nobody verified ---------------------------------------------------
-    // The version check is a warning, not a stop, and that is deliberate: most signatures match the
-    // shape of the code rather than the names in it, so a new release usually takes the patch fine —
-    // refusing on the version number alone would turn every update into manual work for nothing. What
-    // must not happen is the patch going on silently. A hand-run patch prints the mismatch for someone
-    // who is reading it; an automatic run has no reader, so it has to leave through the result lines.
-    // Every case from here to the stamp needs a bundle whose signatures actually match, and the only
-    // one in existence is an installed Claude Code. Without one they are skipped — loudly, because
-    // these are the cases that matter most and a green run that skipped them is not a green run.
-    const source = cleanBundle();
-    if (!source) {
-        console.log('SKIP — no Claude Code extension installed; the apply-path cases were not run');
-    } else {
-        const ahead = supported.replace(/\d+$/, (last) => Number(last) + 1);
-
-        const aheadDir = fixture(`anthropic.claude-code-${ahead}-win32-x64`, source);
-        const onAhead = await run(PATCHER, [`--dir=${aheadDir}`, '--if-needed']);
-        assert.equal(onAhead.code, 0, `the patch did not go onto ${ahead}:\n${onAhead.text.slice(-1500)}`);
-        assert.match(onAhead.text, /^ccx-result: patched$/m, 'a fresh patch reported nothing');
-        assert.match(
-            onAhead.text,
-            new RegExp(`^ccx-unverified: ${escape(ahead)} ${escape(supported)}$`, 'm'),
-            `a patch onto an unverified version did not say so:\n${onAhead.text}`,
-        );
-        // The channel hook rides on the same run as everything else, and it is the one that can be
-        // absent: where it is not, the patcher says so below rather than reporting the same silence as
-        // a run that wired it in. On the newest release it has to be there.
-        assert.match(
-            readFileSync(path.join(aheadDir, 'extension.js'), 'utf8'),
-            /onChannelReady/,
-            'the channel hook did not reach a patched bundle that has the anchor for it',
-        );
-        console.log(`OK — a patch onto ${ahead}, which nothing verified, applies and reports the mismatch`);
-
-        // Every release on the list is verified, not only the newest one: a single extension release can
-        // carry signatures that fit several Claude Code versions, and flagging the older ones would put a
-        // "nothing has checked this" notification in front of someone for whom that is untrue.
-        // Each version has its own bundle and lock. Bound concurrency while retaining every apply/check.
-        for (let i = 0; i < verified.length; i += 6) {
-            const results = await Promise.all(verified.slice(i, i + 6).map(async (release) => {
-                const named = fixture(`anthropic.claude-code-${release}-win32-x64`, source);
-                const result = await run(PATCHER, [`--dir=${named}`, '--if-needed']);
-                return { release, ...result };
-            }));
-            for (const onNamed of results) {
-                const { release } = onNamed;
-                assert.equal(onNamed.code, 0, `the patch did not go onto ${release}:\n${onNamed.text.slice(-1500)}`);
-                assert.doesNotMatch(onNamed.text, /^ccx-unverified:/m, `${release} is on the list and was flagged anyway`);
-            }
-        }
-        console.log(`OK — every release in verifiedAgainst (${verified.join(', ')}) applies without a warning`);
-
-        // --- an optional anchor a release simply does not have ----------------------------------------
-        // The channel hook hangs off one method, and a release can be old enough not to have it — the
-        // point of `optional`. Missing is not a refusal: the rest of the runtime is still wired in and a
-        // bundle refused over a feature it never had would be worse than the feature being off. It is not
-        // silence either, and that is the half worth pinning: without the NOTE the hook would vanish and
-        // nothing would say so until somebody noticed the row had stopped working.
-        const withoutAnchor = fixture('anthropic.claude-code-9.9.9-nochannelanchor', {
-            // Both halves of the name — the definition and its call site — so the file stays valid.
-            'extension.js': source['extension.js'].replace(/channelInitialized/g, 'channelInitialised'),
-            'webview/index.js': source['webview/index.js'],
-        });
-        const missing = await run(PATCHER, [`--dir=${withoutAnchor}`, '--if-needed']);
-        assert.equal(missing.code, 0, `a bundle without the channel anchor was refused:\n${missing.text.slice(-1200)}`);
-        assert.match(missing.text, /^ccx-result: patched$/m, 'the patch did not apply without the optional anchor');
-        assert.match(
-            missing.text,
-            /NOTE: extension\.js no longer has channelInitialized\(\)/,
-            `a missing optional anchor went unmentioned:\n${missing.text.slice(-800)}`,
-        );
-        const withoutHook = readFileSync(path.join(withoutAnchor, 'extension.js'), 'utf8');
-        assert.ok(!withoutHook.includes('onChannelReady'), 'the hook was injected where its anchor is not');
-        assert.ok(withoutHook.includes('renderScript'), 'the rest of the runtime should still be wired in');
-        console.log('OK — an optional anchor that is missing is named in a NOTE, and does not refuse the patch');
-
-        // --- a signature that moved in the second file only -------------------------------------------
-        // extension.js is patched first, and a refusal that came from webview/index.js used to arrive
-        // after extension.js had already been written: half a patch, on a bundle the result line said
-        // nothing about. Every file is now patched in memory before any of them is written.
-        const half = fixture('anthropic.claude-code-9.9.9-half', {
-            'extension.js': source['extension.js'],
-            'webview/index.js': SOURCE,
-        });
-        const refusedHalf = await run(PATCHER, [`--dir=${half}`, '--if-needed']);
-        assert.notEqual(refusedHalf.code, 0, 'a webview with no matching signature must fail loudly');
-        assert.match(refusedHalf.text, /webview\/index\.js: signature matched 0 times/, `unexpected failure:\n${refusedHalf.text}`);
-        assert.doesNotMatch(refusedHalf.text, /^ccx-result:/m, 'a refused run must not report a result');
-        assert.equal(
-            readFileSync(path.join(half, 'extension.js'), 'utf8'),
-            source['extension.js'],
-            'extension.js was written although the webview refused the patch',
-        );
-        console.log('OK — a signature that moved in the webview leaves extension.js unwritten too');
-
-        // --- patched, but by somebody else ------------------------------------------------------------
-        // The marker says "somebody patched this"; --if-needed is asking "is MY runtime wired in". A bundle
-        // carrying hooks that load host.js out of another directory answers no to the second question, and
-        // reporting up-to-date there is how a window ends up running a runtime nothing maintains — the menu
-        // entry silently absent, the patch apparently on. It happened: two windows, one of them patched by
-        // the install this one replaced.
-        const foreign = fixture('anthropic.claude-code-9.9.9-foreign', {
-            'extension.js': source['extension.js'],
-            'webview/index.js': source['webview/index.js'],
-        });
-        // A real foreign patch leaves a backup behind, which is what a full apply works from
-        writeFileSync(path.join(foreign, 'extension.js.ccx-orig'), source['extension.js']);
-        writeFileSync(path.join(foreign, 'webview', 'index.js.ccx-orig'), source['webview/index.js']);
-        writeFileSync(
-            path.join(foreign, 'extension.js'),
-            source['extension.js'] +
-                '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
-        );
-
-        const rewired = await run(PATCHER, [`--dir=${foreign}`, '--if-needed']);
-        assert.equal(rewired.code, 0, `the foreign patch was not replaced:\n${rewired.text.slice(-1500)}`);
-        assert.match(rewired.text, /^ccx-result: patched$/m, 'a bundle wired to another runtime reported up-to-date');
-        const rewritten = readFileSync(path.join(foreign, 'extension.js'), 'utf8');
-        assert.ok(rewritten.includes('".claude","vannevar","host.js"'), 'the hooks do not point at this runtime');
-        // The whole path, not the word: from 2.1.285 the bundle says "elsewhere" on its own, twice
-        assert.ok(!rewritten.includes('".claude","elsewhere","host.js"'), 'the foreign hook survived — it was patched on top, not replaced');
-        console.log('OK — hooks that load another runtime are replaced, not mistaken for this one');
-
-        // With no backup beside it there is nothing clean to patch from, and taking the backup from the
-        // patched file would make those hooks permanent
-        const orphan = fixture('anthropic.claude-code-9.9.9-orphan', {
-            'extension.js':
-                source['extension.js'] +
-                '\n/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","elsewhere","host.js");\n',
-            'webview/index.js': source['webview/index.js'],
-        });
-        const refusedOrphan = await run(PATCHER, [`--dir=${orphan}`, '--if-needed']);
-        assert.notEqual(refusedOrphan.code, 0, 'a foreign patch with no backup was written over');
-        assert.match(refusedOrphan.text, /already patched and has no/, `unexpected failure:\n${refusedOrphan.text}`);
-        assert.ok(!existsSync(path.join(orphan, 'extension.js.ccx-orig')), 'a patched file was saved as the backup');
-        console.log('OK — a foreign patch with no backup stops the patcher instead of becoming the backup');
-
-        // --- working with no Claude.ai or Console account ---------------------------------------------
-        // A profile-only install has no Anthropic account, and the webview refuses to draw the session
-        // view until it believes one is signed in — which is exactly the install a Vannevar profile is
-        // the only provider for. The sign-in screen gains an opt-out button, the auth memo honours the
-        // flag it sets, and a failed request no longer forces the screen back up. All three have to
-        // survive the round trip through the real bundle rather than merely match by inspection.
-        const login = fixture('anthropic.claude-code-9.9.7-login', source);
-        const optedOut = await run(PATCHER, [`--dir=${login}`, '--if-needed']);
-        assert.equal(optedOut.code, 0, `the login opt-out did not apply:\n${optedOut.text.slice(-1500)}`);
-        const patchedWebview = readFileSync(path.join(login, 'webview', 'index.js'), 'utf8');
-        assert.ok(patchedWebview.includes('Use without Anthropic login'), 'the login screen gained no opt-out button');
-        assert.ok(patchedWebview.includes('ccx:skipAnthropicLogin'), 'the opt-out does not persist the choice');
-        assert.match(
-            patchedWebview,
-            /isAuthenticated=[\w$]+\(\(\)=>!!globalThis\.__ccxNoAuth\|\|/,
-            'the auth gate ignores the opt-out flag',
-        );
-        assert.match(
-            patchedWebview,
-            /showLogin\(\)\{globalThis\.__ccxNoAuth\|\|/,
-            'a failed request still forces the login screen back up',
-        );
-        const runtimeWebview = readFileSync(path.join(ROOT, 'runtime', 'webview.js'), 'utf8');
-        assert.ok(
-            runtimeWebview.includes('ccx:skipAnthropicLogin'),
-            'the page does not restore the opt-out before the app module renders',
-        );
-        console.log('OK — the login screen offers an opt-out and the auth gate honours it');
-    }
+    // --- the apply path needs a bundle the signatures actually match -------------------------------
+    // The cases below used to read that bundle out of an installed Claude Code — the untouched copy
+    // or its *.ccx-orig backup — which made this automatic run depend on the machine it happened to
+    // run on: green with an extension installed, silently thinner without one. A patch onto a real
+    // pristine bundle, the unverified-version warning, the optional-anchor NOTE, the half-written
+    // refusal, the foreign-hook replacement and the login opt-out are Level B work now: run
+    // scripts/adaptation/run.mjs with an explicit pristine --dir per docs/adaptation/runbook.md.
+    // Nothing is skipped here silently — the automatic suite simply carries no case it cannot run
+    // deterministically, and everything above runs on the synthetic fixtures in the temp root.
+    console.log('OK — the automatic run touches no installed extension; real-bundle coverage is the explicit Level B runner path');
 
     // --- the stamp is where the patcher reads itself --------------------------------------------
     const stamped = await run(PATCHER, [`--dir=${patched}`, '--status']);
@@ -340,7 +143,7 @@ try {
     console.log('OK — the installed copy reads its version and its verified list out of the stamp beside it');
 
     // Run by hand with no --dir, the root to scan is the one the extension host resolved and stamped —
-    // ~/.vscode/extensions is wrong in Cursor, in Windsurf and on every remote host
+    // the default extensions folder is wrong in Cursor, in Windsurf and on every remote host
     const root = path.join(WORK, 'elsewhere', 'extensions');
     mkdirSync(path.join(root, 'anthropic.claude-code-9.9.8-win32-x64'), { recursive: true });
     const inRoot = fixture(path.join('elsewhere', 'extensions', 'anthropic.claude-code-9.9.9-win32-x64'), {
@@ -355,7 +158,7 @@ try {
     const found = await run(stampedRoot, ['--if-needed']);
     assert.equal(found.code, 0, `the patcher did not run against the stamped root:\n${found.text}`);
     assert.ok(found.text.includes(`extension: ${inRoot}`), `the wrong bundle was picked:\n${found.text}`);
-    console.log('OK — with no --dir, the extensions root comes from the stamp rather than from ~/.vscode');
+    console.log('OK — with no --dir, the extensions root comes from the stamp rather than from a default folder');
 
     // --- nothing reaches the network, and nothing updates itself ----------------------------------
     // Both were real features and both are gone: the VS Code updater replaces them, and an extension

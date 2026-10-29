@@ -189,6 +189,8 @@ function toolsToResponses(tools, toolNames) {
             type: 'function',
             name: toolNames.encode(t.name),
             description: t.description || '',
+            // Responses otherwise normalizes optional arguments into required fields.
+            strict: t.strict === true,
             parameters: t.input_schema || { type: 'object', properties: {} },
         }));
 }

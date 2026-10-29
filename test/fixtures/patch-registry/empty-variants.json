@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "1.0",
+  "patchPoints": [
+    {
+      "id": "PATCH-TEST-EMPTY-VARIANTS",
+      "targetFile": "test.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": []
+    }
+  ]
+}

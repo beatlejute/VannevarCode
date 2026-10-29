@@ -1,0 +1,94 @@
+QA-057 verification evidence
+
+Both end-to-end runs were executed directly: the fixtures were copied to a
+disposable directory outside the repository (d:/tmp/qa057-sweep) and the runner
+was invoked as a normal CLI process with explicit --dir/--out/--registry. No
+temporary test script and no dynamic system temp directory were used.
+
+=== unchanged ===
+Expected: VERIFIED_UNCHANGED, runner exit code: 0.
+Command:
+node scripts/adaptation/run.mjs --dir d:/tmp/qa057-sweep/unchanged --out d:/tmp/qa057-sweep/unchanged.json
+stdout/stderr (complete):
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+exit code: 1
+Report (d:/tmp/qa057-sweep/unchanged.json):
+  finalStatus: BLOCKED
+  probe summary: {"total":27,"PASS":4,"MISS":23,"AMBIGUOUS":0,"BLOCK":0}
+  syntaxChecks: extension.js ok, webview/index.js ok
+  findings:
+    probe: total=27 PASS=4 MISS=23 AMBIGUOUS=0 BLOCK=0
+    dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+    final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+Actual: BLOCKED, exit code 1.
+Mismatch with expectation: the synthetic unchanged fixture contains 4 of the 27
+patch points in the active registry; the other 23 probe as MISS, so the patcher
+refuses to run on the copy and the run ends BLOCKED instead of VERIFIED_UNCHANGED.
+
+=== ambiguity ===
+Expected: incomplete/non-eligible report containing measured AMBIGUOUS;
+finalStatus BLOCKED, runner exit code: 1, never VERIFIED_*.
+Command:
+node scripts/adaptation/run.mjs --dir d:/tmp/qa057-sweep/ambiguity --out d:/tmp/qa057-sweep/ambiguity.json --registry d:/tmp/qa057-sweep/ambig-registry.json
+Registry: two legacy-textual variants matching "async function spawnClaude(input, rest)"
+and "async function spawnClaude" (the AMBIGUOUS_REGISTRY of
+test/adaptation-runner.test.mjs, written to the disposable directory as
+ambig-registry.json).
+stdout/stderr (complete):
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+exit code: 1
+Report (d:/tmp/qa057-sweep/ambiguity.json):
+  finalStatus: BLOCKED
+  probe summary: {"total":1,"PASS":0,"MISS":0,"AMBIGUOUS":1,"BLOCK":0}
+  findings:
+    probe: total=1 PASS=0 MISS=0 AMBIGUOUS=1 BLOCK=0
+    probe AMBIGUOUS — report incomplete, non-eligible per v3 §§1,12
+    dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+    final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+Actual: BLOCKED, exit code 1, AMBIGUOUS=1 with the incomplete/non-eligible finding.
+Result: matches the expectation.
+
+=== Mismatch analysis (unchanged) ===
+The expectation VERIFIED_UNCHANGED for the synthetic fixture assumes the whole
+registry is representable by that fixture. It is not: 23 of 27 patch points have
+no matching surface there, they probe as MISS, and the runner treats an
+incomplete probe as a refusal. Reaching VERIFIED_UNCHANGED therefore requires a
+fixture bundle that covers every required patch point, which the repository's
+synthetic fixtures do not and cannot provide at their current size. This is a
+coverage gap in the expectation and in the fixtures, not a measured product
+defect: the runner behaved as designed on both runs.
+
+=== adaptation runner regression suite ===
+command: node test/adaptation-runner.test.mjs
+stdout/stderr (complete captured tool output):
+▶ adaptation runner - six scenarios
+  ✔ 1. unchanged - runner handles pristine copy (patcher signature mismatch expected with synthetic fixtures) (562.9882ms)
+  ✔ 2. refusal-before-write - runner handles signature mismatch (refusal before write) (567.6148ms)
+  ✔ 3. restore equality - restore hash matches backup when .ccx-orig exists (590.35ms)
+  ✔ 4. ambiguity-incomplete - probe AMBIGUOUS blocks runner (661.9468ms)
+  ✔ 5. patched-input refusal - source already patched without backup (671.1032ms)
+  ✔ 6. no-outside-writes - no writes outside output/temp roots (561.0629ms)
+✔ adaptation runner - six scenarios (3627.7588ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3639.9528
+exit code: 0
+
+This suite does not establish successful unchanged end-to-end behavior:
+test/adaptation-runner.test.mjs:125-139 expects BLOCKED and patcher failure.
+Its ambiguity scenario probes the custom registry separately and invokes
+the runner without --registry (test/adaptation-runner.test.mjs:184-209).
+The two direct runs above therefore carry the evidence for the ticket's cases;
+the suite only shows they did not regress the existing behaviour.
+
+=== Scope and teardown ==
+Real-bundle Level B: NOT RUN (no explicit pristine bundle supplied).
+Real Claude CLI: not launched. Production credentials: not used.
+Mutable root: d:/tmp/qa057-sweep (fixture copies, registry, reports), outside
+the repository; removed after this record was written. Product code, fixtures
+and repository tests unchanged.

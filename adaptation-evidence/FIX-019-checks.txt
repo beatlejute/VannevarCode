@@ -1,0 +1,26 @@
+FIX-019 adaptation evidence — 2026-10-27
+Commands and outputs recorded per DoD item 2.
+
+=== DoD 1: regression test ===
+command: node test/progress-runtime.test.mjs
+exit code: 0
+regression: true
+summary: 21/21 progress-runtime adapter cases passed
+
+=== DoD 2: snapshot contract ===
+command: node test/progress-snapshot-contract.test.mjs
+exit code: 0
+regression: true
+summary: 23/23 progress-snapshot-contract cases passed
+
+=== DoD 3: full suite ===
+command: node scripts/run-tests.mjs
+exit code: 0
+summary: OK — all 58 test files passed (65.3s)
+
+=== Installation / rollback ===
+Working editor installation: NOT executed (per task instructions — do not modify working installation without separate agreement; rollback preserved)
+User rollback (HUMAN-001): preserved, handled by human per DoD item 3.
+
+=== Scripts run-tests reference ===
+/scripts/run-tests.mjs invoked; full output captured (see above).

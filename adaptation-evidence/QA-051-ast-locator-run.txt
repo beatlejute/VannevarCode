@@ -1,0 +1,15 @@
+=== node test/ast-locator.test.mjs ===
+--- ast-locator test coverage ---
+PASS — exactly-one candidate + byte preservation
+PASS — minified local rename
+PASS — whitespace/reformat
+PASS — false-positive neighbor — range refers to correct bytes
+PASS — multiple candidates — no range → fail closed
+PASS — zero required → fail closed
+PASS — zero optional
+PASS — strict variant fork
+PASS — TypeError for non-string rawSource
+PASS — byte preservation outside intended range (outside)
+
+All 10 scenarios passed!
+exit code: 0

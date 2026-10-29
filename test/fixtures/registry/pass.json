@@ -1,0 +1,1 @@
+{"patchPoints":[{"id":"P1","targetFile":"pass-target.js","surface":"test","owner":"t","required":true,"variants":[{"id":"V1","matcherKind":"legacy-textual","semanticAnchor":"PASS_ANCHOR","moduleScope":"test"}]}]}

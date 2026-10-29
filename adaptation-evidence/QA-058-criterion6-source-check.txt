@@ -1,0 +1,76 @@
+criterion 6 - automatic tests implicit real-install path source-check (re-check QA-058)
+
+Ticket: QA-058, re-run of the criterion 6 PLAN-002 source-check after FIX-031
+fixed the violations recorded by QA-054. Method: QA-054 — candidate scan of
+top-level test/*.mjs (subdirectories and test/fixtures excluded) followed by
+manual Read classification of every candidate line. The scanner alone is not a
+data-flow proof; the classification below is part of this source-check.
+Tests and product code were not modified by this check.
+
+Command (executed from repository root, verbatim):
+node -e "const fs=require('node:fs'); const files=fs.readdirSync('test').filter(f=>f.endsWith('.mjs')); let implicit=0; console.log('criterion 6: top-level test/*.mjs source-check'); for(const f of files){const lines=fs.readFileSync('test/'+f,'utf8').split(/\r?\n/); lines.forEach((s,i)=>{if(/homedir|USERPROFILE|process\.env\.HOME|\.vscode|~\/.claude|VANNEVAR_TEST_BUNDLE_DIR/.test(s))console.log('test/'+f+':'+(i+1)+': '+s.trim()); if(/(?:join|resolve)\s*\(\s*homedir\s*\(\s*\)/.test(s)&&!/^\s*\/\//.test(s)){implicit++;console.log('IMPLICIT direct ambient-home path: '+f+':'+(i+1));}});} console.log('direct ambient-home joins: '+implicit); console.log('Manual classification of indirect paths and stubs is required; see evidence artifact.'); console.log('exit code: '+(implicit?1:0)); process.exitCode=implicit?1:0;"
+
+Observed command output (summary):
+criterion 6: top-level test/*.mjs source-check
+direct ambient-home joins: 0
+Manual classification of indirect paths and stubs is required; see evidence artifact.
+exit code: 0
+(scanner exit code: 0)
+
+Previously recorded violations (QA-054) and their current state:
+1. test/full-history.test.mjs:18 (old) `join(homedir(), '.vscode', 'extensions')`
+   import-time read of the real extension dir — REMOVED. Current source
+   (read this session): line 17 comment "Real-bundle coverage is opt-in Level B,
+   never discovered from the user's home", line 19
+   `const BUNDLE_DIR = process.env.VANNEVAR_TEST_BUNDLE_DIR;` — explicit operator
+   input only; line 23 home is mkdtempSync under tmpdir(); lines 30-31 HOME and
+   USERPROFILE redirected to it before host load; line 40 loader stub returns
+   homedir: () => home. Classification: explicit / sandboxed. No homedir() join
+   of a real installation remains in the file (scanner: 0 direct ambient-home joins).
+2. test/native-progress.test.mjs:21-22 (old) scan of real `.vscode-oss`/`.vscode`
+   via `path.join(homedir(), base, 'extensions')` — REMOVED. Current source
+   (read this session): line 19 comment "Level B signature checks require an
+   explicit pristine input, not home discovery", lines 20-22 only
+   VANNEVAR_TEST_BUNDLE_DIR with an isAbsolute assertion and a read under that
+   explicit path; default transport/query sources are repository-owned inline
+   fixtures (lines 24-25). Classification: explicit. No directory scan of a real
+   installation remains in the file.
+
+Manual classification of remaining scanner candidates (all explicit / stub /
+temp-home; none reads a real user installation implicitly):
+- Temp-home + HOME/USERPROFILE redirection before import (activation pattern):
+  agent-live-frame:30-31, agent-map:32-33, attachment-prompt:22-23,
+  autocompact:23-24, channel-approvals:73-74, channel-launch:45-46,
+  channel-send:15-16, content-search:25-26, env-isolation:41-42,
+  foreign-message-id:26-27, fresh-tab-switch:22-23, full-history:24,30-31,
+  native-progress-integration:67, pinned-sessions:23-24,
+  progress-agent-frame:19-20, progress-channels:27-28,
+  progress-delegated-scope:32-33, progress-performance:21-22,
+  progress-projection:15-16, progress-runtime:19-20, progress-semantic-ui:27-28,
+  progress-semantic:30, progress-settings:152-153,
+  progress-snapshot-contract:11-12, provider-health:24-25, proxy-revival:49-50,
+  resume-guard:21-22, session-resources:32-33, spellcheck:20-21 — explicit.
+- Saved/restored env + direct homedir stub: auth-chatgpt:15,17,74-76,358,376
+  (child env sandboxed at 358); profile-icons:33-35,41-42 (USERPROFILE stub to
+  mockHome); proxy-revival:204,207,218 (stub, restored, builtins synced). — explicit.
+- Loader/VM os stubs returning temp home: activation:156, full-history:40,235,
+  native-progress-integration:24, panic-restore-command:151, progress-launch:33,
+  progress-performance:270-271,284 (originalHomedir saved, not invoked),
+  progress-session-capability:626, progress-state-transport:66, proxy-revival:90,
+  runtime-sync:31, tab-icon-progress:20, update-watcher:81. — explicit.
+- Synthetic extension trees under temp HOME (no real install I/O):
+  activation:28, panic-restore-command:28, update-watcher:27 (EXTENSIONS under
+  the temp home; :73 comment says the root is not ~/.vscode/extensions). — explicit.
+- Explicit operator bundle input, no fallback/discovery: full-history:19,168,211,
+  native-progress:20-21 (VANNEVAR_TEST_BUNDLE_DIR with isAbsolute guard). — explicit.
+- Guards asserting the ABSENCE of home access: patch-registry-runtime:31,41,114,116
+  (home env removed, homedir throws, no .vscode under root). — guard, not access.
+- Commentary-only hits (comments, no I/O): activation:2, attachment-prompt:2,
+  auto-repatch:10, env-isolation:8, panic-restore:15, progress-delegated-scope:31,
+  progress-performance:7-8, progress-runtime:7-8, progress-semantic-ui:8,
+  progress-semantic:15, progress-session-capability:11-12,609, proxy-revival:9,
+  update-watcher:13,73,177. — comments.
+
+implicit: none found in the top-level test source.
+Final manually classified implicit violations in top-level test source: 0
+exit code: 0

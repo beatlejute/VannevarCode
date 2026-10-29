@@ -1,0 +1,89 @@
+=== Прогон 1: help ===
+Команда: node scripts/adaptation/probe.mjs --help
+exit code: 0
+stdout:
+Usage: node scripts/adaptation/probe.mjs --dir <dir> --registry <registry> --out <out>
+Options: --dir (required), --registry (required), --out (required), --help
+stderr:
+
+=== Прогон 2: battery на синтетических точках registry (system tmp) ===
+Команда: node scripts/adaptation/probe.mjs --dir /tmp/probe-test/dir --registry /tmp/probe-test/registry.json --out /tmp/probe-test/out/report.json
+exit code: 0
+stdout:
+Probe complete. No patches applied.
+stderr:
+Отчёт --out (/tmp/probe-test/out/report.json):
+{
+  "scanDir": "C:/Users/Denis/AppData/Local/Temp/probe-test/dir",
+  "registry": "C:/Users/Denis/AppData/Local/Temp/probe-test/registry.json",
+  "summary": {
+    "total": 4,
+    "PASS": 1,
+    "MISS": 1,
+    "AMBIGUOUS": 1,
+    "BLOCK": 1
+  },
+  "points": [
+    {
+      "id": "PATCH-PASS-TEST",
+      "variant": "V-PASS",
+      "owner": "vannevar",
+      "moduleScope": "mod",
+      "preconditions": [
+        "spawnClaude signature exists"
+      ],
+      "matchCount": 1,
+      "postconditionFeasible": true,
+      "status": "PASS",
+      "reason": null
+    },
+    {
+      "id": "PATCH-MISS-TEST",
+      "variant": null,
+      "owner": "vannevar",
+      "moduleScope": null,
+      "preconditions": [],
+      "matchCount": 0,
+      "postconditionFeasible": false,
+      "status": "MISS",
+      "reason": "target missing: missing.js"
+    },
+    {
+      "id": "PATCH-AMBIGUOUS-TEST",
+      "variant": null,
+      "owner": "vannevar",
+      "moduleScope": null,
+      "preconditions": [],
+      "matchCount": 1,
+      "postconditionFeasible": false,
+      "status": "AMBIGUOUS",
+      "reason": "two variants match: V-AMB1, V-AMB2"
+    },
+    {
+      "id": "PATCH-BLOCK-TEST",
+      "variant": null,
+      "owner": "",
+      "moduleScope": null,
+      "preconditions": [],
+      "matchCount": 0,
+      "postconditionFeasible": false,
+      "status": "BLOCK",
+      "reason": "owner mismatch: registry point declares no owner"
+    }
+  ]
+}
+
+=== Прогон 3: отказ без --dir до доступа к файлам ===
+Команда: node scripts/adaptation/probe.mjs --registry /tmp/probe-test/no-such-registry.json --out /tmp/probe-test/out/no-dir.json
+exit code: 1
+stdout:
+Usage: node scripts/adaptation/probe.mjs --dir <dir> --registry <registry> --out <out>
+Options: --dir (required), --registry (required), --out (required), --help
+stderr:
+Error: --dir, --registry, and --out are required.
+Примечание: registry-файл в команде не существует; ошибка — про обязательные аргументы, а не «malformed registry JSON», то есть отказ произошёл до чтения файлов.
+
+=== Итог ===
+Все статусы покрыты: PASS, MISS, AMBIGUOUS, BLOCK.
+Записи вне --out прогон 2 не оставил: отчёт записан в /tmp/probe-test/out/report.json, в проекте изменений нет.
+exit code: 0

@@ -1,0 +1,620 @@
+Synthetic fixtures only; no real Claude CLI or production credentials.
+Scope limitation applies to probe only; patcher remains unchanged.
+
+scenario: unchanged: expected VERIFIED_UNCHANGED, exit 0
+command: "C:\\nvm4w\\nodejs\\node.exe" "D:\\Dev\\VannevarCode\\scripts\\adaptation\\run.mjs" "--dir" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9" "--out" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\unchanged.json" "--registry" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\scoped-registry.json"
+stdout:
+runner: VERIFIED_UNCHANGED — dry-run: bundle already up to date
+
+stderr:
+
+exit code: 0
+report:
+{
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9",
+  "out": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\unchanged.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-29T02:42:00.619Z",
+  "findings": [
+    "probe: total=4 PASS=4 MISS=0 AMBIGUOUS=0 BLOCK=0",
+    "dry-run: exit=0 upToDate=true patched=false",
+    "restore mismatch: extension.js current hash differs from *.ccx-orig backup",
+    "restore mismatch: webview/index.js current hash differs from *.ccx-orig backup",
+    "final: VERIFIED_UNCHANGED — dry-run: bundle already up to date"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "d825db273e9dcd382c5e261fbd2fa72ff37349ae155b28fe7ce763c51ef10969",
+      "size": 1789
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "92a9e861517b1048af142b453b26743e2e926cbd8a5ea7e06e2f8967f0404709",
+      "size": 3602
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9",
+      "registry": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\scoped-registry.json",
+      "summary": {
+        "total": 4,
+        "PASS": 4,
+        "MISS": 0,
+        "AMBIGUOUS": 0,
+        "BLOCK": 0
+      },
+      "points": [
+        {
+          "id": "PATCH-HOST-ENV-FOR",
+          "variant": "PATCH-HOST-ENV-FOR-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "envFor hook installed"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-READ-MESSAGES",
+          "variant": "PATCH-HOST-READ-MESSAGES-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "session transport initialized"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-BIND-NATIVE",
+          "variant": "PATCH-HOST-BIND-NATIVE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "hook anchor exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-INIT",
+          "variant": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "channel manager exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        }
+      ]
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": true
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 0,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-SxkTZu\npatcher:   unknown (verified against unknown)\nccx-result: up-to-date",
+    "error": null,
+    "upToDate": true,
+    "patched": false
+  },
+  "restoreHash": [
+    {
+      "file": "extension.js",
+      "backup": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9\\extension.js.ccx-orig",
+      "currentHash": "d825db273e9dcd382c5e261fbd2fa72ff37349ae155b28fe7ce763c51ef10969",
+      "backupHash": "59b7dcfebfbb512de5c1ebba87516cf82c6d5d33601e35f5d8434f0c389cdc23",
+      "match": false
+    },
+    {
+      "file": "webview/index.js",
+      "backup": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9\\webview\\index.js.ccx-orig",
+      "currentHash": "92a9e861517b1048af142b453b26743e2e926cbd8a5ea7e06e2f8967f0404709",
+      "backupHash": "685812cd79ca97ec60ed073a9b9c4789d06beb24cc76b15a2ab6c20dd5ba966d",
+      "match": false
+    }
+  ],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-HzFiA9\n- registry: C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\scoped-registry.json\n- probe: {\"total\":4,\"PASS\":4,\"MISS\":0,\"AMBIGUOUS\":0,\"BLOCK\":0}\n- dry-run: exit=0 upToDate=true patched=false\n- syntax: 2/2 files pass\n- final status: (pending)",
+  "finalStatus": "VERIFIED_UNCHANGED"
+}
+
+scenario: partial coverage: expected BLOCKED, exit 1
+command: "C:\\nvm4w\\nodejs\\node.exe" "D:\\Dev\\VannevarCode\\scripts\\adaptation\\run.mjs" "--dir" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-bhAaqK" "--out" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\runner-out-1793241721145.json"
+stdout:
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042
+
+stderr:
+
+exit code: 1
+report:
+{
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-bhAaqK",
+  "out": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\runner-out-1793241721145.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-29T02:42:01.251Z",
+  "findings": [
+    "probe: total=27 PASS=4 MISS=23 AMBIGUOUS=0 BLOCK=0",
+    "dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r",
+    "final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "59b7dcfebfbb512de5c1ebba87516cf82c6d5d33601e35f5d8434f0c389cdc23",
+      "size": 1693
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "685812cd79ca97ec60ed073a9b9c4789d06beb24cc76b15a2ab6c20dd5ba966d",
+      "size": 3506
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-bhAaqK",
+      "registry": "D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json",
+      "summary": {
+        "total": 27,
+        "PASS": 4,
+        "MISS": 23,
+        "AMBIGUOUS": 0,
+        "BLOCK": 0
+      },
+      "points": [
+        {
+          "id": "PATCH-HOST-SPAWN-CLAUDE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HOST-ENV-FOR",
+          "variant": "PATCH-HOST-ENV-FOR-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "envFor hook installed"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-READ-MESSAGES",
+          "variant": "PATCH-HOST-READ-MESSAGES-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "session transport initialized"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-BIND-NATIVE",
+          "variant": "PATCH-HOST-BIND-NATIVE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "hook anchor exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-HTML-INJECT",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ATTACH-PANEL",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-MODEL-ACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ACTION-ORDER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-STATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-FILTER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-OPEN-STATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-PIN-SORT",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-QUERY",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ARCHIVED-FILTER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-CCX-AGENT-MAP",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-INIT",
+          "variant": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "channel manager exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-SPAWN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-STITCH-COMPACTIONS",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-BEFORE-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-AFTER-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-FORK-BEFORE-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-REWIND-CONTEXT-SECTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-LOGIN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-GATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-SHOW-LOGIN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-CCX-CALL-TIME",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-MAP-PROGRESS",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        }
+      ]
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": true
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 1,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-g6dfOQ\npatcher:   unknown (verified against unknown)",
+    "error": "file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r"
+  },
+  "restoreHash": [],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-unchanged-bhAaqK\n- registry: D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json\n- probe: {\"total\":27,\"PASS\":4,\"MISS\":23,\"AMBIGUOUS\":0,\"BLOCK\":0}\n- dry-run: exit=1 file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r\n- syntax: 2/2 files pass\n- final status: (pending)",
+  "finalStatus": "BLOCKED"
+}
+
+scenario: ambiguity: expected incomplete AMBIGUOUS report, exit 1
+command: "C:\\nvm4w\\nodejs\\node.exe" "D:\\Dev\\VannevarCode\\scripts\\adaptation\\run.mjs" "--dir" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-ambiguity-7OSyfh" "--out" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\runner-out-1793241723030.json" "--registry" "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\ambig-registry-1793241723029.json"
+stdout:
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042
+
+stderr:
+
+exit code: 1
+report:
+{
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-ambiguity-7OSyfh",
+  "out": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\runner-out-1793241723030.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-29T02:42:03.126Z",
+  "findings": [
+    "probe: total=1 PASS=0 MISS=0 AMBIGUOUS=1 BLOCK=0",
+    "probe AMBIGUOUS — report incomplete, non-eligible per v3 §§1,12",
+    "dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r",
+    "final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "c7993eed6ac5e635994fc5fdfe2ff23ad2f69a0e85703f9a8cbf86f93849d388",
+      "size": 1693
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "901cbbf7c58f7fe097f2dec9f0ae75607a91f70a5a853d7064b440a66f3348d6",
+      "size": 3467
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-ambiguity-7OSyfh",
+      "registry": "C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\ambig-registry-1793241723029.json",
+      "summary": {
+        "total": 1,
+        "PASS": 0,
+        "MISS": 0,
+        "AMBIGUOUS": 1,
+        "BLOCK": 0
+      },
+      "points": [
+        {
+          "id": "PATCH-HOST-SPAWN-CLAUDE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 2,
+          "postconditionFeasible": false,
+          "status": "AMBIGUOUS",
+          "reason": "two variants match: PATCH-HOST-SPAWN-CLAUDE-LEGACY, PATCH-HOST-SPAWN-CLAUDE-AMBIG"
+        }
+      ]
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": true
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 1,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-bjZiEm\npatcher:   unknown (verified against unknown)",
+    "error": "file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r"
+  },
+  "restoreHash": [],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-ambiguity-7OSyfh\n- registry: C:\\Users\\Denis\\AppData\\Local\\Temp\\adapt-runner-work-GwkeHf\\ambig-registry-1793241723029.json\n- probe: {\"total\":1,\"PASS\":0,\"MISS\":0,\"AMBIGUOUS\":1,\"BLOCK\":0}\n- dry-run: exit=1 file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1042\r\n- syntax: 2/2 files pass\n- final status: (pending)",
+  "finalStatus": "BLOCKED"
+}
+
+teardown: PASS

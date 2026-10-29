@@ -1,0 +1,1 @@
+{"patchPoints":[{"id":"P3","targetFile":"ambiguous-target.js","surface":"test","owner":"t","required":false,"variants":[{"id":"V3A","matcherKind":"legacy-textual","semanticAnchor":"AMBIG_A","moduleScope":"test"},{"id":"V3B","matcherKind":"legacy-textual","semanticAnchor":"AMBIG_B","moduleScope":"test"}]}]}

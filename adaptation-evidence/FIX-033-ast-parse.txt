@@ -1,0 +1,102 @@
+FIX-033: real AST parsing and fail-closed dispatch
+
+Environment: Windows, Node.js v24.21.0. Synthetic/minimized sources only.
+No real Claude bundle, user installation, credentials or Claude CLI were used.
+
+Command: npm install
+exit code: 0
+added 18 packages, and audited 19 packages in 9s
+found 0 vulnerabilities
+
+TDD RED command: node test/ast-locator.test.mjs
+exit code: 1
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal: 0 !== 1
+at test/ast-locator.test.mjs:129:12 (real identifier lookup before implementation)
+
+Final command: node test/ast-locator.test.mjs
+exit code: 0
+--- ast-locator test coverage ---
+PASS - exactly-one candidate + byte preservation
+PASS - minified local rename
+PASS - whitespace/reformat
+PASS - false-positive neighbor - range refers to correct bytes
+PASS - multiple candidates - no range -> fail closed
+PASS - zero required -> fail closed
+PASS - zero optional
+PASS - strict variant fork
+PASS - TypeError for non-string rawSource
+PASS - byte preservation outside intended range (outside)
+PASS - real AST exactly-one identifier + raw provenance + outside bytes
+PASS - real AST parse error, multiple candidates, zero required fail closed
+PASS - real AST semantic anchor and module scope reject neighbor
+PASS - real AST minified identifier and invalid explicit ranges
+PASS - shipped runtime dispatch exactly-one; exit code: 0
+PASS - shipped runtime dispatch parse error; exit code: 1
+PASS - shipped runtime dispatch multiple candidates; exit code: 1
+PASS - shipped runtime dispatch zero required; exit code: 1
+PASS - shipped runtime dispatch multiple variants; exit code: 1
+PASS - shipped runtime dispatch replacement precondition; exit code: 1
+All 20 scenarios passed!
+
+Refusal method: test/ast-locator.test.mjs executes the production patcher source
+with only PATCHES definitions replaced by one synthetic point. The shipping
+file list supplies the locator and transitive Babel dependencies inside an
+isolated system-temp runtime/node_modules. Child command for every case:
+node <temp>/runtime/apply-patch.mjs --dir=<temp>/bundle-<case-index>
+
+parse error source: function target( {
+multiple candidates source: function target(){}; (()=>{function target(){}})();
+zero required source: function other(){}
+multiple variants: two active AST descriptors resolving the same target.
+replacement precondition source: const target=()=>1;
+Each refusal returns exit code: 1. The test reads the target as a Buffer and
+compares it with the entire pristine Buffer, proving no target bytes changed.
+Exactly-one returns exit code: 0 and compares the whole target with the
+expected surgical insertion, including unchanged prefix/suffix and CRLF.
+Locator tests also exercise UTF-16 raw offsets with a Unicode literal and
+compare bytes outside its returned range. All temp paths are removed in finally.
+
+Command: node runtime/apply-patch.mjs --validate-registry
+exit code: 0
+patch points: 27 runtime patch(es) <-> 27 registry entry(ies) - one-to-one
+no Claude Code installation was looked for, and no user home was read
+
+Command: node --check runtime/apply-patch.mjs
+exit code: 0
+No output.
+
+DoD 2 exact dependency/import/dispatcher check: exit code: 0, no output.
+
+Command: node test/auto-repatch.test.mjs
+exit code: 0
+10 OK lines, including the package reading back as a valid ZIP.
+The final full suite repeats this test after dependency license shipping.
+
+Baseline command: npm test
+exit code: 1
+FAILED - 1 of 66 test files failed (44.0s)
+65 files PASS; test/adaptation-runner.test.mjs fails unchanged (6/7 cases PASS).
+AssertionError: runner: BLOCKED - patcher could not run on isolated copy:
+runtime/apply-patch.mjs:1022; actual 1, expected 0.
+
+Final command: npm test
+exit code: 1
+FAILED - 1 of 66 test files failed (55.5s)
+65 files PASS; same baseline test/adaptation-runner.test.mjs unchanged failure
+(6/7 cases PASS), now at runtime/apply-patch.mjs:1042 due to added lines.
+AssertionError: runner: BLOCKED - patcher could not run on isolated copy;
+actual 1, expected 0, test/adaptation-runner.test.mjs:147:12.
+All AST, auto-repatch, registry, panic-restore and other baseline passing files
+remain PASS. No new failing files. Existing runner defect is outside FIX-033.
+
+Command: git diff --check -- scripts/build-vsix.mjs package.json test/ast-locator.test.mjs
+exit code: 0
+No output.
+
+Contract limits: exact declaration identifier or semanticAnchor identifier;
+optional nodeType and moduleScope {identifier: enclosing-declaration-name}.
+Unknown moduleScope formats fail closed. Explicit range descriptors preserve
+the existing non-parsing contract after integer and bounds validation.
+AST dispatch refuses empty results conservatively, including optional points,
+because empty results can mean parse error or ambiguity, not just absence.
+No whole-bundle regeneration; existing legacy definitions remain unchanged.

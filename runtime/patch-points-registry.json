@@ -1,0 +1,626 @@
+{
+  "schemaVersion": "1.0",
+  "patchPoints": [
+    {
+      "id": "PATCH-HOST-SPAWN-CLAUDE",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HOST-SPAWN-CLAUDE-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "async spawnClaude(input, rest)",
+          "moduleScope": null,
+          "preconditions": ["spawnClaude signature exists"],
+          "postconditions": ["context object registered"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required hook for Vannevar to intercept spawning"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HOST-ENV-FOR",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HOST-ENV-FOR-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "envFor(resume, profile, options)",
+          "moduleScope": null,
+          "preconditions": ["envFor hook installed"],
+          "postconditions": ["environment merged"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for profile-based environment configuration"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HOST-READ-MESSAGES",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HOST-READ-MESSAGES-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "for await (let message of transport.readMessages())",
+          "moduleScope": null,
+          "preconditions": ["session transport initialized"],
+          "postconditions": ["native frame observed"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for message interception and native frame observation"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HOST-BIND-NATIVE",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HOST-BIND-NATIVE-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "bindNativeProducer(query, context)",
+          "moduleScope": null,
+          "preconditions": ["hook anchor exists"],
+          "postconditions": ["native producer bound"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for binding native code production"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-HTML-INJECT",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-HTML-INJECT-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "getHtmlForWebview() script injection",
+          "moduleScope": null,
+          "preconditions": ["script tag present"],
+          "postconditions": ["host renderScript injected"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for replacing bundled extension.js scripts"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-ATTACH-PANEL",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-ATTACH-PANEL-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "panel.iconPath assignment",
+          "moduleScope": null,
+          "preconditions": ["icon paths defined"],
+          "postconditions": ["panel attached"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for panel customization"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-MODEL-ACTION",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-MODEL-ACTION-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "model action registered in the command registry",
+          "moduleScope": null,
+          "preconditions": ["command registry available"],
+          "postconditions": ["host registry and model label notified"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for the model action to reach the host"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-ACTION-ORDER",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-ACTION-ORDER-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "registerAction ID order",
+          "moduleScope": null,
+          "preconditions": ["action registry available"],
+          "postconditions": ["custom actions registered"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for Vannevar menu entry ordering"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-SEARCH-STATE",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-STATE-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "search state and pinned session IDs",
+          "moduleScope": null,
+          "preconditions": ["useState initialized"],
+          "postconditions": ["host notified of search state"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.259-2.1.296"],
+          "justification": "Required for search and pin state management"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-SEARCH-FILTER",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-FILTER-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "content search filter",
+          "moduleScope": null,
+          "preconditions": ["search query state exists"],
+          "postconditions": ["content matches exposed"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.259-2.1.296"],
+          "justification": "Required for content-based session search"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-OPEN-STATE",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-OPEN-STATE-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "openState accessor",
+          "moduleScope": null,
+          "preconditions": ["session render context"],
+          "postconditions": ["host openState exposed"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.259-2.1.296"],
+          "justification": "Required for session open state management"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-PIN-SORT",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-PIN-SORT-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "pinSort function",
+          "moduleScope": null,
+          "preconditions": ["pinned IDs and open state available"],
+          "postconditions": ["session sorted by pins and liveness"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.257-2.1.296"],
+          "justification": "Required for pinned session ordering"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-SEARCH-QUERY",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-QUERY-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "search input onChange handler",
+          "moduleScope": null,
+          "preconditions": ["search input rendered"],
+          "postconditions": ["host notified of the search query"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.259-2.1.296"],
+          "justification": "Required for the typed search query to reach the host"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-ARCHIVED-FILTER",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-ARCHIVED-FILTER-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "grouping call that partitions the session list",
+          "moduleScope": null,
+          "preconditions": ["grouping call reachable"],
+          "postconditions": ["host archived filter applied"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.259-2.1.296"],
+          "justification": "Required for the archived filter to reach the host"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-CCX-AGENT-MAP",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-CCX-AGENT-MAP-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "agentMapAgents value read",
+          "moduleScope": null,
+          "preconditions": ["agent map exists"],
+          "postconditions": ["host map progress notified"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Required for agent map progress reporting"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-CHANNEL-INIT",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "channelInitialized(channel)",
+          "moduleScope": null,
+          "preconditions": ["channel manager exists"],
+          "postconditions": ["channel hook notified"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.274-2.1.296"],
+          "justification": "Optional: channel hook for plugin channels"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-WEBVIEW-CHANNEL-SPAWN",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-SPAWN-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "spawnClaude canUseTool wrapper",
+          "moduleScope": null,
+          "preconditions": ["canUseTool exists"],
+          "postconditions": ["tool usage wrapped"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.274-2.1.296"],
+          "justification": "Optional: wrapper for canUseTool in channels"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HISTORY-STITCH-COMPACTIONS",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HISTORY-STITCH-COMPACTIONS-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "transcript walk that relinks compaction boundaries",
+          "moduleScope": null,
+          "preconditions": ["transcript indexed by uuid"],
+          "postconditions": ["compaction boundaries stitched back"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required to stitch the kept tail of a compaction back into the transcript"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HISTORY-BEFORE-COMPACTION",
+      "targetFile": "extension.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HISTORY-BEFORE-COMPACTION-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "historyBeforeCompaction check",
+          "moduleScope": null,
+          "preconditions": ["transcript size > limit"],
+          "postconditions": ["pre-compaction hook called"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.220-2.1.296"],
+          "justification": "Required for before-compaction hook"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-HISTORY-AFTER-COMPACTION",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-HISTORY-AFTER-COMPACTION-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "keepEveryMessage override",
+          "moduleScope": null,
+          "preconditions": ["message count > limit"],
+          "postconditions": ["hook returns override"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.257-2.1.296"],
+          "justification": "Required for message retention override"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-FORK-BEFORE-COMPACTION",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-FORK-BEFORE-COMPACTION-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "beforeCompaction check for fork",
+          "moduleScope": null,
+          "preconditions": ["user message before compaction"],
+          "postconditions": ["fork returns null if before compaction"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.284-2.1.296"],
+          "justification": "Optional: prevents fork on pre-compaction messages"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-REWIND-CONTEXT-SECTION",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-REWIND-CONTEXT-SECTION-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "beforeCompaction check in rewind context",
+          "moduleScope": null,
+          "preconditions": ["rewind from Context section"],
+          "postconditions": ["pre-compaction messages excluded from rewind"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.296"],
+          "justification": "Optional: excludes pre-compaction messages from rewind"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-NO-AUTH-LOGIN",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-NO-AUTH-LOGIN-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "opt-out button on the login screen",
+          "moduleScope": null,
+          "preconditions": ["user chooses to skip login"],
+          "postconditions": ["auth check bypassed"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Required for non-Anthropic login support"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-NO-AUTH-GATE",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-NO-AUTH-GATE-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "isAuthenticated memo that gates the session view",
+          "moduleScope": null,
+          "preconditions": ["account check memo available"],
+          "postconditions": ["opt-out honoured by the account check"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Required for the login opt-out to be honoured by the account check"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-NO-AUTH-SHOW-LOGIN",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-NO-AUTH-SHOW-LOGIN-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "showLogin() that puts the sign-in screen up",
+          "moduleScope": null,
+          "preconditions": ["showLogin reachable after a failed request"],
+          "postconditions": ["opt-out survives a failed request"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Required for the opt-out to survive a failed request"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-CCX-CALL-TIME",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-CCX-CALL-TIME-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "__ccx.callTime hook",
+          "moduleScope": null,
+          "preconditions": ["call time data available"],
+          "postconditions": ["call time exposed to row"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Optional: adds call time to agent map row"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-MAP-PROGRESS",
+      "targetFile": "webview/index.js",
+      "surface": "WEBVIEW",
+      "owner": "vannevar",
+      "required": false,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-MAP-PROGRESS-LEGACY",
+          "state": "legacy",
+          "matcherKind": "legacy-textual",
+          "semanticAnchor": "mapProgress call",
+          "moduleScope": null,
+          "preconditions": ["agent map exists"],
+          "postconditions": ["host progress notified"],
+          "negativeFixtures": [],
+          "knownVersions": ["2.1.280-2.1.296"],
+          "justification": "Optional: reports progress to host"
+        }
+      ]
+    }
+  ]
+}

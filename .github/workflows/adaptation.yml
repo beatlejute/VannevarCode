@@ -1,0 +1,39 @@
+name: adaptation
+
+on:
+  workflow_dispatch:
+
+jobs:
+  adaptation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate registry
+        run: node scripts/adaptation/validate-registry.mjs
+
+      - name: Run patch-registry test
+        run: node test/patch-registry-validator.test.mjs
+
+      - name: Run ast-locator test
+        run: node test/ast-locator.test.mjs
+
+      - name: Run semantic-normalization test
+        run: node test/semantic-normalization.test.mjs
+
+      - name: Run adaptation-probe test
+        run: node test/adaptation-probe.test.mjs
+
+      - name: Run panic-restore test
+        run: node test/panic-restore.test.mjs
+
+      - name: Run npm test
+        run: npm test

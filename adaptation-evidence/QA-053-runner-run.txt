@@ -1,0 +1,18 @@
+command: node test/adaptation-runner.test.mjs
+▶ adaptation runner - six scenarios
+  ✔ 1. unchanged - runner handles pristine copy (patcher signature mismatch expected with synthetic fixtures) (823.5962ms)
+  ✔ 2. refusal-before-write - runner handles signature mismatch (refusal before write) (785.193ms)
+  ✔ 3. restore equality - restore hash matches backup when .ccx-orig exists (797.3653ms)
+  ✔ 4. ambiguity-incomplete - probe AMBIGUOUS blocks runner (1036.2387ms)
+  ✔ 5. patched-input refusal - source already patched without backup (795.519ms)
+  ✔ 6. no-outside-writes - no writes outside output/temp roots (801.1291ms)
+✔ adaptation runner - six scenarios (5060.8757ms)
+ℹ tests 6
+ℹ suites 1
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 5060.6858
+exit code: 0

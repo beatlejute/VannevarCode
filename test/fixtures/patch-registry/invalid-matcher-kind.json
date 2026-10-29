@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "1.0",
+  "patchPoints": [
+    {
+      "id": "PATCH-TEST-BAD-KIND",
+      "targetFile": "test.js",
+      "surface": "HOST",
+      "owner": "vannevar",
+      "required": true,
+      "marker": "__ccx",
+      "restorePolicy": "full-backup",
+      "variants": [
+        {
+          "id": "PATCH-TEST-BAD-KIND-LEGACY",
+          "state": "legacy",
+          "matcherKind": "invalid-kind",
+          "semanticAnchor": "test anchor",
+          "moduleScope": null,
+          "preconditions": [],
+          "postconditions": [],
+          "negativeFixtures": [],
+          "knownVersions": [
+            "2.1.296"
+          ],
+          "justification": "test justification"
+        }
+      ]
+    }
+  ]
+}

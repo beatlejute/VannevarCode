@@ -1,0 +1,128 @@
+QA-060: AST fail-closed measurement
+
+Command: node test/ast-locator.test.mjs
+Output:
+AssertionError [ERR_ASSERTION]: exactly-one: temporary runtime/apply-patch.mjs failed to parse: SyntaxError: missing ) after argument list (line 426)
+Exit code: 1
+
+Command: node runtime/apply-patch.mjs --validate-registry
+Output:
+SyntaxError: missing ) after argument list at runtime/apply-patch.mjs:80
+Exit code: 1
+
+Refusal scenarios required by the ticket: parse-error fixture and multiple-candidate fixture. The suite did not reach its cases because its temporary production patcher copy failed parsing; therefore these individual refusal behaviors remain unverified in this run. The checked-in locator source was read, but no test result is claimed for its behaviors.
+No product or test source was changed. No real Claude CLI or user installation was used.
+
+Continuation measurement (previous output above retained; direct locator cases now executed).
+Environment: Node.js v24.21.0, Windows, repository D:/Dev/VannevarCode.
+
+Command: node test/ast-locator.test.mjs
+Full output (line endings normalized):
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: exactly-one: file:///C:/Users/Denis/AppData/Local/Temp/ast-dispatch-VlW4zT/runtime/apply-patch.mjs:426
+            `patch registry mismatch (${file}) — nothing was written:\n`
+                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+SyntaxError: missing ) after argument list
+    at compileSourceTextModule (node:internal/modules/esm/utils:319:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:89:18)
+    at #translate (node:internal/modules/esm/loader:438:20)
+    at afterLoad (node:internal/modules/esm/loader:506:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:511:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:564:36)
+    at afterResolve (node:internal/modules/esm/loader:611:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:617:12)
+    at node:internal/modules/esm/loader:636:32
+    at TracingChannel.tracePromise (node:diagnostics_channel:362:14)
+
+Node.js v24.21.0
+
+
+1 !== 0
+
+    at file:///D:/Dev/VannevarCode/test/ast-locator.test.mjs:204:20
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.21.0
+exit code: 1
+
+Command: node runtime/apply-patch.mjs --validate-registry
+Full output:
+file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:80
+                    '${(()=>{try{'
+                    ^^^^^^^^^^^^^^
+
+SyntaxError: missing ) after argument list
+    at compileSourceTextModule (node:internal/modules/esm/utils:319:16)
+    at ModuleLoader.moduleStrategy (node:internal/modules/esm/translators:89:18)
+    at #translate (node:internal/modules/esm/loader:438:20)
+    at afterLoad (node:internal/modules/esm/loader:506:29)
+    at ModuleLoader.loadAndTranslate (node:internal/modules/esm/loader:511:12)
+    at #getOrCreateModuleJobAfterResolve (node:internal/modules/esm/loader:564:36)
+    at afterResolve (node:internal/modules/esm/loader:611:52)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:617:12)
+    at node:internal/modules/esm/loader:636:32
+    at TracingChannel.tracePromise (node:diagnostics_channel:362:14)
+
+Node.js v24.21.0
+exit code: 1
+
+Command: node --input-type=module -e 'import assert from "node:assert/strict"; import { locate } from "./runtime/ast-locator.mjs"; const cases = [["exactly-one control", "function target(){}", 1], ["parse error", "function target( {", 0], ["multiple candidates", "function target(){}; (()=>{function target(){}})();", 0], ["zero required", "function other(){}", 0]]; for (const [name, source, count] of cases) { const before = Buffer.from(source); const actual = locate(source, {identifier:"target", required:true}); assert.equal(actual.length, count, name); assert.deepEqual(Buffer.from(source), before); if (count === 0) assert.deepEqual(actual, []); console.log(JSON.stringify({case:name,result:actual,sourceUnchanged:Buffer.from(source).equals(before),status:"PASS"})); }'
+Full output:
+{"case":"exactly-one control","result":[{"start":0,"end":19,"kind":"ast","identifier":"target"}],"sourceUnchanged":true,"status":"PASS"}
+{"case":"parse error","result":[],"sourceUnchanged":true,"status":"PASS"}
+{"case":"multiple candidates","result":[],"sourceUnchanged":true,"status":"PASS"}
+{"case":"zero required","result":[],"sourceUnchanged":true,"status":"PASS"}
+exit code: 0
+
+Assertions execute the actual runtime/ast-locator.mjs module with its installed Babel parser/traverse, not a simulated locator. No explicit range is supplied: the exactly-one control exercises real parsing. Each refusal case asserts [] separately; the source Buffer is unchanged. This command creates no files or directories and has no mutable filesystem root to tear down. The suite creates its mutable root under os.tmpdir() and removes it in finally (test/ast-locator.test.mjs:166-212). No real Claude CLI was started.
+
+Current result: locator-level parse error, multiple candidates and zero required PASS. Runtime dispatcher refusal-before-write is NOT CONFIRMED: the suite stops on the exactly-one integration case due to a syntax error in the product source. Registry one-to-one mapping is NOT CONFIRMED: validation cannot parse the patcher. DoD 2 and 3 remain blocked by exit 1 instead of expected exit 0. Product and test files were not changed.
+
+=== Re-measurement after the patcher syntax repair ===
+command: node --check runtime/apply-patch.mjs
+exit code: 0
+
+command: node runtime/apply-patch.mjs --validate-registry
+registry: D:\Dev\VannevarCode\runtime\patch-points-registry.json
+patch points: 27 runtime patch(es) ↔ 27 registry entry(ies) — one-to-one
+no Claude Code installation was looked for, and no user home was read
+exit code: 0
+
+command: node test/ast-locator.test.mjs
+--- ast-locator test coverage ---
+PASS — exactly-one candidate + byte preservation
+PASS — minified local rename
+PASS — whitespace/reformat
+PASS — false-positive neighbor — range refers to correct bytes
+PASS — multiple candidates — no range → fail closed
+PASS — zero required → fail closed
+PASS — zero optional
+PASS — strict variant fork
+PASS — TypeError for non-string rawSource
+PASS — byte preservation outside intended range (outside)
+PASS — real AST exactly-one identifier + raw provenance + outside bytes
+PASS — real AST parse error, multiple candidates, zero required fail closed
+PASS — real AST semantic anchor and module scope reject neighbor
+PASS — real AST minified identifier and invalid explicit ranges
+PASS — shipped runtime dispatch exactly-one; exit code: 0
+PASS — shipped runtime dispatch parse error; exit code: 1
+PASS — shipped runtime dispatch multiple candidates; exit code: 1
+PASS — shipped runtime dispatch zero required; exit code: 1
+PASS — shipped runtime dispatch multiple variants; exit code: 1
+PASS — shipped runtime dispatch replacement precondition; exit code: 1
+
+All 20 scenarios passed!
+exit code: 0

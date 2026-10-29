@@ -1,0 +1,52 @@
+=== DoD 3: Сборка и установка VSIX для повторной живой проверки HUMAN-001 (FIX-018) ===
+
+Команда: node scripts/build-vsix.mjs
+Вывод:
+vannevarcode-2.1.296.vsix: 30 file(s), 300 KB
+  package.json
+  extension.js
+  README.md
+  LICENSE
+  DISCLAIMER.md
+  PRIVACY.md
+  CHANGELOG.md
+  images/icon.png
+  runtime/apply-patch.mjs
+  runtime/ast-locator.mjs
+  runtime/channel-proxy.cjs
+  runtime/channel-relay.js
+  runtime/chatgpt-signin.js
+  runtime/host.js
+  runtime/login-chatgpt.mjs
+  runtime/mcp/agent-server.mjs
+  runtime/mcp/progress-client.mjs
+  runtime/native-progress.js
+  runtime/patch-points-registry.json
+  runtime/progress-broker.js
+  runtime/progress-reporting.js
+  runtime/proxy/auth-chatgpt.mjs
+  runtime/proxy/server.mjs
+  runtime/proxy/translate-gemini.mjs
+  runtime/proxy/translate-responses.mjs
+  runtime/proxy/translate.mjs
+  runtime/webview.js
+  templates/profiles/codex.json
+  templates/profiles/gemini.json
+  templates/profiles/openai.json
+exit code: 0
+
+Команда: codium --install-extension vannevarcode-2.1.296.vsix --force
+Вывод:
+Installing extensions...
+Extension 'vannevarcode-2.1.296.vsix' was successfully installed.
+(node:15792) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `VSCodium --trace-deprecation ...` to show where the warning was created)
+exit code: 0
+
+Сверка установленного runtime с рабочим деревом (cmp, побайтово):
+- extension.js: совпадает / exit code: 0
+- runtime/host.js: совпадает / exit code: 0
+Установленная папка: ~/.vscode-oss/extensions/beatlejute.vannevarcode-2.1.296/
+VSIX: vannevarcode-2.1.296.vsix (30 файлов, 300 KB)
+
+Повторная живая проверка HUMAN-001 (активация в открытом окне VSCodium) остаётся за человеком — тикет этого не делает.

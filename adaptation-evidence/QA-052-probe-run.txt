@@ -1,0 +1,17 @@
+Error: --dir, --registry, and --out are required.
+✔ PASS outcome (207.4843ms)
+✔ required MISS (196.0531ms)
+✔ AMBIGUOUS (193.5519ms)
+✔ BLOCK owner mismatch (224.6412ms)
+✔ optional zero-match (196.9534ms)
+✔ refusal without explicit dir (234.5259ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1266.2019
+exit code: 0
+source: test/adaptation-probe.test.mjs

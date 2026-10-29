@@ -1,0 +1,11 @@
+IMPL-036 — runtime patcher ↔ patch points registry
+command: node runtime/apply-patch.mjs --validate-registry
+working directory: D:\Dev\VannevarCode
+date: 2026-10-21
+
+output:
+registry: D:\Dev\VannevarCode\runtime\patch-points-registry.json
+patch points: 27 runtime patch(es) ↔ 27 registry entry(ies) — one-to-one
+no Claude Code installation was looked for, and no user home was read
+
+exit code: 0

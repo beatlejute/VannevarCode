@@ -21,6 +21,7 @@ const stub = join(home, 'stub-plugin.cjs');
 const calls = join(home, 'calls.jsonl');
 writeFileSync(calls, '');
 const argvFile = join(home, 'argv.txt');
+const argvJsonFile = join(home, 'argv.json');
 
 // A plugin as far as this file is concerned: it answers the handshake, records the tool call it is
 // given, and pushes one inbound message the way the real one does — as a notification with the
@@ -30,6 +31,7 @@ writeFileSync(
     `
 const fs = require('fs');
 fs.writeFileSync(${JSON.stringify(argvFile)}, process.argv.slice(2).join(' '));
+fs.writeFileSync(${JSON.stringify(argvJsonFile)}, JSON.stringify(process.argv.slice(2)));
 let buffer = '';
 process.stdin.on('data', (chunk) => {
     buffer += chunk;
@@ -53,14 +55,56 @@ process.stdin.on('data', (chunk) => {
         }
     }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => setTimeout(() => process.exit(0), process.argv.includes('--silent') ? 0 : 400));
 `,
     'utf8',
 );
 
 const require = createRequire(import.meta.url);
-const { ChannelRelay, RELAY_FLAG } = require('../runtime/channel-relay.js');
+const { ChannelRelay, RELAY_FLAG, resolveCommand } = require('../runtime/channel-relay.js');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const waitForExit = (relay, timeoutMs) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`relay exit timed out after ${timeoutMs}ms`)), timeoutMs);
+    relay.on('exit', (event) => {
+        clearTimeout(timer);
+        resolve(event);
+    });
+});
+
+if (process.platform === 'win32') {
+    const commandDir = join(home, 'bin with spaces');
+    mkdirSync(commandDir, { recursive: true });
+    const posixShim = join(commandDir, 'bun');
+    const commandScript = join(commandDir, 'bun.cmd');
+    const nativeExe = join(commandDir, 'bun.exe');
+    const previousPath = process.env.PATH;
+    writeFileSync(posixShim, '#!/bin/sh\nexit 99\n');
+    writeFileSync(commandScript, `@echo off\r\n"${process.execPath}" "${stub}" %*\r\n`);
+    process.env.PATH = commandDir + require('node:path').delimiter + (previousPath || '');
+    let windowsRelay;
+    try {
+        assert.equal(resolveCommand('bun'), commandScript, 'Windows resolution must skip extensionless POSIX shims');
+        writeFileSync(nativeExe, 'fixture');
+        assert.equal(resolveCommand('bun'), nativeExe, 'a native executable takes precedence over command scripts');
+        rmSync(nativeExe, { force: true });
+
+        windowsRelay = new ChannelRelay({
+            command: 'bun',
+            args: ['--cwd', commandDir, '--shell=bun', '--silent', 'start'],
+            cwd: home,
+            env: process.env,
+            log: () => {},
+        });
+        await assert.doesNotReject(() => windowsRelay.start(), 'Windows relay startup must launch bun.cmd');
+        const forwarded = JSON.parse(readFileSync(argvJsonFile, 'utf8'));
+        assert.deepEqual(forwarded, ['--cwd', commandDir, '--shell=bun', '--silent', 'start', RELAY_FLAG], 'arguments with spaces must survive the .cmd wrapper');
+    } finally {
+        windowsRelay?.stop();
+        process.env.PATH = previousPath;
+        rmSync(commandDir, { recursive: true, force: true });
+    }
+    if (windowsRelay) await wait(300);
+}
 
 const relay = new ChannelRelay({
     command: process.execPath,
@@ -76,37 +120,53 @@ relay.on('inbound', (m) => inbound.push(m));
 const exits = [];
 relay.on('exit', (e) => exits.push(e));
 
-await relay.start();
-assert.ok(readFileSync(argvFile, 'utf8').includes(RELAY_FLAG), 'the marker must be on the command line, or a session treats this poller as an orphan');
+try {
+    await relay.start();
+    assert.ok(readFileSync(argvFile, 'utf8').includes(RELAY_FLAG), 'the marker must be on the command line, or a session treats this poller as an orphan');
 
-const reply = await relay.send('285532172', 'тест');
-assert.equal(reply.text, 'sent (id: 42)', 'the plugin answers a tool call with its own text');
+    const reply = await relay.send('285532172', 'тест');
+    assert.equal(reply.text, 'sent (id: 42)', 'the plugin answers a tool call with its own text');
 
-const sent = readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-assert.deepEqual(
-    sent[0],
-    { name: 'reply', arguments: { chat_id: '285532172', text: 'тест' } },
-    'the reply is addressed exactly as the plugin expects',
-);
+    const sent = readFileSync(calls, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(
+        sent[0],
+        { name: 'reply', arguments: { chat_id: '285532172', text: 'тест' } },
+        'the reply is addressed exactly as the plugin expects',
+    );
 
-await wait(50);
-assert.equal(inbound.length, 1, 'an inbound message reaches a handler');
-assert.equal(inbound[0].chatId, '285532172', 'with the chat a reply goes back to');
-assert.equal(inbound[0].messageId, '7', 'and the message it answers');
-assert.equal(inbound[0].text, 'hello из плагина');
+    await wait(50);
+    assert.equal(inbound.length, 1, 'an inbound message reaches a handler');
+    assert.equal(inbound[0].chatId, '285532172', 'with the chat a reply goes back to');
+    assert.equal(inbound[0].messageId, '7', 'and the message it answers');
+    assert.equal(inbound[0].text, 'hello из плагина');
 
-await assert.rejects(() => relay.callTool('react', { chat_id: '1', message_id: '2', emoji: '👍' }), /no such message/, 'a refused tool call is an error, not a silent success');
+    await assert.rejects(() => relay.callTool('react', { chat_id: '1', message_id: '2', emoji: '👍' }), /no such message/, 'a refused tool call is an error, not a silent success');
 
-assert.equal((await relay.listTools()).length, 4);
-await assert.rejects(() => relay.invokeTool('missing', {}), /does not advertise/);
-const edited = await relay.invokeTool('edit_message', { chat_id: '1', message_id: '2', text: 'updated' });
-assert.equal(edited.content[0].text, 'sent (id: 42)');
-const refused = await relay.invokeTool('react', { chat_id: '1', message_id: '2', emoji: '👍' });
-assert.equal(refused.isError, true, 'generic calls preserve plugin errors');
+    assert.equal((await relay.listTools()).length, 4);
+    await assert.rejects(() => relay.invokeTool('missing', {}), /does not advertise/);
+    const edited = await relay.invokeTool('edit_message', { chat_id: '1', message_id: '2', text: 'updated' });
+    assert.equal(edited.content[0].text, 'sent (id: 42)');
+    const refused = await relay.invokeTool('react', { chat_id: '1', message_id: '2', emoji: '👍' });
+    assert.equal(refused.isError, true, 'generic calls preserve plugin errors');
 
-relay.stop();
-await wait(300);
-assert.equal(exits.length, 1, 'a stopped plugin reports its exit rather than leaving a promise hanging');
-
-rmSync(home, { recursive: true, force: true });
+    const exitEvent = waitForExit(relay, 5000);
+    relay.stop();
+    const exit = await exitEvent;
+    assert.equal(exit.code, 0, 'the plugin exits successfully after stop');
+    assert.equal(exit.signal, null, 'the plugin is not terminated by a signal');
+    assert.equal(exits.length, 1, 'a stopped plugin emits exactly one exit event');
+} finally {
+    try {
+        if (relay.child) {
+            const cleanupExit = waitForExit(relay, 2500).catch(() => {});
+            try {
+                relay.stop();
+            } catch {}
+            await cleanupExit;
+        }
+    } catch {}
+    try {
+        rmSync(home, { recursive: true, force: true });
+    } catch {}
+}
 console.log('\nOK — the extension can be a channel plugin\'s client: handshake, inbound, tools and exit');

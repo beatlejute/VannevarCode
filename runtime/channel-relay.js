@@ -40,8 +40,11 @@ function expandRoot(value, root) {
 // extensions, then the runtime's own install directory.
 function resolveCommand(command) {
     if (/[\/]/.test(command)) return command;
-    const exts = process.platform === 'win32' ? ['', '.exe', '.cmd'] : [''];
-    const dirs = (process.env.PATH || '').split(process.platform === 'win32' ? ';' : ':');
+    const windows = process.platform === 'win32';
+    // Windows cannot spawn extensionless POSIX shims such as the `bun` file installed by nvm-windows.
+    // Prefer native executables, then use a command script through cmd.exe.
+    const exts = windows ? ['.exe', '.cmd', '.bat'] : [''];
+    const dirs = (process.env.PATH || '').split(windows ? ';' : ':');
     dirs.push(require('path').join(require('os').homedir(), '.bun', 'bin'));
     for (const dir of dirs) {
         if (!dir) continue;
@@ -54,6 +57,27 @@ function resolveCommand(command) {
         }
     }
     return command;
+}
+
+// Node cannot spawn .cmd/.bat files directly. Wrap only those scripts with cmd.exe, preserving each
+// argument as a quoted Windows command-line value rather than enabling a general shell for the relay.
+function quoteWindowsArgument(value) {
+    const text = String(value);
+    let quoted = '"';
+    let backslashes = 0;
+    for (const char of text) {
+        if (char === '\\') {
+            backslashes += 1;
+        } else if (char === '"') {
+            quoted += '\\'.repeat(backslashes * 2 + 1) + '"';
+            backslashes = 0;
+        } else {
+            quoted += '\\'.repeat(backslashes) + char;
+            backslashes = 0;
+        }
+    }
+    quoted += '\\'.repeat(backslashes * 2) + '"';
+    return quoted;
 }
 
 // Only this extension starts a plugin with the relay marker, so every process carrying it is one of
@@ -151,7 +175,18 @@ class ChannelRelay {
                     // networks. Keep TLS verification enabled and include the OS-managed CA store.
                     env.BUN_OPTIONS = ((env.BUN_OPTIONS || '') + ' --use-system-ca --preload=' + preloadPath).trim();
                 }
-                child = spawn(resolveCommand(expandRoot(this.command, this.cwd)), args, { cwd: this.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+                const command = resolveCommand(expandRoot(this.command, this.cwd));
+                const spawnOptions = { cwd: this.cwd, env, stdio: ['pipe', 'pipe', 'pipe'] };
+                if (process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)) {
+                    const commandLine = [command, ...args].map(quoteWindowsArgument).join(' ');
+                    const comspec = env.ComSpec || env.COMSPEC || 'cmd.exe';
+                    child = spawn(comspec, ['/d', '/s', '/c', '"' + commandLine + '"'], {
+                        ...spawnOptions,
+                        windowsVerbatimArguments: true,
+                    });
+                } else {
+                    child = spawn(command, args, spawnOptions);
+                }
             } catch (e) {
                 reject(e);
                 return;
@@ -437,4 +472,4 @@ class ChannelRelay {
     }
 }
 
-module.exports = { ChannelRelay, RELAY_FLAG };
+module.exports = { ChannelRelay, RELAY_FLAG, resolveCommand };

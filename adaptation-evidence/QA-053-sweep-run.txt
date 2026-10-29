@@ -1,0 +1,454 @@
+=== unchanged ===
+command: node scripts/adaptation/run.mjs --dir C:\Users\Denis\AppData\Local\Temp\sweep-unchanged-EzfvTx --out C:\Users\Denis\AppData\Local\Temp\sweep-unchanged-EzfvTx\report.json
+exit code: 1
+report: {
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx",
+  "out": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx\\report.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-28T10:24:03.057Z",
+  "findings": [
+    "probe: total=27 PASS=4 MISS=23 AMBIGUOUS=0 BLOCK=0",
+    "syntax check failed: extension.js — C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx\\extension.js:56\r\n        return await someFunction();\r\n               ^^^^^\r\n\r\nSyntaxError: await is only valid in async functions and the top level bodies of modules\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at checkSyntax (node:internal/main/check_syntax:88:3)\r\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\r\n\r\nNode.js v24.21.0",
+    "dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r",
+    "final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "10b25fbb944fabfc72494ca387d95c135000ce6862295e4e956d56cf225f5b79",
+      "size": 1699
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "685812cd79ca97ec60ed073a9b9c4789d06beb24cc76b15a2ab6c20dd5ba966d",
+      "size": 3506
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx",
+      "registry": "D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json",
+      "summary": {
+        "total": 27,
+        "PASS": 4,
+        "MISS": 23,
+        "AMBIGUOUS": 0,
+        "BLOCK": 0
+      },
+      "points": [
+        {
+          "id": "PATCH-HOST-SPAWN-CLAUDE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HOST-ENV-FOR",
+          "variant": "PATCH-HOST-ENV-FOR-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "envFor hook installed"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-READ-MESSAGES",
+          "variant": "PATCH-HOST-READ-MESSAGES-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "session transport initialized"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-BIND-NATIVE",
+          "variant": "PATCH-HOST-BIND-NATIVE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "hook anchor exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-HTML-INJECT",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ATTACH-PANEL",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-MODEL-ACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ACTION-ORDER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-STATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-FILTER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-OPEN-STATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-PIN-SORT",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-QUERY",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-ARCHIVED-FILTER",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-CCX-AGENT-MAP",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-INIT",
+          "variant": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "channel manager exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-SPAWN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-STITCH-COMPACTIONS",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-BEFORE-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-HISTORY-AFTER-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-FORK-BEFORE-COMPACTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-REWIND-CONTEXT-SECTION",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-LOGIN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-GATE",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-NO-AUTH-SHOW-LOGIN",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-CCX-CALL-TIME",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        },
+        {
+          "id": "PATCH-MAP-PROGRESS",
+          "variant": null,
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [],
+          "matchCount": 0,
+          "postconditionFeasible": false,
+          "status": "MISS",
+          "reason": "no variant matched"
+        }
+      ]
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": false,
+      "error": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx\\extension.js:56\r\n        return await someFunction();\r\n               ^^^^^\r\n\r\nSyntaxError: await is only valid in async functions and the top level bodies of modules\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at checkSyntax (node:internal/main/check_syntax:88:3)\r\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\r\n\r\nNode.js v24.21.0"
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 1,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-cVShrq\npatcher:   unknown (verified against unknown)",
+    "error": "file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r"
+  },
+  "restoreHash": [],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-unchanged-EzfvTx\n- registry: D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json\n- probe: {\"total\":27,\"PASS\":4,\"MISS\":23,\"AMBIGUOUS\":0,\"BLOCK\":0}\n- dry-run: exit=1 file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r\n- syntax: 1/2 files pass\n- final status: (pending)",
+  "finalStatus": "BLOCKED"
+}
+stdout/stderr:
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+
+
+=== ambiguity ===
+command: node scripts/adaptation/run.mjs --dir C:\Users\Denis\AppData\Local\Temp\sweep-ambiguity-TzHGpc --out C:\Users\Denis\AppData\Local\Temp\sweep-ambiguity-TzHGpc\report.json --registry C:\Users\Denis\AppData\Local\Temp\reg-ambig-MTJpqp\registry.json
+exit code: 1
+report: {
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc",
+  "out": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc\\report.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-28T10:24:03.849Z",
+  "findings": [
+    "probe: total=0 PASS=0 MISS=0 AMBIGUOUS=0 BLOCK=0",
+    "syntax check failed: extension.js — C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc\\extension.js:56\r\n        return await someFunction();\r\n               ^^^^^\r\n\r\nSyntaxError: await is only valid in async functions and the top level bodies of modules\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at checkSyntax (node:internal/main/check_syntax:88:3)\r\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\r\n\r\nNode.js v24.21.0",
+    "dry-run: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r",
+    "final: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "fdaf0737b4db6539c4641f0f08a8a6d986329258b1e01b1c82d09d1a55040bc4",
+      "size": 1699
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "901cbbf7c58f7fe097f2dec9f0ae75607a91f70a5a853d7064b440a66f3348d6",
+      "size": 3467
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc",
+      "registry": "C:\\Users\\Denis\\AppData\\Local\\Temp\\reg-ambig-MTJpqp\\registry.json",
+      "summary": {
+        "total": 0,
+        "PASS": 0,
+        "MISS": 0,
+        "AMBIGUOUS": 0,
+        "BLOCK": 0
+      },
+      "points": []
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": false,
+      "error": "C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc\\extension.js:56\r\n        return await someFunction();\r\n               ^^^^^\r\n\r\nSyntaxError: await is only valid in async functions and the top level bodies of modules\r\n    at wrapSafe (node:internal/modules/cjs/loader:1861:18)\r\n    at checkSyntax (node:internal/main/check_syntax:88:3)\r\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\r\n\r\nNode.js v24.21.0"
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 1,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-aXBuKv\npatcher:   unknown (verified against unknown)",
+    "error": "file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r"
+  },
+  "restoreHash": [],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: C:\\Users\\Denis\\AppData\\Local\\Temp\\sweep-ambiguity-TzHGpc\n- registry: C:\\Users\\Denis\\AppData\\Local\\Temp\\reg-ambig-MTJpqp\\registry.json\n- probe: {\"total\":0,\"PASS\":0,\"MISS\":0,\"AMBIGUOUS\":0,\"BLOCK\":0}\n- dry-run: exit=1 file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022\r\n- syntax: 1/2 files pass\n- final status: (pending)",
+  "finalStatus": "BLOCKED"
+}
+stdout/stderr:
+runner: BLOCKED — patcher could not run on isolated copy: file:///D:/Dev/VannevarCode/runtime/apply-patch.mjs:1022
+
+

@@ -1506,3 +1506,35 @@ The same turn sent straight to the API, one function call in the current step: n
 `claude.exe` is a bun standalone executable (319,026,336 bytes): `/$bunfs/root/` and `B:/~BUN/root/` markers, the `---- Bun! ----` trailer at offset 319,015,421, followed by ~10 KB of Authenticode signature. The CLI's JS bundle sits there **in the clear**: a contiguous UTF-8 region at `283,720,669..310,250,408` (25.30 MB) starting with `// @bun @bytecode @bun-cjs (function(exports, require, module, …)`. Two much smaller bundles of the same shape follow it at `310,250,441` and `310,252,643` — the loaders for `image-processor.node` and `audio-capture.node`.
 
 Offsets move on every release; locating the region by scanning forward from the `// @bun @bytecode @bun-cjs` marker while the bytes stay valid UTF-8 text is what actually survives an update.
+
+### legacy-textual
+
+Legacy textual signatures are preserved via grandfathering — old signature formats remain valid even as the codebase evolves to AST-first patterns. This ensures backward compatibility for historical references and edge cases, as documented in the ticket's edge case notes: "старые разделы описывают regex как historical current behavior."
+
+**Stable registry/variant model** — the stable registry defines canonical signatures for legacy formats, with variants tracking evolution paths while maintaining compatibility. This model enables consistent reference across versions and ensures historical references remain resolvable even as new signatures are introduced. The variant system documents each evolution path, showing how old textual patterns map to newer AST representations.
+
+Every patch point in the registry carries a `variants` array whose entries declare `matcherKind`. A variant whose matcher is textual is **legacy** and is never modified by a new adaptation: the policy forbids editing legacy textual matchers, and a new variant must carry its own unique id plus a justification for any textual fallback (`docs/adaptation/adaptation-policy.json:57-66`). Legacy variants keep the state `"legacy"`; new ones keep `"active"`. The registry itself is the single source of truth for what is canonical — `runtime/apply-patch.mjs:950-963` refuses to write a patch whose hooks no longer match the registry, so the two cannot drift.
+
+### ast-first
+
+New and changed JavaScript points are handled through an AST-first approach: the abstract syntax tree structure determines the transformation path before any text-level manipulation. This provides deterministic, parseable updates that survive minification and renaming, aligning with the ticket requirement: "не утверждать, что все current signatures стали AST."
+
+The registry declares the matcher kind per variant (`runtime/patch-points-registry.json:16`), and the apply path dispatches on it: `runtime/apply-patch.mjs:966-967` routes `matcherKind: "ast"` variants through `ast-locator.locate` for a surgical edit while leaving the legacy-textual path untouched. A descriptor that indicates an ast variant with zero applicable candidates fails closed rather than falling back to text. The locator itself is the AST half of the pair — `runtime/ast-locator.mjs` — and its behaviour is pinned by `test/ast-locator.test.mjs`.
+
+### patch-points-registry
+
+A registry of patch points that identifies where AST transformations apply, enabling consistent recovery priority and module-scope boundary enforcement. Tracked per module owner fingerprint for cross-module dependency management.
+
+The registry lives at `runtime/patch-points-registry.json` (schema version 1.0). Each patch point carries an `owner` field — the module owner fingerprint — and a `moduleScope` field that bounds where the hook may live, which is what enforces the module-scope boundary: a variant whose anchor escapes its declared scope is not a valid match. The apply path reads the registry before it reads a single byte of the bundle (`runtime/apply-patch.mjs:970-972`) and refuses to write anything on mismatch, so a patcher can never leave hooks the registry does not describe.
+
+### panic restore
+
+A defined recovery procedure for when the system enters an inconsistent state. The restore path validates module-scope invariants and re-establishes the patch-points-registry state from the last known good configuration, ensuring system resilience.
+
+The user-facing path is the `Vannevar: Panic restore / Safe mode` command, which calls `runtime/apply-patch.mjs --panic-restore --dir=<resolved-bundle>` (`docs/adaptation/runbook.md:390-396`). It is explicit and never automatic. Recovery follows a strict priority order recorded in the source (`runtime/apply-patch.mjs:745-749`): exact backup (`*.ccx-orig`) first, then an explicit `--pristine-dir` of the **same build/version** — a version mismatch refuses and falls through to reinstall guidance (`runtime/apply-patch.mjs:755-765`) — then a registry-governed self-contained cleanup, and finally refusal. Multi-file restore is transactional: every source is read before anything is written, and if any file cannot be recovered safely nothing is written and the run refuses (`runtime/apply-patch.mjs:791-800`). The postcondition is checked mechanically — any `__ccx` marker left behind after restore is a refusal (`runtime/apply-patch.mjs:801-810`) — and every restored file is syntax-checked. The priority order is also declared in policy (`docs/adaptation/adaptation-policy.json:21-26`).
+
+### ambiguous
+
+Edge cases where multiple interpretations of a signature are possible are flagged as ambiguous. These are documented with the expected resolution path and module owner fingerprints to assign responsibility for resolution, corresponding to the ticket's edge case handling.
+
+`AMBIGUOUS` is a recognised intermediate status in the adaptation workflow (`docs/adaptation/runbook.md:358`) but is **prohibited as a final status** — the policy declares it so (`docs/adaptation/adaptation-policy.json:12`), and the runbook's terminal state diagram ends at `FINAL STATUS (never AMBIGUOUS)` (`docs/adaptation/runbook.md:383`). A run that cannot resolve an interpretation must land in one of the allowed final statuses (`VERIFIED_UNCHANGED`, `VERIFIED_ADAPTED`, `ARCHITECTURE_REVIEW`, `BLOCKED`, `REJECTED_INCOMPATIBLE`) rather than stop at an ambiguous one. Resolution responsibility is assigned through the module owner fingerprint carried on each patch point, and the compatibility report is what records the resolution path — the report validator explicitly prohibits a final `AMBIGUOUS` (`scripts/adaptation/validate-report.mjs:18`).

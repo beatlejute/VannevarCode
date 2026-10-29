@@ -12,7 +12,9 @@ import {
 } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { locate } from './ast-locator.mjs';
 
 const HOST_REQUIRE =
     '/*__ccx*/let __p=require("path").join(require("os").homedir(),".claude","vannevar","host.js");' +
@@ -31,6 +33,7 @@ const CHANNEL_INITIALIZED = /channelInitialized\(([\w$]+)\)\{/;
 
 const PATCHES = [
     {
+        id: 'PATCH-HOST-READ-MESSAGES',
         file: 'extension.js',
         optional: true,
         find: /(async readMessages\(\)\{try\{for await\(let ([\w$]+) of this\.transport\.readMessages\(\)\)\{)/,
@@ -39,6 +42,7 @@ const PATCHES = [
         where: 'replace',
     },
     {
+        id: 'PATCH-HOST-BIND-NATIVE',
         file: 'extension.js',
         optional: true,
         find: /let ([\w$]+)=\(await ([\w$]+)\(\{options:([\w$]+)\}\)\)\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
@@ -47,6 +51,7 @@ const PATCHES = [
         where: 'replace',
     },
     {
+        id: 'PATCH-HOST-SPAWN-CLAUDE',
         file: 'extension.js',
         find: /async spawnClaude\(([\w$]+),([^)]*)\)\{/,
         replace: (_found, input, rest) =>
@@ -64,6 +69,7 @@ const PATCHES = [
         // then re-emitted with the host's own <script> in front of that tag. The gap is lazy and the tag
         // is unique, so the four `getHtmlForWebview(` occurrences still yield exactly one match — the
         // definition, not a call site, since only the definition is followed by `{`.
+        id: 'PATCH-WEBVIEW-HTML-INJECT',
         file: 'extension.js',
         find: /getHtmlForWebview\(([\w$]+)[^)]*\)\{[\s\S]*?<script nonce="\$\{([\w$]+)\}" src="\$\{[\w$]+\}" type="module"><\/script>/,
         replace: (found, webview, nonce) => {
@@ -83,6 +89,7 @@ const PATCHES = [
         // Same story as #3: the icon local is renamed too (2.1.220–2.1.224 `light:a,dark:a`, 2.1.226 `light:s,dark:s`).
         // Anchoring on the shape — and on the `.webview.options=` that always follows — keeps the panel variable
         // available for the call, which is the one name the injected code actually needs.
+        id: 'PATCH-WEBVIEW-ATTACH-PANEL',
         file: 'extension.js',
         find: /([\w$]+)\.iconPath=\{light:([\w$]+),dark:\2\},(\1\.webview\.options=)/,
         replace: (_found, panel, icon, tail) =>
@@ -120,6 +127,7 @@ const PATCHES = [
         // The resume id is read off the options object (`resume:t`) instead of the parameter, which is renamed too.
         // The object itself goes along as the third argument: envFor clears its `resume` when no transcript exists
         // for that id, and the SDK builds `--resume=<id>` from that field after this expression has run.
+        id: 'PATCH-HOST-ENV-FOR',
         file: 'extension.js',
         find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)/,
         replace: (_found, opts, bin, args, env, tail) =>
@@ -150,6 +158,7 @@ const PATCHES = [
         // is therefore matched as `[^;]*?` instead of a back-reference to the selection local. The three
         // reads off the session (`modelSelection`, `claudeConfig`, `lastServedModel`) still pin the match,
         // and a minified expression cannot contain a `;`, so the anchor after it cannot be overshot.
+        id: 'PATCH-WEBVIEW-MODEL-ACTION',
         file: 'webview/index.js',
         find: /let ([\w$]+)=([\w$]+)\.modelSelection\.value,([\w$]+)=[\w$]+\(\2\.claudeConfig\.value\),([\w$]+)=[\w$]+\([^;]*?,\2\.lastServedModel\.value,\3\);([\w$]+)\.commandRegistry\.registerAction\(\{id:"model",label:"Switch model…",description:"Change the AI model",trailingComponent:\4\?([\w$]+)\("span"/,
         replace: (found, _sel, session, _cfg, label, ctx, jsx) =>
@@ -171,6 +180,7 @@ const PATCHES = [
         // A literal until 2.1.284, which put a stock entry of its own into the list ("ultracode", after
         // "effort-level"). So the list is matched by the three ids the page's entries are placed against,
         // and whatever stock ids sit between them are carried over in the order the release gave them.
+        id: 'PATCH-WEBVIEW-ACTION-ORDER',
         file: 'webview/index.js',
         find: /\["model",((?:"[\w-]+",)*)"toggle-thinking",((?:"[\w-]+",)*)"account-usage"\]/,
         replace: (_found, beforeThinking, beforeAccount) =>
@@ -204,6 +214,7 @@ const PATCHES = [
         // used to be adjacent, so the signature simply named them in a row; now it carries a lazy gap
         // that is captured and re-emitted verbatim. Anchoring on the pair that still brackets the
         // insertion keeps the match unique — a bare `useState("")` is not.
+        id: 'PATCH-WEBVIEW-SEARCH-STATE',
         file: 'webview/index.js',
         find: /,\[([\w$]+),([\w$]+)\]=([\w$]+)\(""\),([\s\S]{0,160}?)\[([\w$]+),([\w$]+)\]=\3\(null\),([\w$]+)=([\w$]+)\(new Map\)/,
         replace: (_found, query, setQuery, useState, between, renaming, setRenaming, refs, useRef) =>
@@ -230,6 +241,7 @@ const PATCHES = [
         // The set is rebuilt on every render — this expression re-runs with the component, and a set
         // left over from an earlier query would rank rows by a word no longer in the box. A query-less
         // render sets it to null instead, which is the sort's signal that there is nothing to rank by.
+        id: 'PATCH-WEBVIEW-SEARCH-FILTER',
         file: 'webview/index.js',
         find: /([\w$]+)=([\w$]+)\.toLowerCase\(\),([\w$]+)=\2\?([\w$]+)\.filter\(\(([\w$]+)\)=>([\w$]+)\(\5\)\.toLowerCase\(\)\.includes\(\1\)\|\|\(\5\.gitBranch\.value\?\.toLowerCase\(\)\.includes\(\1\)\?\?!1\)\):\4/,
         replace: (_found, lowerQ, query, result, source, item, titleFn) =>
@@ -254,6 +266,7 @@ const PATCHES = [
         // `openState:` is a property name rather than a minified local, which makes this the steadiest
         // anchor in the component. The assignment rides the same `let` chain, so it re-runs on every
         // render and a useCallback identity change never leaves a stale accessor behind.
+        id: 'PATCH-WEBVIEW-OPEN-STATE',
         file: 'webview/index.js',
         find: /([\w$]+)=[\w$]+\(\(([\w$]+)\)=>\(\{openState:([\w$]+)\(\2\),remoteStatus:/,
         replace: (found, _pair, _row, accessor) =>
@@ -284,6 +297,7 @@ const PATCHES = [
         // its title ranks above one found only in its transcript. It is read off globalThis for the
         // same reason the accessor is — #7's locals are a statement away and not in scope here — and
         // it is null on a query-less render, which leaves the order as pins-and-liveness alone.
+        id: 'PATCH-WEBVIEW-PIN-SORT',
         file: 'webview/index.js',
         find: /,([\w$]+)=[\w$]+\(\(\)=>\{if\(!([\w$]+)\)return ([\w$]+);return [\w$]+\(\3,\(([\w$]+)\)=>[\w$]+\(\4\)===!0\)\},\[\3,\2,[\w$]+\]\)/,
         replace: (found, sorted) =>
@@ -304,6 +318,7 @@ const PATCHES = [
         // made it a block with a second setter in it, `{X0(Y1.target.value),I2(!0)}`, which a signature
         // spelling out one call could not match. Taking the block as an opaque statement list means the
         // next statement they add inside it rides along instead of stopping the patch.
+        id: 'PATCH-WEBVIEW-SEARCH-QUERY',
         file: 'webview/index.js',
         find: /onChange:\(([\w$]+)\)=>\{([^{}]*)\},placeholder:"Search sessions…"/,
         replace: (_found, param, body) =>
@@ -327,6 +342,7 @@ const PATCHES = [
         //
         // The grouping call takes `F1?N:[]` — the app already disables grouping while a query is typed —
         // so a lifted row lands in `ungrouped`, which is the block the sort ordered.
+        id: 'PATCH-WEBVIEW-ARCHIVED-FILTER',
         file: 'webview/index.js',
         find: /([\w$]+)=([\w$]+)&&!([\w$]+),([\w$]+)=([\w$]+)\(\1\?([\w$]+):\[\],([\w$]+),([\w$]+),([\w$]+)\)/,
         replace: (_found, grouping, groupsOn, query, result, groupFn, groups, list, idOf, isArchived) =>
@@ -348,6 +364,7 @@ const PATCHES = [
         // disk, and gives each boundary back its real parent. The relink loop that follows is the
         // anchor, so the hook cannot drift in front of the index it needs. Only the first parameter is
         // captured: 2.1.284 gave the walk a second, optional one that reports the leaf it chose.
+        id: 'PATCH-HISTORY-STITCH-COMPACTIONS',
         file: 'extension.js',
         hits: 2,
         find: /(async function [\w$]+\(([\w$]+)(?:,[\w$]+)*\)\{let ([\w$]+)=new Map;for\(let ([\w$]+) of \2\)\3\.set\(\4\.uuid,\4\);)(let [\w$]+=0;for\(let ([\w$]+) of \3\.values\(\)\)\{if\(\6\.type!=="system"\|\|\6\.subtype!=="compact_boundary"\)continue;)/,
@@ -359,6 +376,7 @@ const PATCHES = [
         // The reader in front of that walk. Past 5 MB it hands over only the bytes after the last
         // boundary, so there would be nothing to stitch to. The stock opt-out is an environment
         // variable, and setting it in the extension host would leak into every CLI it spawns.
+        id: 'PATCH-HISTORY-BEFORE-COMPACTION',
         file: 'extension.js',
         hits: 2,
         find: /if\(([\w$]+)>([\w$]+)&&!([\w$]+)\.CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP\)(return\(await [\w$]+\()/,
@@ -371,6 +389,7 @@ const PATCHES = [
         // The page's own cap: past 600 messages it keeps 500, dropping tool-only turns first and then
         // the oldest. It applies to a live tab as much as to a reopened one, and a history that reaches
         // back past a compaction crosses it on any long session.
+        id: 'PATCH-HISTORY-AFTER-COMPACTION',
         file: 'webview/index.js',
         find: /(function [\w$]+\(([\w$]+),[\w$]+\)\{if\()(\2\.length<=[\w$]+)(\)return\{messages:\2,removedIndices:\[\]\};)/,
         replace: (_found, head, _list, cond, tail) =>
@@ -384,6 +403,7 @@ const PATCHES = [
         // code already returns null for a tab with no session id. Through 2.1.294 the selected
         // message's fork point was found by scanning backward; 2.1.296 delegates that lookup to
         // `y51(messages,index)`. The stable `messages.indexOf(message)` relationship spans both.
+        id: 'PATCH-FORK-BEFORE-COMPACTION',
         file: 'webview/index.js',
         find: /let ([\w$]+)=([\w$]+)\.sessionId\.value;if\(!\1\)return null;let ([\w$]+)=\2\.messages\.value,[\s\S]{0,160}?\.indexOf\(([\w$]+)\)/,
         replace: (found, id, session, _list, message) =>
@@ -398,6 +418,7 @@ const PATCHES = [
     {
         // The same fork reached from the other side: Rewind in the Context section lists every prompt
         // of the tab to pick one. Messages before the compaction are left out of that list.
+        id: 'PATCH-REWIND-CONTEXT-SECTION',
         file: 'webview/index.js',
         find: /for\(let ([\w$]+)=0;\1<([\w$]+)\.length;\1\+\+\)\{let ([\w$]+)=\2\[\1\];if\(\3\.type!=="user"\|\|\3\.isSynthetic\|\|!\3\.uuid\|\|\3\.parentToolUseId\)continue;/,
         replace: (found, _i, list, message) =>
@@ -423,6 +444,7 @@ const PATCHES = [
         // CSS-module object come out of the match. Its click persists the choice in localStorage and
         // reloads, which is what makes the restored flag (see runtime/webview.js) reach the memo before
         // the app renders; no state plumbing through the login component is needed.
+        id: 'PATCH-NO-AUTH-LOGIN',
         file: 'webview/index.js',
         find: /([\w$]+)\("p",\{className:([\w$]+)\.noteBeneathButton,children:"Instructions on how to use API keys or third-party providers\."\}\)/,
         replace: (found, jsx, cls) =>
@@ -438,6 +460,7 @@ const PATCHES = [
         // The gate itself. The flag is read in front of the account check, so an opted-out page never
         // has to have a token, an authStatus or a session view; the stock expression is kept as the
         // fallback behind the ||, so a page that never opted out is byte-for-byte the old behaviour.
+        id: 'PATCH-NO-AUTH-GATE',
         file: 'webview/index.js',
         find: /([\w$]+)=([\w$]+)\(\(\)=>!this\.forceLogin\.value&&this\.hasSessionView\.value\)/,
         replace: (_found, name, memo) =>
@@ -449,6 +472,7 @@ const PATCHES = [
         // to put the sign-in screen back up over a session that is perfectly usable on another provider.
         // An opted-out page leaves that call inert, so the profile keeps working instead of being
         // interrupted by a prompt it has already answered.
+        id: 'PATCH-NO-AUTH-SHOW-LOGIN',
         file: 'webview/index.js',
         find: /showLogin\(\)\{this\.forceLogin\.value=!0\}/,
         replace: 'showLogin(){globalThis.__ccxNoAuth||(this.forceLogin.value=!0)}',
@@ -471,6 +495,7 @@ const PATCHES = [
         // `usage?.totalTokens` as its second `let`, and the duration local in front of it comes out of
         // the match rather than being named — the same helper call the stock code makes — so a renamed
         // formatter or a renamed parameter rides along. One match in 2.1.280 through 2.1.286.
+        id: 'PATCH-CCX-CALL-TIME',
         file: 'webview/index.js',
         find: /function ([\w$]+)\(([\w$]+),([\w$]+)\)\{let ([\w$]+)=([\w$]+)\(\2,\3\),([\w$]+)=\2\.usage\?\.totalTokens;return\[/,
         replace: (_found, fn, agent, now, duration, durationOf, tokens) =>
@@ -482,6 +507,7 @@ const PATCHES = [
     },
     {
         // Anchor the row's status and meta child together, not an arbitrary text-producing helper.
+        id: 'PATCH-MAP-PROGRESS',
         file: 'webview/index.js',
         find: /function ([\w$]+)\(\{agent:([\w$]+),waiting:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,900}?"data-agent-status":[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:([\w$]+)\(([\w$]+),\{agent:\2\}\)\}\)\]\}\)\}/,
         replace: (_found, fn, agent, waiting, click, body, h, styles, metaH, meta) =>
@@ -492,6 +518,7 @@ const PATCHES = [
     },
     {
         // The root subscribes to the same map signal as the dialog's child list.
+        id: 'PATCH-WEBVIEW-CCX-AGENT-MAP',
         file: 'webview/index.js',
         find: /function ([\w$]+)\(\{session:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,600}?\.rowMain[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:(\[[\s\S]{0,150}?\.join\(" · "\))\}\)\]\}\)\}/,
         replace: (_found, fn, session, click, body, h, styles, meta) =>
@@ -523,6 +550,7 @@ const PATCHES = [
         // 2.1.278) are not installed on the machine this was written on, so the anchor could not be
         // checked against them, and a miss there must not refuse the whole patch. A miss is not silent
         // — EXPECTATIONS below prints a NOTE for it, and the menu row says so rather than pretending.
+        id: 'PATCH-WEBVIEW-CHANNEL-INIT',
         file: 'extension.js',
         optional: true,
         find: CHANNEL_INITIALIZED,
@@ -538,6 +566,7 @@ const PATCHES = [
         // from a channel. The callback itself is handed back untouched, and the wrapper falls through
         // to it whenever no relay is running or nothing is listening: this adds a second place an answer
         // may come from, never a second decision.
+        id: 'PATCH-WEBVIEW-CHANNEL-SPAWN',
         file: 'extension.js',
         optional: true,
         find: /async spawnClaude\(([\w$]+),([\w$]+),([\s\S]{0,6000}?)canUseTool:([\w$]+),onUserDialog:([\w$]+)/,
@@ -682,6 +711,120 @@ function restore(dir) {
     console.log(n ? `Restored ${n} file(s) from backup.` : 'Nothing to restore.');
 }
 
+function reinstallGuidance() {
+    return 'reinstall guidance: reinstall the Claude Code extension from the marketplace/VSIX or restore the exact pristine bundle — safe recovery is unprovable and nothing was written.';
+}
+
+function flagValue(prefix) {
+    const eq = process.argv.find((a) => a.startsWith(prefix + '='));
+    if (eq !== undefined) return eq.slice(prefix.length + 1);
+    const i = process.argv.indexOf(prefix);
+    return i !== -1 && i + 1 < process.argv.length ? process.argv[i + 1] : null;
+}
+
+function registryEntryFor(rel) {
+    try {
+        const registry = loadRegistry(registryPath());
+        return (Array.isArray(registry.patchPoints) ? registry.patchPoints : []).find((p) => p.targetFile === rel);
+    } catch {}
+    return null;
+}
+
+function getVersionFromDir(dir) {
+    const pkgPath = path.join(dir, 'package.json');
+    if (existsSync(pkgPath)) {
+        try {
+            const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+            if (pkg.version && typeof pkg.version === 'string') return pkg.version;
+        } catch {}
+    }
+    const match = path.basename(dir).match(/anthropic\.claude-code-(\d+\.\d+\.\d+)/);
+    return match ? match[1] : null;
+}
+
+// Panic restore — explicit emergency path, never automatic. Recovery priority:
+ // exact backup (*.ccx-orig) -> explicit --pristine-dir of the same build ->
+ // registry-governed self-contained raw cleanup -> refusal.
+ // Multi-file restore is transactional: every source is read before anything is written;
+ // if any file cannot be recovered safely, nothing is written and the run refuses.
+ // Postcondition: Vannevar markers removed + syntax valid.
+ function panicRestore(dir, pristineDir) {
+     const files = patchedFiles();
+     const plan = [];
+
+     // Version check for pristineDir: must match target build/version.
+     let targetVersion = null;
+     let pristineVersion = null;
+     if (pristineDir) {
+         targetVersion = getVersionFromDir(dir);
+         pristineVersion = getVersionFromDir(pristineDir);
+         if (targetVersion && pristineVersion && targetVersion !== pristineVersion) {
+             console.error(`panic-restore: pristine version mismatch — target ${targetVersion} vs pristine ${pristineVersion}`);
+             console.error(reinstallGuidance());
+             return 1;
+         }
+     }
+
+     for (const rel of files) {
+         const file = path.join(dir, rel);
+         const backup = backupPath(file);
+         if (existsSync(backup)) {
+             plan.push({ rel, file, kind: 'backup', source: backup });
+             continue;
+         }
+         if (pristineDir) {
+             const pristine = path.join(pristineDir, rel);
+             if (existsSync(pristine)) {
+                 plan.push({ rel, file, kind: 'pristine', source: pristine });
+                 continue;
+             }
+         }
+         const entry = registryEntryFor(rel);
+         if (entry && entry.restorePolicy === 'self-contained') {
+             plan.push({ rel, file, kind: 'cleanup', source: file });
+             continue;
+         }
+         console.error(`panic-restore: ${rel} — no exact backup (*.ccx-orig), no pristine of the same build via --pristine-dir, and no self-contained registry restore policy`);
+         console.error(reinstallGuidance());
+         return 1;
+     }
+    // Read all sources before writing anything: fail-closed before the first write.
+    // Capture original state of all target files for transactional rollback on any write failure.
+    const originalState = new Map();
+    for (const rel of files) {
+        const file = path.join(dir, rel);
+        if (existsSync(file)) {
+            originalState.set(file, readFileSync(file, 'utf8'));
+        }
+    }
+
+    const writes = [];
+    try {
+        for (const item of plan) writes.push({ file: item.file, src: readFileSync(item.source, 'utf8') });
+        for (const w of writes) writeFileSync(w.file, w.src, 'utf8');
+    } catch (e) {
+        // Transactional rollback: restore all target files to their original state.
+        for (const [file, content] of originalState) {
+            try { writeFileSync(file, content, 'utf8'); } catch {}
+        }
+        console.error(`panic-restore: отказ перед записью — ${e.message}`);
+        console.error(reinstallGuidance());
+        return 1;
+    }
+    // Postcondition: Vannevar markers removed + syntax valid.
+    for (const rel of files) {
+        const file = path.join(dir, rel);
+        if (readFileSync(file, 'utf8').includes(MARKER)) {
+            console.error(`panic-restore: ${rel} — маркер __ccx остался после восстановления — отказ`);
+            console.error(reinstallGuidance());
+            return 1;
+        }
+        checkSyntax(file);
+    }
+    console.log(`panic-restore: восстановлено ${files.length} файл(ов); маркеры Vannevar удалены, синтаксис валиден`);
+    return 0;
+}
+
 // A signature is either a literal string or a RegExp, for the spots where the minifier renames locals
 function countHits(src, find) {
     if (typeof find === 'string') return src.split(find).length - 1;
@@ -702,7 +845,141 @@ function expand(patch, match) {
     return typeof patch.replace === 'function' ? patch.replace(...match) : patch.replace;
 }
 
+// --- The patch registry ---------------------------------------------------------------------------
+//
+// The patch points above are the runtime's own record of what it writes into somebody else's bundle.
+// `runtime/patch-points-registry.json` is that record in a form that can be read without running the
+// patcher, and every entry in it carries the same stable id as the patch it describes. A patch point
+// that is in one file and not in the other is a definition that drifted apart, and a bundle patched
+// from a drifted definition is a bundle nobody can describe afterwards.
+//
+// The registry is looked up next to this file rather than in the working directory: the patcher runs
+// from ~/.claude/vannevar on a user's machine and from a copied path in a test, and neither of them
+// is the repository. Nothing in this block reads the user's home or looks for an installed Claude
+// Code extension — that is what lets `--validate-registry` answer on a machine that has neither.
+const REGISTRY_FILE = 'patch-points-registry.json';
+const REGISTRY_SCHEMA = '1';
+
+function registryPath() {
+    return fileURLToPath(new URL(`./${REGISTRY_FILE}`, import.meta.url));
+}
+
+function loadRegistry(file) {
+    let text;
+    try {
+        text = readFileSync(file, 'utf8');
+    } catch (e) {
+        throw Error(`patch registry not readable: ${file} (${e.code || e.message})`);
+    }
+    try {
+        return JSON.parse(text);
+    } catch (e) {
+        throw Error(`patch registry is not valid JSON: ${file} (${e.message})`);
+    }
+}
+
+// Every difference between the two records, as a list. An empty list means the two agree.
+//
+// The mapping is one-to-one in both directions: a runtime patch without a registry entry is a hook
+// the registry does not describe, and a registry entry without a runtime patch is a point the
+// registry claims the patcher writes and does not. The registry's `required` flag and the runtime's
+// `optional` flag are not the same thing and are not compared here — `required` says the feature
+// matters, `optional` says the anchor may be absent on a release that never had it.
+function registryProblems(patches, registry) {
+    const problems = [];
+    const schema = String(registry.schemaVersion || '');
+    if (schema.split('.')[0] !== REGISTRY_SCHEMA) {
+        problems.push(`registry schemaVersion ${schema || '(none)'} is not ${REGISTRY_SCHEMA}.x`);
+    }
+    const points = Array.isArray(registry.patchPoints) ? registry.patchPoints : null;
+    if (!points) {
+        problems.push('registry has no patchPoints array');
+        return problems;
+    }
+    const byId = new Map();
+    for (const point of points) {
+        if (byId.has(point.id)) problems.push(`duplicate registry id: ${point.id}`);
+        byId.set(point.id, point);
+    }
+    const runtimeIds = new Set();
+    for (const patch of patches) {
+        if (!patch.id) {
+            problems.push(`runtime patch for ${patch.file} has no id`);
+            continue;
+        }
+        if (runtimeIds.has(patch.id)) {
+            problems.push(`duplicate runtime id: ${patch.id}`);
+            continue;
+        }
+        runtimeIds.add(patch.id);
+        const point = byId.get(patch.id);
+        if (!point) {
+            problems.push(`runtime patch ${patch.id} has no registry entry`);
+            continue;
+        }
+        if (point.targetFile !== patch.file) {
+            problems.push(`registry entry ${patch.id} targets ${point.targetFile}, runtime patches ${patch.file}`);
+        }
+    }
+    for (const point of points) {
+        if (!runtimeIds.has(point.id)) problems.push(`registry entry ${point.id} has no runtime patch`);
+    }
+    return problems;
+}
+
+// `--validate-registry` answers one question — do the two records still describe the same patch
+// points — and answers it without touching the machine: it runs before the extension is looked for,
+// so it works in CI, in a fresh checkout and on a machine with no Claude Code installed.
+function validateRegistry() {
+    const file = registryPath();
+    let registry = null;
+    let problems = [];
+    try {
+        registry = loadRegistry(file);
+        problems = registryProblems(PATCHES, registry);
+    } catch (e) {
+        problems = [e.message];
+    }
+    if (problems.length) {
+        console.error(`patch registry mismatch (${file}):`);
+        for (const problem of problems) console.error(`  ${problem}`);
+        return 1;
+    }
+    console.log(`registry: ${file}`);
+    console.log(
+        `patch points: ${PATCHES.length} runtime patch(es) ↔ ${registry.patchPoints.length} registry entry(ies) — one-to-one`,
+    );
+    console.log('no Claude Code installation was looked for, and no user home was read');
+    return 0;
+}
+
+// The check the apply path runs before it writes anything: a patch that no longer matches the
+// registry is refused rather than written, because the bundle would then carry hooks the registry
+// does not describe, and the next run would describe hooks that are not on it.
+//
+// A patcher with no registry beside it is not a mismatch — there is nothing to compare it with — so
+// the patch goes on as before. The registry ships in runtime/ next to the patcher, so this only
+// happens where the patcher was copied on its own.
+function assertRegistryMatches() {
+    const file = registryPath();
+    if (!existsSync(file)) {
+        console.log(`  NOTE: no patch registry beside the patcher (${file}) — the patch points are not checked`);
+        return;
+    }
+    const problems = registryProblems(PATCHES, loadRegistry(file));
+    if (problems.length) {
+        throw Error(
+            `patch registry mismatch (${file}) — nothing was written:\n` +
+                problems.map((problem) => `  ${problem}`).join('\n'),
+        );
+    }
+}
+
 function apply(dir) {
+    // Before a single file is read:
+    // not after half the bundle has been written.
+    assertRegistryMatches();
+    const points = existsSync(registryPath()) ? loadRegistry(registryPath()).patchPoints : [];
     const byFile = new Map();
     for (const p of PATCHES) {
         if (!byFile.has(p.file)) byFile.set(p.file, []);
@@ -730,6 +1007,29 @@ function apply(dir) {
 
         let src = readFileSync(backupPath(file), 'utf8');
         for (const p of patches) {
+            const variants = (points.find((point) => point.id === p.id)?.variants || [])
+                .filter((variant) => variant.state !== 'deprecated');
+            if (variants.some((variant) => variant.matcherKind === 'ast')) {
+                const applicable = [];
+                for (const variant of variants) {
+                    if (variant.matcherKind === 'ast') {
+                        const ranges = locate(src, variant);
+                        if (ranges.length === 1) applicable.push({ variant, range: ranges[0] });
+                    } else if (countHits(src, p.find) === (p.hits || 1)) {
+                        applicable.push({ variant });
+                    }
+                }
+                if (applicable.length !== 1) throw Error(`${rel}: ${p.id} has ${applicable.length} applicable variants — nothing was written`);
+                const { range } = applicable[0];
+                if (range) {
+                    const raw = src.slice(range.start, range.end);
+                    // Replacement captures still come from the runtime signature, bounded by the AST node.
+                    if (countHits(raw, p.find) !== 1) throw Error(`${rel}: ${p.id} AST range failed replacement precondition — nothing was written`);
+                    const replacement = raw.replace(p.find, (...match) => expand(p, match));
+                    src = src.slice(0, range.start) + replacement + src.slice(range.end);
+                    continue;
+                }
+            }
             // A few anchors sit in code the bundle carries twice, and `hits` says so. Anything else
             // still has to match exactly once: a second hit there means the anchor stopped being unique.
             //
@@ -819,7 +1119,13 @@ function withLock(dir, run) {
         } catch (e) {
             if (e.code !== 'EEXIST') throw e;
             // A crashed run leaves its lock behind, and nothing else would ever clear it
-            const age = Date.now() - (statSync(lock).mtimeMs || 0);
+            let age;
+            try {
+                age = Date.now() - (statSync(lock).mtimeMs || 0);
+            } catch (e) {
+                if (e.code === 'ENOENT') continue;
+                throw e;
+            }
             if (age > LOCK_STALE_MS || waited >= LOCK_WAIT_MS) {
                 try {
                     unlinkSync(lock);
@@ -840,9 +1146,34 @@ function withLock(dir, run) {
     }
 }
 
+// The registry check answers without touching the machine, so it runs before the extension is
+// looked for: on a machine with no Claude Code installed it still has an answer to give.
+if (process.argv.includes('--validate-registry')) {
+    process.exit(validateRegistry());
+}
+
+const KNOWN_FLAGS = [
+    '--validate-registry', '--revert', '--status', '--if-needed',
+    '--panic-restore', '--pristine-dir', '--dir',
+];
+const unknownFlags = process.argv.slice(2).filter((a) => {
+    if (KNOWN_FLAGS.some((k) => a === k || a.startsWith(k + '='))) return false;
+    return a.startsWith('--');
+});
+if (unknownFlags.length) {
+    console.error(`unknown flag(s): ${unknownFlags.join(', ')}`);
+    console.error(reinstallGuidance());
+    process.exit(1);
+}
+
 const dir = findExtensionDir();
 console.log(`extension: ${dir}`);
 const versions = checkVersion(dir);
+const pristineDir = flagValue('--pristine-dir');
+
+if (process.argv.includes('--panic-restore')) {
+    process.exit(panicRestore(dir, pristineDir));
+}
 if (process.argv.includes('--revert')) restore(dir);
 else if (process.argv.includes('--status')) status(dir);
 else {

@@ -1,0 +1,9 @@
+=== Run 1: node scripts/adaptation/run.mjs --help ===
+Usage: node scripts/adaptation/run.mjs --dir <dir> --out <out>
+Options:
+  --dir  (required) path to the pristine copy to adapt
+  --out  (required) path where the runner report is written
+  --registry  (optional) override path to the patch-points registry file; without it the hardcoded path beside the patcher is used
+  --help show this help and exit
+
+exit code: 0

@@ -1,0 +1,11 @@
+criterion 6 — automatic tests implicit real-install path source-check
+---------------------------------------------------------------
+command: grep -rni -E 'homedir\(\).*\.vscode|homedir\(\).*extensions|join\(homedir' test/*.mjs + manual read of hits
+classifications (file:line -> implicit/explicit):
+implicit:
+  test/full-history.test.mjs:18  join(homedir(), '.vscode', 'extensions')  [before HOME sub -> real path read at import]
+  test/native-progress.test.mjs:22  path.join(homedir(), base, 'extensions')  [real .vscode-oss / .vscode extensions scanned]
+explicit (HOME/USERPROFILE redirected to temp subdir; not counted):
+  test/activation.test.mjs, test/agent-live-frame.test.mjs, test/agent-map.test.mjs, test/autocompact.test.mjs, test/channel-*.test.mjs, test/env-isolation.test.mjs, test/content-search.test.mjs, test/auth-chatgpt.test.mjs, test/attachment-prompt.test.mjs — process.env.HOME = join(tmpdir(), ...) before .claude paths used
+exit code: 1
+notes: task 16 source-check line in PLAN-002 / DoD is malformed (DOCS-006 / QA-043: expect outside backticks, double-quote breaks node -e tokenization); verification performed by direct source scan, result recorded here; product not changed.

@@ -1,0 +1,1 @@
+{"patchPoints":[{"id":"P4","targetFile":"block-owner-target.js","surface":"test","owner":"","required":false,"variants":[{"id":"V4","matcherKind":"legacy-textual","semanticAnchor":"X","moduleScope":"test"}]}]}

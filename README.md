@@ -363,6 +363,10 @@ does for the Claude Code UI what Bush did for Shannon: it does not change what i
 out. Bush later wrote *As We May Think*; the extension is named for the mentor rather than the machine
 because it was the pointer, not the analyzer, that set the work free.
 
+## Vannevar: Panic restore / Safe mode
+
+**Vannevar: Panic restore / Safe mode** — explicit аварийный путь, который fail-closed: при любом сбое продукта происходит перезапуск в безопасном режиме. Если safe recovery недоказуем, требуется reinstall Vannevar Code: `code --install-extension vannevarcode-*.vsix`. Никакого восстановления при arbitrary повреждении не гарантируется.
+
 ## More
 
 - [docs/internals.md](https://github.com/beatlejute/VannevarCode/blob/main/docs/internals.md) — the injection points, the adapter, and what every release of

@@ -1,0 +1,39 @@
+✖ PASS outcome (197.6346ms)
+✔ required MISS (189.2889ms)
+✔ AMBIGUOUS (190.9058ms)
+✔ BLOCK owner mismatch (189.4389ms)
+✔ optional zero-match (183.4159ms)
+✔ refusal without explicit dir (183.2435ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 5
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1143.7788
+
+✖ failing tests:
+
+test at test\adaptation-probe.test.mjs:11:1
+✖ PASS outcome (197.6346ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'PASS' !== 'FAIL'
+  
+      at TestContext.<anonymous> (file:///D:/Dev/VannevarCode/test/adaptation-probe.test.mjs:16:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'PASS',
+    expected: 'FAIL',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+Error: --dir, --registry, and --out are required.
+
+exit code: 1
+Observation: teardown executed via finally block — tmp directories created by mkdtempSync removed (no /tmp/probe-XXXXXX dirs remain from this run); exit code 1 confirms failure scenario covered.

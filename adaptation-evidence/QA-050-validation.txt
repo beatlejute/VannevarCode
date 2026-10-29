@@ -1,0 +1,40 @@
+QA-050 validation run — 2026-10-28 (PLAN-002 task 26, replaces QA-047)
+Environment: win32, Node v24.21.0, repo D:\Dev\VannevarCode
+Evidence record — measured, not projected.
+
+=== 1. Targeted adaptation tests ===
+registry / patch-points data: node -e "const r=require('./runtime/patch-points-registry.json'); console.log('patchPoints=',(r.patchPoints||r.points||[]).length)" -> patchPoints=27, exit 0
+registry validator (test/patch-registry-validator.test.mjs): Passed: 16 / Failed: 0, exit 0
+registry runtime binding (test/patch-registry-runtime.test.mjs): tests 7 pass 7 fail 0, exit 0
+AST locator (test/ast-locator.test.mjs): All 10 scenarios passed; includes "PASS — byte preservation outside intended range (outside)", exit 0
+semantic normalization (test/semantic-normalization.test.mjs): All tests passed; edge cases verified, exit 0
+adaptation probe (test/adaptation-probe.test.mjs): tests 6 pass 6, exit 0
+adaptation runner (test/adaptation-runner.test.mjs): tests 6 pass 6, exit 0
+auto-repatch (test/auto-repatch.test.mjs): 10 OK — assertions; packs .vsix 30 files; Level B real-bundle NOT RUN (no .vsix produced in run), exit 0
+panic restore (test/panic-restore.test.mjs): 12 PASS; rollback unchanged=true, exit 0
+activation (test/activation.test.mjs): 20 OK —; refusal/clipboard/failure paths covered, exit 0
+
+=== 2. Syntax checks (changed runtime scripts, node --check) ===
+runtime/apply-patch.mjs: exit 0
+runtime/channel-relay.js: exit 0
+runtime/host.js: exit 0
+runtime/webview.js: exit 0
+runtime/proxy/translate-responses.mjs: exit 0
+
+=== 3. Package/build check ===
+npm ls --depth=0: package installed, exit 0; no real bundle (.vsix absent) -> Level B NOT RUN
+
+=== 4. Full npm test ===
+Command: npm test; exit code: 0
+Result: OK — all 66 test files passed (44.8s), exit code 0
+Note: runtime-sync.test.mjs passes (previously EIO/exit 1 under QA-047); FIX-026 resolved.
+
+=== Denied-item verification (context: shell_operator && denied) ===
+grep -q -i "outside" test/ast-locator.test.mjs -> found (exit 0)
+grep -q "bytes outside descriptor preserved" test/ast-locator.test.mjs -> found (exit 0)
+Both conditions satisfied against actual file; denied command now confirmed.
+
+=== Defects / observations ===
+- No .vsix produced -> real-bundle Level B NOT RUN (recorded as NOT RUN per DoD 4, not PASS Level B).
+- No defects in product code observed; all targeted cases pass; full suite green.
+- QA-047 supersession: QA-050 replaces; QA-047 evidence .workflow/state/evidence/QA-047.json kept unchanged (executor does not edit blocked ticket per P0R4/P3R1).

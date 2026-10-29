@@ -258,6 +258,20 @@ async function main() {
     );
     assert.strictEqual(sent.tools[0].type, 'function', 'tools are flat (Responses shape)');
     assert.strictEqual(sent.tools[0].name, 'Read', 'tool name at top level');
+    assert.strictEqual(sent.tools[0].strict, false, 'Responses must not normalize optional tool arguments into required fields');
+    const optionalSchema = {
+        type: 'object',
+        properties: { prompt: { type: 'string' }, isolation: { type: 'string', enum: ['worktree'] } },
+        required: ['prompt'],
+    };
+    const optionalRequest = { ...request, tools: [{ name: 'Agent', input_schema: optionalSchema }] };
+    const optionalTool = anthropicToResponses(optionalRequest).tools[0];
+    assert.strictEqual(optionalTool.strict, false);
+    assert.deepStrictEqual(optionalTool.parameters, optionalSchema, 'optional single-enum arguments remain optional');
+    assert.deepStrictEqual(optionalSchema.required, ['prompt'], 'translation does not mutate the source schema');
+    const strictTool = anthropicToResponses({ ...request,
+        tools: [{ name: 'ExplicitStrict', strict: true, input_schema: optionalSchema }] }).tools[0];
+    assert.strictEqual(strictTool.strict, true, 'explicit strict opt-in is preserved');
     assert.deepStrictEqual(sent.include, ['reasoning.encrypted_content'], 'encrypted reasoning requested back');
     assert.match(
         sent.prompt_cache_key,

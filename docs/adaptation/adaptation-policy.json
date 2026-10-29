@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "1.0.0",
+  "policyVersion": "1.0.0",
+  "description": "Adaptation policy for Vannevar Code — defines allowed final statuses, review requirements, and operational constraints per engineering standard v3.",
+  "finalStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "prohibitedFinalStatus": "AMBIGUOUS",
+  "textualFallbackReviewRequired": true,
+  "nativeBinaryModification": "ARCHITECTURE_REVIEW",
+  "remoteTelemetry": {
+    "defaultEnabled": false,
+    "optInRequired": true,
+    "dataTypes": [],
+    "endpointConfigurable": true
+  },
+  "recoveryPriority": [
+    "EXACT_BACKUP",
+    "PRISTINE_ARTIFACT",
+    "REGISTRY_GOVERNED",
+    "REFUSE_REINSTALL"
+  ],
+  "levelDefinitions": {
+    "A": "Fully automated, no human, no real bundle",
+    "B": "Fixture-based, explicit pristine path, no real install",
+    "C": "Human-in-the-loop, interactive, real bundle",
+    "D": "Production release, push, install — manual approval only"
+  },
+  "independentReviewRequired": true,
+  "verifiedAgainstGate": {
+    "updateOnlyAfter": [
+      "all_level_A_B_gates_passed",
+      "independent_review_approve",
+      "full_npm_test_green",
+      "compatibility_report_generated"
+    ],
+    "prohibitedBasis": [
+      "prediction",
+      "partial_validation",
+      "ambiguous_final_status"
+    ]
+  },
+  "commitPushReleaseSeparation": {
+    "commit": "Adapted source + updated verifiedAgainst + evidence hashes",
+    "push": "Only after CI green (registry validation, adaptation tests, full npm test)",
+    "release": "Manual approval only, never auto-release on push"
+  },
+  "edgeCases": {
+    "noCanaryChannel": "Skip canary-specific probes, direct to stable channel analysis",
+    "telemetryUnavailable": "Local-only evidence collection, document limitation",
+    "nativeBinaryChanged": "Trigger ARCHITECTURE_REVIEW, cannot proceed without explicit sign-off"
+  },
+  "signatureForkingRules": {
+    "neverModifyLegacyTextual": true,
+    "newVariantRequires": [
+      "unique_variant_id",
+      "matcherKind_ast_or_justified_textual_fallback",
+      "justification_for_textual_fallback",
+      "independent_review_for_textual_fallback"
+    ],
+    "legacyVariantState": "legacy",
+    "newVariantState": "active"
+  },
+  "restorePolicyRequirements": {
+    "exactBackup": "*.ccx-orig byte-for-byte match",
+    "pristineArtifact": "Explicit --pristine-dir same build/version",
+    "registryGoverned": "Requires target marker, registered policy, exact boundaries, preconditions, postcondition 'markers removed + syntax valid'",
+    "multiFile": "Transactional (all-or-nothing)",
+    "idempotent": "Second run on restored bundle = no-op success"
+  },
+  "testHygiene": {
+    "mutableRoot": "system temporary directory only",
+    "teardown": "all outcomes including assertion failure",
+    "fixtures": "read-only from test/fixtures/ only",
+    "noRepoWrites": true,
+    "noClaudeHome": true,
+    "noVscodeExtensionsImplicit": true,
+    "noRealCli": true,
+    "noProductionCredentials": true
+  },
+  "artifactPolicy": {
+    "allowedInGit": [
+      "hashes",
+      "metadata",
+      "reports",
+      "synthetic_fixtures",
+      "minimized_fixtures",
+      "registry",
+      "schemas",
+      "expectations"
+    ],
+    "prohibitedInGit": [
+      "full_proprietary_bundles",
+      "native_binaries",
+      "credentials",
+      "prompts",
+      "code",
+      "session_content"
+    ],
+    "pristineBundleHandling": "explicit path at adaptation time, remains outside Git"
+  }
+}

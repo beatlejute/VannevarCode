@@ -116,6 +116,43 @@ try {
     assert.equal(Object.keys(probe).some((key) => key.startsWith('VANNEVAR_PROGRESS_')), false);
     const unmatched = host.envFor(ambient, undefined, {});
     assert.equal(Object.keys(unmatched).some((key) => key.startsWith('VANNEVAR_PROGRESS_')), false);
+
+    // A tab that was closed leaves a panel whose webview cannot even be read: VS Code flags the panel
+    // disposed before onDidDispose fires, and every getter throws from then on. The next launch must
+    // still receive its credentials, and the dead panel must leave the list.
+    const deadPanel = { get webview() { throw new Error('Webview is disposed'); } };
+    globalThis.__ccxState.panels.set(deadPanel, {});
+    const third = view('three');
+    const input3 = {};
+    manager.pendingChannels.set('three', { in: input3 });
+    const opts3 = {};
+    const env3 = host.envFor(ambient, undefined, opts3, { manager, input: input3 });
+    assert.ok(env3.VANNEVAR_PROGRESS_ENDPOINT, 'a disposed panel must not strip the progress environment');
+    assert.ok(env3.VANNEVAR_PROGRESS_CAP);
+    assert.equal(third.webview.__ccxSessionId, opts3.sessionId);
+    assert.equal(globalThis.__ccxState.panels.has(deadPanel), false, 'the disposed panel is dropped');
+
+    // A capability belongs to the tab it was issued for. When that tab is gone, the next tab to
+    // resume the session must get a usable one instead of inheriting a token nothing can present.
+    const leaving = view('four');
+    const input4 = {};
+    manager.pendingChannels.set('four', { in: input4 });
+    const opts4 = {};
+    const env4 = host.envFor(ambient, undefined, opts4, { manager, input: input4 });
+    const resumedId = opts4.sessionId;
+    assert.ok(env4.VANNEVAR_PROGRESS_CAP);
+    // Without a transcript on disk envFor drops the resume and starts a fresh session instead.
+    mkdirSync(path.join(home, '.claude', 'projects', 'probe'), { recursive: true });
+    writeFileSync(path.join(home, '.claude', 'projects', 'probe', resumedId + '.jsonl'), '');
+    Object.defineProperty(leaving.webview, 'options', { get() { throw new Error('Webview is disposed'); } });
+    const arriving = view('five');
+    const input5 = {};
+    manager.pendingChannels.set('five', { in: input5 });
+    const opts5 = { resume: resumedId };
+    const env5 = host.envFor(ambient, resumedId, opts5, { manager, input: input5 });
+    assert.equal(arriving.webview.__ccxSessionId, resumedId);
+    assert.ok(env5.VANNEVAR_PROGRESS_CAP, 'a session whose tab is gone must get a capability in the next tab');
+    assert.notEqual(env5.VANNEVAR_PROGRESS_CAP, env4.VANNEVAR_PROGRESS_CAP);
     const clientPath = new URL('../runtime/mcp/progress-client.mjs', import.meta.url).href;
     const code = `import {createProgressClient} from ${JSON.stringify(clientPath)}; const c=createProgressClient(); const r=await c.report({done:0,total:3,plan:['one','two','three']}); c.close(); if(!r.accepted) { console.error(r.reason);process.exitCode=1; }`;
     const snapshot = first.sent.find((m) => m.type === 'ccx:progressSnapshot');

@@ -2,6 +2,7 @@
 # have to be kept saying the same thing.
 test/**
 docs/**
+discovery/**
 scripts/**
 .github/**
 images/**

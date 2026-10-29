@@ -1,0 +1,11 @@
+const simple = "hello";
+const withSpaces =  "spaced" ;
+const multiLine = "line1\nline2";
+const withTabs = "tab\there";
+const unicodeChar = "caf\u00e9";
+const hexEscape = "\x41\x42";
+const arrayProvenance = ["first", "second", "third"];
+const aliasProvenance = simple;
+const nestedArray = [["a", "b"], ["c", "d"]];
+const emptyString = "";
+const emptyArray = [];
