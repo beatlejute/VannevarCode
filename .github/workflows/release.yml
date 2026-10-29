@@ -22,6 +22,10 @@ jobs:
         with:
           node-version: 22
 
+      # The runtime ships its own copy of @babel/parser and @babel/traverse, taken from node_modules.
+      - name: Install
+        run: npm ci
+
       - name: Tests
         run: npm test
 

@@ -22,7 +22,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
 
-      # The project has no dependencies, so there is nothing to install — and nothing to audit.
+      # The AST locator ships @babel/parser and @babel/traverse inside the runtime, and the packer
+      # copies them from node_modules — so a checkout has to install them before anything runs.
+      - name: Install
+        run: npm ci
+
       - name: Tests
         run: npm test
 

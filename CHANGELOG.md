@@ -5,6 +5,20 @@ whole list — one release of this extension usually fits several Claude Code bu
 outside that list still takes the patch more often than not, with the notification saying so when it
 does.
 
+## 2.1.312
+
+Verified against Claude Code **2.1.312**, **2.1.296**, **2.1.294**, **2.1.293**, **2.1.292**, **2.1.291**, **2.1.289**, **2.1.288**, **2.1.287**, **2.1.286**, **2.1.285**, **2.1.284**, **2.1.283**, **2.1.282**, **2.1.280**, **2.1.278**, **2.1.276**, **2.1.274**.
+
+Claude Code 2.1.312 takes all twenty-eight hooks: ten in `extension.js` and eighteen in the webview. Both patched bundles pass the syntax check. Compared with 2.1.296, the pristine host grows 192,590 bytes (3,492,946 → 3,685,536), the webview grows 467,174 bytes (5,562,015 → 6,029,189), and the stylesheet grows 35,186 bytes (435,918 → 471,104). The manifest remains at 31 commands and adds `claudeCode.attachSelection`, which attaches the current selection and does not overlap Vannevar's provider or progress surfaces; the CLI settings schema grows from 174 to 180 top-level keys (`attributionProject`, `attributionProjectPolicy`, `sshHostCommands`, `skipAutoPermissionPrompt`, `useAutoModeDuringPlan`, `autoMode`) and moves its generation timestamp to `2026-10-27T16:56:58.031Z`. The native CLI grew 38,200,832 bytes. This is a targeted string comparison, not an exhaustive binary audit.
+
+Four signatures moved and were forked instead of replaced. The webview module `<script>` tag gained an `id` attribute, so the injected code is placed relative to the captured opening tag. The model action reads `drawnClaudeConfig` and hands the resolved model a different third argument. The composer model pill carries a new `ultracode` prop between `effort` and `isOpen`, which the anchor now skips rather than enumerates. The session options became one object literal passed straight to the constructor, so there is no options variable and no `env=` assignment left to wrap: the environment hook rides on the literal's `resume:` property, rebuilds the env object in place and returns the resume id the host left behind. Two shapes of that hook coexist on 2.1.286–2.1.296, so an anchor may now declare every count that is legitimate for it instead of exactly one. The native producer binding, which went off when its anchor changed shape, matches again — the launch is wrapped in `.finally(...)` before `.query(`, and the anchor steps over that segment.
+
+The probe now checks what the patcher looks for rather than a prose description: each registry variant carries the patch's own expression, so a release that only re-minifies its locals still reads as present. 2.1.312 and pristine 2.1.296 both report 28/28.
+
+The runtime copy is brought up to date file by file instead of being rewritten whole. A rebuilt package with the same version number — the ordinary way the copy in `~/.claude/vannevar` stops being the one the extension ships — now copies only the files that differ, so an unchanged file keeps its timestamp. A build whose timestamp does not move within the same clock tick used to hide the difference; on a filesystem with nanosecond timestamps it showed up as every file being rewritten.
+
+The two Babel modules the AST locator loads are declared as dependencies and install from the lockfile; both workflows install them before testing and packing. Without that a clean checkout could neither run the tests nor build a package — the modules were present only in a working copy that had them installed by hand.
+
 ## 2.1.296
 
 `run_agent` accepts explicitly downloaded channel attachment paths only from a channel server inbox. It copies those files to an isolated temporary directory, adds that directory to the delegate's `Read` scope, and removes the copies after completion; file contents are not injected into the task prompt. `/agents` lists active Vannevar delegated runs owned by the receiving tab, including nested delegated runs; it does not claim to enumerate native Claude Code subagents or runs from other tabs.

@@ -118,6 +118,28 @@ function clearChangedKinds(source, target) {
     }
 }
 
+// Copies what differs and nothing else. An unchanged file keeps its timestamp, so a rebuild of the
+// same version brings the one changed file over without re-dating everything that sits beside it —
+// and a file the release does not carry stays exactly as it was.
+function copyChanged(source, target) {
+    for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
+        const from = path.join(source, entry.name);
+        const to = path.join(target, entry.name);
+        if (entry.isDirectory()) {
+            fs.mkdirSync(to, { recursive: true });
+            copyChanged(from, to);
+            continue;
+        }
+        let same = false;
+        try {
+            same = fs.readFileSync(from).equals(fs.readFileSync(to));
+        } catch {
+            same = false;
+        }
+        if (!same) fs.copyFileSync(from, to);
+    }
+}
+
 function syncRuntime(context, bundle) {
     const stamp = currentStamp();
     const fresh = stamp.version !== pkg.version || !fs.existsSync(PATCHER)
@@ -126,7 +148,7 @@ function syncRuntime(context, bundle) {
     fs.mkdirSync(RUNTIME, { recursive: true });
     if (fresh) {
         clearChangedKinds(runtimeSource(context), RUNTIME);
-        fs.cpSync(runtimeSource(context), RUNTIME, { recursive: true, force: true });
+        copyChanged(runtimeSource(context), RUNTIME);
         log(`runtime: ${stamp.version || 'none'} → ${pkg.version}`);
     }
 
