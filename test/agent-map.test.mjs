@@ -392,6 +392,16 @@ assert.equal(entry('ccx:toolu_live').description, 'deepseek · sonnet · Review 
 fromHost({ type: 'ccx:agentRuns', runs: [] });
 assert.equal(entry('ccx:toolu_live').description, 'deepseek · Review host');
 
+// A visible call to a child run must claim the manifest before the tree fallback places it.
+const savedMessages = messages.value;
+messages.value = [call('toolu_visible_child', { profile: 'deepseek', model: 'sonnet', prompt: nested.prompt, description: 'Nested' })];
+fromHost({ type: 'ccx:agentRuns', runs: [orphan, { ...nested, owner: session.sessionId.value }] });
+assert.equal(entry('ccx:toolu_visible_child').ccxSession, nested.session, 'a visible child call uses its live manifest');
+assert.equal(entry('ccx:toolu_visible_child').model, nested.servedModel, 'the requested alias is replaced by the served model');
+assert.ok(!entry('ccx:run:' + nested.session), 'the same child is not also placed by the tree fallback');
+assert.equal([...mapValue.values()].filter((e) => e.ccxSession === nested.session).length, 1, 'one live run has one card');
+messages.value = savedMessages;
+
 // --- the card's buttons ----------------------------------------------------------------------------
 
 fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative, orphan, nested] });

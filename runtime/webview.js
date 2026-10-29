@@ -2600,7 +2600,10 @@
         var best = null;
         for (var i = 0; i < agentRuns.length; i++) {
             var run = agentRuns[i];
-            if (run.parent || claimed[run.session] || !samePrompt(run.prompt, prompt)) continue;
+            if (claimed[run.session] || !samePrompt(run.prompt, prompt)) continue;
+            // A delegated tab's own children have a parent too; its visible calls claim them
+            // before the tree fallback, otherwise one run gets both a call and a run card.
+            if (run.parent && run.owner !== sessionField('sessionId')) continue;
             if (call.at && run.startedAt && run.startedAt < call.at - MAP_CLOCK_SLACK_MS) continue;
             if (!best || (run.startedAt || 0) < (best.startedAt || 0)) best = run;
         }
