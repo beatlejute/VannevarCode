@@ -1,0 +1,433 @@
+{
+  "runner": "scripts/adaptation/run.mjs",
+  "dir": "d:\\tmp\\full312",
+  "out": "D:\\Dev\\VannevarCode\\adaptation-evidence\\2.1.312-runner-report.json",
+  "normativeStatuses": [
+    "VERIFIED_UNCHANGED",
+    "VERIFIED_ADAPTED",
+    "ARCHITECTURE_REVIEW",
+    "BLOCKED",
+    "REJECTED_INCOMPATIBLE"
+  ],
+  "createdAt": "2026-10-29T03:59:53.637Z",
+  "findings": [
+    "prior output exists at --out and will be overwritten: D:\\Dev\\VannevarCode\\adaptation-evidence\\2.1.312-runner-report.json",
+    "probe: total=28 PASS=28 MISS=0 AMBIGUOUS=0 BLOCK=0",
+    "dry-run: exit=0 upToDate=false patched=true",
+    "final: VERIFIED_ADAPTED — dry-run applies patches cleanly on isolated pristine copy"
+  ],
+  "provenance": [
+    {
+      "file": "extension.js",
+      "sha256": "1195816b6ecc944f25763a586d9e437a3e9a57342b5fdee543b59e1bb3d72e29",
+      "size": 3685536
+    },
+    {
+      "file": "webview/index.js",
+      "sha256": "73ad1a2b1f006dc315c4e78dedf8c3a488f36e7fd5c9231ed26e55902da46785",
+      "size": 6029189
+    }
+  ],
+  "probe": {
+    "exitCode": 0,
+    "output": "Probe complete. No patches applied.",
+    "result": {
+      "scanDir": "d:\\tmp\\full312",
+      "registry": "D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json",
+      "summary": {
+        "total": 28,
+        "PASS": 28,
+        "MISS": 0,
+        "AMBIGUOUS": 0,
+        "BLOCK": 0
+      },
+      "points": [
+        {
+          "id": "PATCH-HOST-SPAWN-CLAUDE",
+          "variant": "PATCH-HOST-SPAWN-CLAUDE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "spawnClaude signature exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-ENV-FOR",
+          "variant": "PATCH-HOST-ENV-FOR-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "envFor hook installed"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-READ-MESSAGES",
+          "variant": "PATCH-HOST-READ-MESSAGES-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "session transport initialized"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HOST-BIND-NATIVE",
+          "variant": "PATCH-HOST-BIND-NATIVE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "hook anchor exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-HTML-INJECT",
+          "variant": "PATCH-WEBVIEW-HTML-INJECT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "script tag present"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-ATTACH-PANEL",
+          "variant": "PATCH-WEBVIEW-ATTACH-PANEL-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "icon paths defined"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-MODEL-ACTION",
+          "variant": "PATCH-WEBVIEW-MODEL-ACTION-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "command registry available"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-MODEL-PILL",
+          "variant": "PATCH-WEBVIEW-MODEL-PILL-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "composer model pill has access to its session"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-ACTION-ORDER",
+          "variant": "PATCH-WEBVIEW-ACTION-ORDER-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "action registry available"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-STATE",
+          "variant": "PATCH-WEBVIEW-SEARCH-STATE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "useState initialized"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-FILTER",
+          "variant": "PATCH-WEBVIEW-SEARCH-FILTER-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "search query state exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-OPEN-STATE",
+          "variant": "PATCH-WEBVIEW-OPEN-STATE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "session render context"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-PIN-SORT",
+          "variant": "PATCH-WEBVIEW-PIN-SORT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "pinned IDs and open state available"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-SEARCH-QUERY",
+          "variant": "PATCH-WEBVIEW-SEARCH-QUERY-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "search input rendered"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-ARCHIVED-FILTER",
+          "variant": "PATCH-WEBVIEW-ARCHIVED-FILTER-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "grouping call reachable"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CCX-AGENT-MAP",
+          "variant": "PATCH-WEBVIEW-CCX-AGENT-MAP-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "agent map exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-INIT",
+          "variant": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "channel manager exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-WEBVIEW-CHANNEL-SPAWN",
+          "variant": "PATCH-WEBVIEW-CHANNEL-SPAWN-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "canUseTool exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HISTORY-STITCH-COMPACTIONS",
+          "variant": "PATCH-HISTORY-STITCH-COMPACTIONS-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "transcript indexed by uuid"
+          ],
+          "matchCount": 2,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HISTORY-BEFORE-COMPACTION",
+          "variant": "PATCH-HISTORY-BEFORE-COMPACTION-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "transcript size > limit"
+          ],
+          "matchCount": 2,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-HISTORY-AFTER-COMPACTION",
+          "variant": "PATCH-HISTORY-AFTER-COMPACTION-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "message count > limit"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-FORK-BEFORE-COMPACTION",
+          "variant": "PATCH-FORK-BEFORE-COMPACTION-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "user message before compaction"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-REWIND-CONTEXT-SECTION",
+          "variant": "PATCH-REWIND-CONTEXT-SECTION-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "rewind from Context section"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-NO-AUTH-LOGIN",
+          "variant": "PATCH-NO-AUTH-LOGIN-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "user chooses to skip login"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-NO-AUTH-GATE",
+          "variant": "PATCH-NO-AUTH-GATE-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "account check memo available"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-NO-AUTH-SHOW-LOGIN",
+          "variant": "PATCH-NO-AUTH-SHOW-LOGIN-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "showLogin reachable after a failed request"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-CCX-CALL-TIME",
+          "variant": "PATCH-CCX-CALL-TIME-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "call time data available"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        },
+        {
+          "id": "PATCH-MAP-PROGRESS",
+          "variant": "PATCH-MAP-PROGRESS-LEGACY",
+          "owner": "vannevar",
+          "moduleScope": null,
+          "preconditions": [
+            "agent map exists"
+          ],
+          "matchCount": 1,
+          "postconditionFeasible": true,
+          "status": "PASS",
+          "reason": null
+        }
+      ]
+    },
+    "error": null
+  },
+  "syntaxChecks": [
+    {
+      "file": "extension.js",
+      "ok": true
+    },
+    {
+      "file": "webview/index.js",
+      "ok": true
+    }
+  ],
+  "dryRun": {
+    "exitCode": 0,
+    "output": "extension: C:\\Users\\Denis\\AppData\\Local\\Temp\\ccx-pristine-copy-IUkeWT\npatcher:   unknown (verified against unknown)\npatched extension.js (10 hook(s))\npatched webview/index.js (18 hook(s))\nccx-result: patched\n\nDone. Reload VS Code window (Ctrl+Shift+P → Developer: Reload Window).",
+    "error": null,
+    "upToDate": false,
+    "patched": true
+  },
+  "restoreHash": [],
+  "compatibilityDraft": "Compatibility draft (auto-generated by the runner, not a release decision):\n- source: d:\\tmp\\full312\n- registry: D:\\Dev\\VannevarCode\\runtime\\patch-points-registry.json\n- probe: {\"total\":28,\"PASS\":28,\"MISS\":0,\"AMBIGUOUS\":0,\"BLOCK\":0}\n- dry-run: exit=0 upToDate=false patched=true\n- syntax: 2/2 files pass\n- final status: (pending)",
+  "finalStatus": "VERIFIED_ADAPTED"
+}

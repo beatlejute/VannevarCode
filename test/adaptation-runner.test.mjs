@@ -128,7 +128,9 @@ describe('adaptation runner - scoped unchanged and fail-closed scenarios', () =>
     const registry = JSON.parse(readFileSync(REGISTRY_PATH, 'utf8'));
     registry.patchPoints = registry.patchPoints.filter(point => {
       const source = readFileSync(join(FIXTURES_ROOT, 'unchanged', point.targetFile), 'utf8');
-      return point.variants.some(variant => source.includes(variant.semanticAnchor));
+      return point.variants.some(variant => variant.anchorPattern
+        ? new RegExp(variant.anchorPattern).test(source)
+        : source.includes(variant.semanticAnchor));
     });
     assert.equal(registry.patchPoints.length, 4, 'fixture covers exactly four active registry points');
     const path = workFile('scoped-registry.json');

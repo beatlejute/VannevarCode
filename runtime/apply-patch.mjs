@@ -45,7 +45,10 @@ const PATCHES = [
         id: 'PATCH-HOST-BIND-NATIVE',
         file: 'extension.js',
         optional: true,
-        find: /let ([\w$]+)=\(await ([\w$]+)\(\{options:([\w$]+)\}\)\)\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
+        // 2.1.312 wraps the launch in `.finally(...)` before the query is taken, so a single call chain
+        // no longer reaches `.query(` from `{options:…}` — the segment between them is skipped, and it
+        // carries no semicolon, so the laziness cannot run past the statement.
+        find: /let ([\w$]+)=\(await ([\w$]+)\(\{options:([\w$]+)\}\)[^;]{0,240}?\)\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
         replace: (found, query) => found.replace(';return', ';try{' + HOST_LOAD +
             `require(__p).bindNativeProducer(${query},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){}return`),
         where: 'replace',
@@ -71,16 +74,17 @@ const PATCHES = [
         // definition, not a call site, since only the definition is followed by `{`.
         id: 'PATCH-WEBVIEW-HTML-INJECT',
         file: 'extension.js',
-        find: /getHtmlForWebview\(([\w$]+)[^)]*\)\{[\s\S]*?<script nonce="\$\{([\w$]+)\}" src="\$\{[\w$]+\}" type="module"><\/script>/,
-        replace: (found, webview, nonce) => {
-            const tag = '<script nonce="${' + nonce + '}" src=';
+        // Since 2.1.312 the module tag also carries an id (`<script id="${d04}" nonce="${B}" …>`),
+        // so the opening is captured whole instead of being rebuilt from the nonce.
+        find: /getHtmlForWebview\(([\w$]+)[^)]*\)\{[\s\S]*?(<script (?:id="\$\{[\w$]+\}" )?nonce="\$\{([\w$]+)\}") src="\$\{[\w$]+\}" type="module"><\/script>/,
+        replace: (found, webview, opening, nonce) => {
             return found.replace(
-                tag,
+                opening,
                 () =>
                     '${(()=>{try{' +
                     HOST_REQUIRE +
                     `return require(__p).renderScript(${webview},${nonce})}catch(__e){return ""}})()}\n        ` +
-                    tag,
+                    opening,
             );
         },
         where: 'replace',
@@ -127,13 +131,32 @@ const PATCHES = [
         // The resume id is read off the options object (`resume:t`) instead of the parameter, which is renamed too.
         // The object itself goes along as the third argument: envFor clears its `resume` when no transcript exists
         // for that id, and the SDK builds `--resume=<id>` from that field after this expression has run.
+        //
+        // 2.1.312 builds the session options as one object literal handed straight to the constructor —
+        // `pathToClaudeCodeExecutable:Cf,env:$5,forkSession:a,…,resume:iH,resumeSessionAt:Pf` — so there is no
+        // options variable to hand over and the env is no longer assigned through one. The hook rides on the
+        // `resume:` property instead: the env object is rebuilt in place (the literal's own `env:` entry already
+        // holds it, so mutating rather than replacing keeps that reference correct) and the property yields the
+        // resume id envFor left behind, which is `undefined` when the transcript was missing.
         id: 'PATCH-HOST-ENV-FOR',
         file: 'extension.js',
-        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)/,
-        replace: (_found, opts, bin, args, env, tail) =>
-            `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=(()=>{try{` +
-            HOST_REQUIRE +
-            `return require(__p).envFor(${env},${opts}.resume,${opts},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){return ${env}}})()${tail}`,
+        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)|pathToClaudeCodeExecutable:([\w$]+),env:([\w$]+),forkSession:([\w$]+)[\s\S]{0,600}?resume:([\w$]+),resumeSessionAt:/,
+        replace: (found, opts, bin, args, env, tail, _nbin, nenv, _nfork, resume) => {
+            if (!nenv)
+                return `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=(()=>{try{` +
+                    HOST_REQUIRE +
+                    `return require(__p).envFor(${env},${opts}.resume,${opts},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){return ${env}}})()${tail}`;
+            const hook =
+                `resume:(()=>{try{let __p=require("path").join(require("os").homedir(),".claude","vannevar","host.js");` +
+                `delete require.cache[require.resolve(__p)];` +
+                `const __o={resume:${resume}},__e=require(__p).envFor(${nenv},${resume},__o,typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null);` +
+                `for(const __k of Object.keys(${nenv}))if(!(__k in __e))delete ${nenv}[__k];` +
+                `Object.assign(${nenv},__e);return __o.resume}catch(__x){return ${resume}}})(),`;
+            return found.replace(`resume:${resume},`, () => hook);
+        },
+        // Both shapes coexist in 2.1.286–2.1.296 — the assignment and the options literal — and only
+        // the literal survives in 2.1.312. Each is its own code path, so hooking both there is right.
+        hits: [1, 2],
         where: 'replace',
     },
     {
@@ -160,7 +183,9 @@ const PATCHES = [
         // and a minified expression cannot contain a `;`, so the anchor after it cannot be overshot.
         id: 'PATCH-WEBVIEW-MODEL-ACTION',
         file: 'webview/index.js',
-        find: /let ([\w$]+)=([\w$]+)\.modelSelection\.value,([\w$]+)=[\w$]+\(\2\.claudeConfig\.value\),([\w$]+)=[\w$]+\([^;]*?,\2\.lastServedModel\.value,\3\);([\w$]+)\.commandRegistry\.registerAction\(\{id:"model",label:"Switch model…",description:"Change the AI model",trailingComponent:\4\?([\w$]+)\("span"/,
+        // 2.1.312 renames the config read to `drawnClaudeConfig` and hands the resolved model a
+        // different third argument, so both halves are matched loosely instead of literally.
+        find: /let ([\w$]+)=([\w$]+)\.modelSelection\.value,([\w$]+)=[\w$]+\(\2\.(?:drawn)?[Cc]laudeConfig\.value\),([\w$]+)=[^;]*?,\2\.lastServedModel\.value,[^;]*?;([\w$]+)\.commandRegistry\.registerAction\(\{id:"model",label:"Switch model…",description:"Change the AI model",trailingComponent:\4\?([\w$]+)\("span"/,
         replace: (found, _sel, session, _cfg, label, ctx, jsx) =>
             found.replace(
                 `${ctx}.commandRegistry.registerAction({id:"model"`,
@@ -175,7 +200,9 @@ const PATCHES = [
         // effort indicator and layout keep their original values and handlers.
         id: 'PATCH-WEBVIEW-MODEL-PILL',
         file: 'webview/index.js',
-        find: /let ([\w$]+)=\{label:([\w$]+),effort:([\w$]+),isOpen:([\w$]+)\.isOpen,onToggle:\(\)=>\{([\w$]+)\.logEvent\("model_pill_clicked"/,
+        // 2.1.312 inserts `ultracode:<local>` between effort and isOpen; the properties in between
+        // are not read here, so they are skipped rather than enumerated.
+        find: /let ([\w$]+)=\{label:([\w$]+),effort:([\w$]+),(?:[^{}]*?,)?isOpen:([\w$]+)\.isOpen,onToggle:\(\)=>\{([\w$]+)\.logEvent\("model_pill_clicked"/,
         replace: (found, _props, label, _effort, _menu, session) =>
             found.replace(`label:${label},`, `label:globalThis.__ccx&&globalThis.__ccx.modelLabel?globalThis.__ccx.modelLabel(${label},${session}):${label},`),
         where: 'replace',
@@ -1042,14 +1069,17 @@ function apply(dir) {
             }
             // A few anchors sit in code the bundle carries twice, and `hits` says so. Anything else
             // still has to match exactly once: a second hit there means the anchor stopped being unique.
+            // A release may also carry two shapes of the same hook — one anchor matching both — so
+            // `hits` may list the counts that are all legitimate for it.
             //
             // `optional` relaxes that in one direction only: nothing found is allowed — the feature goes
             // off, and EXPECTATIONS says so out loud — while two hits is still a break. It is for the
             // anchors a release can simply not have yet, never for one this file is unsure about.
             const expected = p.hits || 1;
             const hits = countHits(src, p.find);
-            if (hits !== expected && !(p.optional && hits === 0))
-                throw Error(`${rel}: signature matched ${hits} times (expected ${expected}) — bundle changed:\n  ${p.find}`);
+            const accepted = Array.isArray(expected) ? expected.includes(hits) : hits === expected;
+            if (!accepted && !(p.optional && hits === 0))
+                throw Error(`${rel}: signature matched ${hits} times (expected ${Array.isArray(expected) ? expected.join(' or ') : expected}) — bundle changed:\n  ${p.find}`);
             if (hits > 0) {
                 const find = hits > 1 ? everyMatch(p.find) : p.find;
                 src = src.replace(find, (...match) => expand(p, match));

@@ -88,7 +88,22 @@ function probePoint(point, dir) {
       res.reason = `variant ${variant.id}: semanticAnchor missing`;
       return res;
     }
-    const count = countMatches(content, variant.semanticAnchor);
+    // `anchorPattern` carries the shape the patcher itself looks for, so a variant stays readable
+    // across releases that re-minify every local; `semanticAnchor` stays the literal text of the
+    // release the anchor was taken from and is used when no pattern is declared.
+    let count;
+    if (typeof variant.anchorPattern === 'string' && variant.anchorPattern.length > 0) {
+      let pattern;
+      try {
+        pattern = new RegExp(variant.anchorPattern, 'g');
+      } catch (err) {
+        res.reason = `variant ${variant.id}: anchorPattern does not compile: ${err.message}`;
+        return res;
+      }
+      count = (content.match(pattern) || []).length;
+    } else {
+      count = countMatches(content, variant.semanticAnchor);
+    }
     if (count > 0) matched.push({ variant, count });
   }
   if (matched.length === 0) {

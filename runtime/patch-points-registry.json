@@ -14,13 +14,21 @@
           "id": "PATCH-HOST-SPAWN-CLAUDE-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "async spawnClaude(input, rest)",
+          "semanticAnchor": "async spawnClaude($,J,Q,X,Y,z,W,G,K={},V,U,B,q,H,Z,F,D,M){",
           "moduleScope": null,
-          "preconditions": ["spawnClaude signature exists"],
-          "postconditions": ["context object registered"],
+          "preconditions": [
+            "spawnClaude signature exists"
+          ],
+          "postconditions": [
+            "context object registered"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required hook for Vannevar to intercept spawning"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required hook for Vannevar to intercept spawning",
+          "anchorPattern": "async spawnClaude\\(([\\w$]+),([^)]*)\\)\\{"
         }
       ]
     },
@@ -37,13 +45,21 @@
           "id": "PATCH-HOST-ENV-FOR-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "envFor(resume, profile, options)",
+          "semanticAnchor": "pathToClaudeCodeExecutable:Cf,env:$5,forkSession:a",
           "moduleScope": null,
-          "preconditions": ["envFor hook installed"],
-          "postconditions": ["environment merged"],
+          "preconditions": [
+            "envFor hook installed"
+          ],
+          "postconditions": [
+            "environment merged"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for profile-based environment configuration"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for profile-based environment configuration",
+          "anchorPattern": "([\\w$]+)\\.pathToClaudeCodeExecutable=([\\w$]+),\\1\\.executableArgs=([\\w$]+),\\1\\.env=(\\{[^{}]*\\}|[\\w$]+(?:\\([^()]*\\))?)(,[\\w$]+\\)|;)|pathToClaudeCodeExecutable:([\\w$]+),env:([\\w$]+),forkSession:([\\w$]+)[\\s\\S]{0,600}?resume:([\\w$]+),resumeSessionAt:"
         }
       ]
     },
@@ -60,13 +76,21 @@
           "id": "PATCH-HOST-READ-MESSAGES-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "for await (let message of transport.readMessages())",
+          "semanticAnchor": "async readMessages(){try{for await(let $ of this.transport.readMessages()){",
           "moduleScope": null,
-          "preconditions": ["session transport initialized"],
-          "postconditions": ["native frame observed"],
+          "preconditions": [
+            "session transport initialized"
+          ],
+          "postconditions": [
+            "native frame observed"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for message interception and native frame observation"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for message interception and native frame observation",
+          "anchorPattern": "(async readMessages\\(\\)\\{try\\{for await\\(let ([\\w$]+) of this\\.transport\\.readMessages\\(\\)\\)\\{)"
         }
       ]
     },
@@ -83,13 +107,21 @@
           "id": "PATCH-HOST-BIND-NATIVE-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "bindNativeProducer(query, context)",
+          "semanticAnchor": ").query(a);return this.trackClaudeProcess(",
           "moduleScope": null,
-          "preconditions": ["hook anchor exists"],
-          "postconditions": ["native producer bound"],
+          "preconditions": [
+            "hook anchor exists"
+          ],
+          "postconditions": [
+            "native producer bound"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for binding native code production"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for binding native code production",
+          "anchorPattern": "let ([\\w$]+)=\\(await ([\\w$]+)\\(\\{options:([\\w$]+)\\}\\)[^;]{0,240}?\\)\\.query\\(([\\w$]+)\\);return this\\.trackClaudeProcess\\(\\1\\),\\1"
         }
       ]
     },
@@ -106,13 +138,21 @@
           "id": "PATCH-WEBVIEW-HTML-INJECT-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "getHtmlForWebview() script injection",
+          "semanticAnchor": "getHtmlForWebview($,J,Q,X,Y,z,W=!1){",
           "moduleScope": null,
-          "preconditions": ["script tag present"],
-          "postconditions": ["host renderScript injected"],
+          "preconditions": [
+            "script tag present"
+          ],
+          "postconditions": [
+            "host renderScript injected"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for replacing bundled extension.js scripts"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for replacing bundled extension.js scripts",
+          "anchorPattern": "getHtmlForWebview\\(([\\w$]+)[^)]*\\)\\{[\\s\\S]*?(<script (?:id=\"\\$\\{[\\w$]+\\}\" )?nonce=\"\\$\\{([\\w$]+)\\}\") src=\"\\$\\{[\\w$]+\\}\" type=\"module\"><\\/script>"
         }
       ]
     },
@@ -129,13 +169,21 @@
           "id": "PATCH-WEBVIEW-ATTACH-PANEL-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "panel.iconPath assignment",
+          "semanticAnchor": "$.iconPath={light:K,dark:K},$.webview.options=",
           "moduleScope": null,
-          "preconditions": ["icon paths defined"],
-          "postconditions": ["panel attached"],
+          "preconditions": [
+            "icon paths defined"
+          ],
+          "postconditions": [
+            "panel attached"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for panel customization"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for panel customization",
+          "anchorPattern": "([\\w$]+)\\.iconPath=\\{light:([\\w$]+),dark:\\2\\},(\\1\\.webview\\.options=)"
         }
       ]
     },
@@ -152,13 +200,21 @@
           "id": "PATCH-WEBVIEW-MODEL-ACTION-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "model action registered in the command registry",
+          "semanticAnchor": "let q1=J.modelSelection.value,k1=IW(J.drawnClaudeConfig.value)",
           "moduleScope": null,
-          "preconditions": ["command registry available"],
-          "postconditions": ["host registry and model label notified"],
+          "preconditions": [
+            "command registry available"
+          ],
+          "postconditions": [
+            "host registry and model label notified"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for the model action to reach the host"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for the model action to reach the host",
+          "anchorPattern": "let ([\\w$]+)=([\\w$]+)\\.modelSelection\\.value,([\\w$]+)=[\\w$]+\\(\\2\\.(?:drawn)?[Cc]laudeConfig\\.value\\),([\\w$]+)=[^;]*?,\\2\\.lastServedModel\\.value,[^;]*?;([\\w$]+)\\.commandRegistry\\.registerAction\\(\\{id:\"model\",label:\"Switch model…\",description:\"Change the AI model\",trailingComponent:\\4\\?([\\w$]+)\\(\"span\""
         }
       ]
     },
@@ -175,7 +231,7 @@
           "id": "PATCH-WEBVIEW-MODEL-PILL-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "shared composer model pill props and click event",
+          "semanticAnchor": "let z0={label:c,effort:e,ultracode:p,isOpen:B.isOpen,onToggle:()=>{$.logEvent(\"m",
           "moduleScope": null,
           "preconditions": [
             "composer model pill has access to its session"
@@ -184,8 +240,11 @@
             "composer model label resolves against the active profile"
           ],
           "negativeFixtures": [],
-          "knownVersions": [],
-          "justification": "Required for the composer to display the active provider model"
+          "knownVersions": [
+            "2.1.312"
+          ],
+          "justification": "Required for the composer to display the active provider model",
+          "anchorPattern": "let ([\\w$]+)=\\{label:([\\w$]+),effort:([\\w$]+),(?:[^{}]*?,)?isOpen:([\\w$]+)\\.isOpen,onToggle:\\(\\)=>\\{([\\w$]+)\\.logEvent\\(\"model_pill_clicked\""
         }
       ]
     },
@@ -202,13 +261,21 @@
           "id": "PATCH-WEBVIEW-ACTION-ORDER-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "registerAction ID order",
+          "semanticAnchor": "[\"model\",\"effort-level\",\"ultracode\",\"toggle-thinking\"",
           "moduleScope": null,
-          "preconditions": ["action registry available"],
-          "postconditions": ["custom actions registered"],
+          "preconditions": [
+            "action registry available"
+          ],
+          "postconditions": [
+            "custom actions registered"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for Vannevar menu entry ordering"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for Vannevar menu entry ordering",
+          "anchorPattern": "\\[\"model\",((?:\"[\\w-]+\",)*)\"toggle-thinking\",((?:\"[\\w-]+\",)*)\"account-usage\"\\]"
         }
       ]
     },
@@ -225,13 +292,21 @@
           "id": "PATCH-WEBVIEW-SEARCH-STATE-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "search state and pinned session IDs",
+          "semanticAnchor": "v5]=S(null),n5=r(new Map",
           "moduleScope": null,
-          "preconditions": ["useState initialized"],
-          "postconditions": ["host notified of search state"],
+          "preconditions": [
+            "useState initialized"
+          ],
+          "postconditions": [
+            "host notified of search state"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.259-2.1.296"],
-          "justification": "Required for search and pin state management"
+          "knownVersions": [
+            "2.1.259-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for search and pin state management",
+          "anchorPattern": ",\\[([\\w$]+),([\\w$]+)\\]=([\\w$]+)\\(\"\"\\),([\\s\\S]{0,160}?)\\[([\\w$]+),([\\w$]+)\\]=\\3\\(null\\),([\\w$]+)=([\\w$]+)\\(new Map\\)"
         }
       ]
     },
@@ -248,13 +323,21 @@
           "id": "PATCH-WEBVIEW-SEARCH-FILTER-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "content search filter",
+          "semanticAnchor": "g0=u1.toLowerCase(),Y5=u1?M4.filter((W1)=>mk(W1).toLowerCase().includes(g0)",
           "moduleScope": null,
-          "preconditions": ["search query state exists"],
-          "postconditions": ["content matches exposed"],
+          "preconditions": [
+            "search query state exists"
+          ],
+          "postconditions": [
+            "content matches exposed"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.259-2.1.296"],
-          "justification": "Required for content-based session search"
+          "knownVersions": [
+            "2.1.259-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for content-based session search",
+          "anchorPattern": "([\\w$]+)=([\\w$]+)\\.toLowerCase\\(\\),([\\w$]+)=\\2\\?([\\w$]+)\\.filter\\(\\(([\\w$]+)\\)=>([\\w$]+)\\(\\5\\)\\.toLowerCase\\(\\)\\.includes\\(\\1\\)\\|\\|\\(\\5\\.gitBranch\\.value\\?\\.toLowerCase\\(\\)\\.includes\\(\\1\\)\\?\\?!1\\)\\):\\4"
         }
       ]
     },
@@ -271,13 +354,21 @@
           "id": "PATCH-WEBVIEW-OPEN-STATE-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "openState accessor",
+          "semanticAnchor": "c1=H0((W1)=>({openState:t1(W1),remoteStatus:",
           "moduleScope": null,
-          "preconditions": ["session render context"],
-          "postconditions": ["host openState exposed"],
+          "preconditions": [
+            "session render context"
+          ],
+          "postconditions": [
+            "host openState exposed"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.259-2.1.296"],
-          "justification": "Required for session open state management"
+          "knownVersions": [
+            "2.1.259-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for session open state management",
+          "anchorPattern": "([\\w$]+)=[\\w$]+\\(\\(([\\w$]+)\\)=>\\(\\{openState:([\\w$]+)\\(\\2\\),remoteStatus:"
         }
       ]
     },
@@ -294,13 +385,21 @@
           "id": "PATCH-WEBVIEW-PIN-SORT-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "pinSort function",
+          "semanticAnchor": "if(!s4)return K2;return Qu1(K2,(W1)=>F",
           "moduleScope": null,
-          "preconditions": ["pinned IDs and open state available"],
-          "postconditions": ["session sorted by pins and liveness"],
+          "preconditions": [
+            "pinned IDs and open state available"
+          ],
+          "postconditions": [
+            "session sorted by pins and liveness"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.257-2.1.296"],
-          "justification": "Required for pinned session ordering"
+          "knownVersions": [
+            "2.1.257-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for pinned session ordering",
+          "anchorPattern": ",([\\w$]+)=[\\w$]+\\(\\(\\)=>\\{if\\(!([\\w$]+)\\)return ([\\w$]+);return [\\w$]+\\(\\3,\\(([\\w$]+)\\)=>[\\w$]+\\(\\4\\)===!0\\)\\},\\[\\3,\\2,[\\w$]+\\]\\)"
         }
       ]
     },
@@ -317,13 +416,21 @@
           "id": "PATCH-WEBVIEW-SEARCH-QUERY-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "search input onChange handler",
+          "semanticAnchor": "onChange:(W1)=>{T1(W1.target.value),O1(!0)},placeholder:\"Search sessions…\"",
           "moduleScope": null,
-          "preconditions": ["search input rendered"],
-          "postconditions": ["host notified of the search query"],
+          "preconditions": [
+            "search input rendered"
+          ],
+          "postconditions": [
+            "host notified of the search query"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.259-2.1.296"],
-          "justification": "Required for the typed search query to reach the host"
+          "knownVersions": [
+            "2.1.259-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for the typed search query to reach the host",
+          "anchorPattern": "onChange:\\(([\\w$]+)\\)=>\\{([^{}]*)\\},placeholder:\"Search sessions…\""
         }
       ]
     },
@@ -340,13 +447,21 @@
           "id": "PATCH-WEBVIEW-ARCHIVED-FILTER-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "grouping call that partitions the session list",
+          "semanticAnchor": "S2=e2&&!u1,p6=Yu1(S2?w:[],K4,e4,BY)",
           "moduleScope": null,
-          "preconditions": ["grouping call reachable"],
-          "postconditions": ["host archived filter applied"],
+          "preconditions": [
+            "grouping call reachable"
+          ],
+          "postconditions": [
+            "host archived filter applied"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.259-2.1.296"],
-          "justification": "Required for the archived filter to reach the host"
+          "knownVersions": [
+            "2.1.259-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for the archived filter to reach the host",
+          "anchorPattern": "([\\w$]+)=([\\w$]+)&&!([\\w$]+),([\\w$]+)=([\\w$]+)\\(\\1\\?([\\w$]+):\\[\\],([\\w$]+),([\\w$]+),([\\w$]+)\\)"
         }
       ]
     },
@@ -363,13 +478,21 @@
           "id": "PATCH-WEBVIEW-CCX-AGENT-MAP-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "agentMapAgents value read",
+          "semanticAnchor": "function fb5({session:$,onClick:J}){f0();let Z=$.summary.value||\"This session\"",
           "moduleScope": null,
-          "preconditions": ["agent map exists"],
-          "postconditions": ["host map progress notified"],
+          "preconditions": [
+            "agent map exists"
+          ],
+          "postconditions": [
+            "host map progress notified"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Required for agent map progress reporting"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for agent map progress reporting",
+          "anchorPattern": "function ([\\w$]+)\\(\\{session:([\\w$]+),onClick:([\\w$]+)\\}\\)\\{([\\s\\S]{0,600}?\\.rowMain[\\s\\S]{0,500}?),([\\w$]+)\\(\"span\",\\{className:([\\w$]+)\\.rowMeta,children:(\\[[\\s\\S]{0,150}?\\.join\\(\" · \"\\))\\}\\)\\]\\}\\)\\}"
         }
       ]
     },
@@ -386,13 +509,21 @@
           "id": "PATCH-WEBVIEW-CHANNEL-INIT-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "channelInitialized(channel)",
+          "semanticAnchor": "channelInitialized($){let J=this.channels.get($);if(!J)return",
           "moduleScope": null,
-          "preconditions": ["channel manager exists"],
-          "postconditions": ["channel hook notified"],
+          "preconditions": [
+            "channel manager exists"
+          ],
+          "postconditions": [
+            "channel hook notified"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.274-2.1.296"],
-          "justification": "Optional: channel hook for plugin channels"
+          "knownVersions": [
+            "2.1.274-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: channel hook for plugin channels",
+          "anchorPattern": "channelInitialized\\(([\\w$]+)\\)\\{"
         }
       ]
     },
@@ -409,13 +540,21 @@
           "id": "PATCH-WEBVIEW-CHANNEL-SPAWN-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "spawnClaude canUseTool wrapper",
+          "semanticAnchor": ",V,U,B,q,H,Z,F,D,M){Q54();let _=new f71(l9(this.output))",
           "moduleScope": null,
-          "preconditions": ["canUseTool exists"],
-          "postconditions": ["tool usage wrapped"],
+          "preconditions": [
+            "canUseTool exists"
+          ],
+          "postconditions": [
+            "tool usage wrapped"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.274-2.1.296"],
-          "justification": "Optional: wrapper for canUseTool in channels"
+          "knownVersions": [
+            "2.1.274-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: wrapper for canUseTool in channels",
+          "anchorPattern": "async spawnClaude\\(([\\w$]+),([\\w$]+),([\\s\\S]{0,6000}?)canUseTool:([\\w$]+),onUserDialog:([\\w$]+)"
         }
       ]
     },
@@ -432,13 +571,21 @@
           "id": "PATCH-HISTORY-STITCH-COMPACTIONS-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "transcript walk that relinks compaction boundaries",
+          "semanticAnchor": "async function xd4($,J){let Q=new Map;for(let M of $)Q.set(M.uuid,M)",
           "moduleScope": null,
-          "preconditions": ["transcript indexed by uuid"],
-          "postconditions": ["compaction boundaries stitched back"],
+          "preconditions": [
+            "transcript indexed by uuid"
+          ],
+          "postconditions": [
+            "compaction boundaries stitched back"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required to stitch the kept tail of a compaction back into the transcript"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required to stitch the kept tail of a compaction back into the transcript",
+          "anchorPattern": "(async function [\\w$]+\\(([\\w$]+)(?:,[\\w$]+)*\\)\\{let ([\\w$]+)=new Map;for\\(let ([\\w$]+) of \\2\\)\\3\\.set\\(\\4\\.uuid,\\4\\);)(let [\\w$]+=0;for\\(let ([\\w$]+) of \\3\\.values\\(\\)\\)\\{if\\(\\6\\.type!==\"system\"\\|\\|\\6\\.subtype!==\"compact_boundary\"\\)continue;)"
         }
       ]
     },
@@ -455,13 +602,21 @@
           "id": "PATCH-HISTORY-BEFORE-COMPACTION-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "historyBeforeCompaction check",
+          "semanticAnchor": "if(J>qj1&&!U6.CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP)return(await Zj1(",
           "moduleScope": null,
-          "preconditions": ["transcript size > limit"],
-          "postconditions": ["pre-compaction hook called"],
+          "preconditions": [
+            "transcript size > limit"
+          ],
+          "postconditions": [
+            "pre-compaction hook called"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.220-2.1.296"],
-          "justification": "Required for before-compaction hook"
+          "knownVersions": [
+            "2.1.220-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for before-compaction hook",
+          "anchorPattern": "if\\(([\\w$]+)>([\\w$]+)&&!([\\w$]+)\\.CLAUDE_CODE_DISABLE_PRECOMPACT_SKIP\\)(return\\(await [\\w$]+\\()"
         }
       ]
     },
@@ -478,13 +633,21 @@
           "id": "PATCH-HISTORY-AFTER-COMPACTION-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "keepEveryMessage override",
+          "semanticAnchor": "function Ui1($,J){if($.length<=Ba)return{messages:$,removedIndices:[]}",
           "moduleScope": null,
-          "preconditions": ["message count > limit"],
-          "postconditions": ["hook returns override"],
+          "preconditions": [
+            "message count > limit"
+          ],
+          "postconditions": [
+            "hook returns override"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.257-2.1.296"],
-          "justification": "Required for message retention override"
+          "knownVersions": [
+            "2.1.257-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for message retention override",
+          "anchorPattern": "(function [\\w$]+\\(([\\w$]+),[\\w$]+\\)\\{if\\()(\\2\\.length<=[\\w$]+)(\\)return\\{messages:\\2,removedIndices:\\[\\]\\};)"
         }
       ]
     },
@@ -501,13 +664,21 @@
           "id": "PATCH-FORK-BEFORE-COMPACTION-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "beforeCompaction check for fork",
+          "semanticAnchor": "let _=J.sessionId.value;if(!_)return null;let T=J.messages.value",
           "moduleScope": null,
-          "preconditions": ["user message before compaction"],
-          "postconditions": ["fork returns null if before compaction"],
+          "preconditions": [
+            "user message before compaction"
+          ],
+          "postconditions": [
+            "fork returns null if before compaction"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.284-2.1.296"],
-          "justification": "Optional: prevents fork on pre-compaction messages"
+          "knownVersions": [
+            "2.1.284-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: prevents fork on pre-compaction messages",
+          "anchorPattern": "let ([\\w$]+)=([\\w$]+)\\.sessionId\\.value;if\\(!\\1\\)return null;let ([\\w$]+)=\\2\\.messages\\.value,[\\s\\S]{0,160}?\\.indexOf\\(([\\w$]+)\\)"
         }
       ]
     },
@@ -524,13 +695,21 @@
           "id": "PATCH-REWIND-CONTEXT-SECTION-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "beforeCompaction check in rewind context",
+          "semanticAnchor": "if(L.type!==\"user\"||L.isSynthetic||!L.uui",
           "moduleScope": null,
-          "preconditions": ["rewind from Context section"],
-          "postconditions": ["pre-compaction messages excluded from rewind"],
+          "preconditions": [
+            "rewind from Context section"
+          ],
+          "postconditions": [
+            "pre-compaction messages excluded from rewind"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.296"],
-          "justification": "Optional: excludes pre-compaction messages from rewind"
+          "knownVersions": [
+            "2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: excludes pre-compaction messages from rewind",
+          "anchorPattern": "for\\(let ([\\w$]+)=0;\\1<([\\w$]+)\\.length;\\1\\+\\+\\)\\{let ([\\w$]+)=\\2\\[\\1\\];if\\(\\3\\.type!==\"user\"\\|\\|\\3\\.isSynthetic\\|\\|!\\3\\.uuid\\|\\|\\3\\.parentToolUseId\\)continue;"
         }
       ]
     },
@@ -547,13 +726,21 @@
           "id": "PATCH-NO-AUTH-LOGIN-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "opt-out button on the login screen",
+          "semanticAnchor": "className:d6.noteBeneathButton,children:\"Instructions on how to use API k",
           "moduleScope": null,
-          "preconditions": ["user chooses to skip login"],
-          "postconditions": ["auth check bypassed"],
+          "preconditions": [
+            "user chooses to skip login"
+          ],
+          "postconditions": [
+            "auth check bypassed"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Required for non-Anthropic login support"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for non-Anthropic login support",
+          "anchorPattern": "([\\w$]+)\\(\"p\",\\{className:([\\w$]+)\\.noteBeneathButton,children:\"Instructions on how to use API keys or third-party providers\\.\"\\}\\)"
         }
       ]
     },
@@ -570,13 +757,21 @@
           "id": "PATCH-NO-AUTH-GATE-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "isAuthenticated memo that gates the session view",
+          "semanticAnchor": "isAuthenticated=y5(()=>!this.forceLogin.value&&this.hasSessionView.value)",
           "moduleScope": null,
-          "preconditions": ["account check memo available"],
-          "postconditions": ["opt-out honoured by the account check"],
+          "preconditions": [
+            "account check memo available"
+          ],
+          "postconditions": [
+            "opt-out honoured by the account check"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Required for the login opt-out to be honoured by the account check"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for the login opt-out to be honoured by the account check",
+          "anchorPattern": "([\\w$]+)=([\\w$]+)\\(\\(\\)=>!this\\.forceLogin\\.value&&this\\.hasSessionView\\.value\\)"
         }
       ]
     },
@@ -593,13 +788,21 @@
           "id": "PATCH-NO-AUTH-SHOW-LOGIN-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "showLogin() that puts the sign-in screen up",
+          "semanticAnchor": "showLogin(){this.forceLogin.value=!0}",
           "moduleScope": null,
-          "preconditions": ["showLogin reachable after a failed request"],
-          "postconditions": ["opt-out survives a failed request"],
+          "preconditions": [
+            "showLogin reachable after a failed request"
+          ],
+          "postconditions": [
+            "opt-out survives a failed request"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Required for the opt-out to survive a failed request"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Required for the opt-out to survive a failed request",
+          "anchorPattern": "showLogin\\(\\)\\{this\\.forceLogin\\.value=!0\\}"
         }
       ]
     },
@@ -616,13 +819,21 @@
           "id": "PATCH-CCX-CALL-TIME-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "__ccx.callTime hook",
+          "semanticAnchor": "let Z=bb5($,J),X=$.usage?.totalTokens;return[",
           "moduleScope": null,
-          "preconditions": ["call time data available"],
-          "postconditions": ["call time exposed to row"],
+          "preconditions": [
+            "call time data available"
+          ],
+          "postconditions": [
+            "call time exposed to row"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Optional: adds call time to agent map row"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: adds call time to agent map row",
+          "anchorPattern": "function ([\\w$]+)\\(([\\w$]+),([\\w$]+)\\)\\{let ([\\w$]+)=([\\w$]+)\\(\\2,\\3\\),([\\w$]+)=\\2\\.usage\\?\\.totalTokens;return\\["
         }
       ]
     },
@@ -639,13 +850,21 @@
           "id": "PATCH-MAP-PROGRESS-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "mapProgress call",
+          "semanticAnchor": "function kb5({agent:$,waiting:J,onClick:Z}){let X=sl($,J)",
           "moduleScope": null,
-          "preconditions": ["agent map exists"],
-          "postconditions": ["host progress notified"],
+          "preconditions": [
+            "agent map exists"
+          ],
+          "postconditions": [
+            "host progress notified"
+          ],
           "negativeFixtures": [],
-          "knownVersions": ["2.1.280-2.1.296"],
-          "justification": "Optional: reports progress to host"
+          "knownVersions": [
+            "2.1.280-2.1.296",
+            "2.1.312"
+          ],
+          "justification": "Optional: reports progress to host",
+          "anchorPattern": "function ([\\w$]+)\\(\\{agent:([\\w$]+),waiting:([\\w$]+),onClick:([\\w$]+)\\}\\)\\{([\\s\\S]{0,900}?\"data-agent-status\":[\\s\\S]{0,500}?),([\\w$]+)\\(\"span\",\\{className:([\\w$]+)\\.rowMeta,children:([\\w$]+)\\(([\\w$]+),\\{agent:\\2\\}\\)\\}\\)\\]\\}\\)\\}"
         }
       ]
     }

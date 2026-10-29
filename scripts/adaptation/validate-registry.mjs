@@ -80,6 +80,12 @@ if (!Array.isArray(registry.patchPoints) || registry.patchPoints.length === 0) {
 				if (typeof v.moduleScope === 'string' && /^\d+$/.test(v.moduleScope)) {
 					fail(`${vprefix}: numeric module ID not allowed as sole owner identity`);
 				}
+				if ('anchorPattern' in v) {
+					if (typeof v.anchorPattern !== 'string' || !v.anchorPattern) fail(`${vprefix}: anchorPattern must be a non-empty string`);
+					else {
+						try { new RegExp(v.anchorPattern); } catch (err) { fail(`${vprefix}: anchorPattern does not compile: ${err.message}`); }
+					}
+				}
 			}
 			if (p.required === true && allDeprecated) fail(`${prefix}: required patch point with deprecated-only variants`);
 		}
