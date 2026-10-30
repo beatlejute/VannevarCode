@@ -260,13 +260,14 @@ as it was, working and unpatched, and the notification offers *Check for Updates
 an ordinary extension update.
 
 The version number is the Claude Code release the signatures were verified against, so an install that
-says 2.1.312 was checked against Claude Code 2.1.312. The number moves only when Claude Code moves: a
+says 2.1.314 was checked against Claude Code 2.1.314. The number moves only when Claude Code moves: a
 fix made between two builds gets no number of its own and waits for the next build, so anyone who
 already has the current version keeps it until then. One release usually fits several builds, and
 `verifiedAgainst` in the manifest carries the whole list:
 
 | Vannevar Code | Fits Claude Code |
 |---|---|
+| 2.1.314 | 2.1.314, 2.1.312, 2.1.296, 2.1.294, 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.312 | 2.1.312, 2.1.296, 2.1.294, 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.294 | 2.1.294, 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
 | 2.1.293 | 2.1.293, 2.1.292, 2.1.291, 2.1.289, 2.1.288, 2.1.287, 2.1.286, 2.1.285, 2.1.284, 2.1.283, 2.1.282, 2.1.280, 2.1.278, 2.1.276, 2.1.274 |
