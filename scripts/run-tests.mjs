@@ -102,6 +102,7 @@ const testFiles = [
     'test/progress-launch.test.mjs',
     'test/progress-reporting.test.mjs',
     'test/native-progress.test.mjs',
+    'test/progress-patch-launch.test.mjs',
     'test/native-progress-integration.test.mjs',
     'test/progress-delegated-scope.test.mjs',
     'test/progress-state-transport.test.mjs',

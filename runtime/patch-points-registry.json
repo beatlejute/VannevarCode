@@ -45,7 +45,7 @@
           "id": "PATCH-HOST-ENV-FOR-LEGACY",
           "state": "legacy",
           "matcherKind": "legacy-textual",
-          "semanticAnchor": "pathToClaudeCodeExecutable:Cf,env:$5,forkSession:a",
+          "semanticAnchor": "abortController assignment before SDK launch with the same options object",
           "moduleScope": null,
           "preconditions": [
             "envFor hook installed"
@@ -59,7 +59,7 @@
             "2.1.312"
           ],
           "justification": "Required for profile-based environment configuration",
-          "anchorPattern": "([\\w$]+)\\.pathToClaudeCodeExecutable=([\\w$]+),\\1\\.executableArgs=([\\w$]+),\\1\\.env=(\\{[^{}]*\\}|[\\w$]+(?:\\([^()]*\\))?)(,[\\w$]+\\)|;)|pathToClaudeCodeExecutable:([\\w$]+),env:([\\w$]+),forkSession:([\\w$]+)[\\s\\S]{0,600}?resume:([\\w$]+),resumeSessionAt:"
+          "anchorPattern": "([\\w$]+)\\.pathToClaudeCodeExecutable=([\\w$]+),\\1\\.executableArgs=([\\w$]+),\\1\\.env=(\\{[^{}]*\\}|[\\w$]+(?:\\([^()]*\\))?)(,[\\w$]+\\)|;)|([\\w$]+)\\.abortController=([\\w$]+);let ([\\w$]+)=\\(await ([\\w$]+)\\(\\{options:\\6\\}\\)"
         }
       ]
     },

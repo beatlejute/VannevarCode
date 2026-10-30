@@ -132,30 +132,20 @@ const PATCHES = [
         // The object itself goes along as the third argument: envFor clears its `resume` when no transcript exists
         // for that id, and the SDK builds `--resume=<id>` from that field after this expression has run.
         //
-        // 2.1.312 builds the session options as one object literal handed straight to the constructor —
-        // `pathToClaudeCodeExecutable:Cf,env:$5,forkSession:a,…,resume:iH,resumeSessionAt:Pf` — so there is no
-        // options variable to hand over and the env is no longer assigned through one. The hook rides on the
-        // `resume:` property instead: the env object is rebuilt in place (the literal's own `env:` entry already
-        // holds it, so mutating rather than replacing keeps that reference correct) and the property yields the
-        // resume id envFor left behind, which is `undefined` when the transcript was missing.
+        // A deferred launch finishes building its environment inside a callback. Hook its real
+        // options immediately before the SDK call, after those edits and within the launch scope.
+        // SDK constructor literals are outside that scope and must never receive this hook.
         id: 'PATCH-HOST-ENV-FOR',
         file: 'extension.js',
-        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)|pathToClaudeCodeExecutable:([\w$]+),env:([\w$]+),forkSession:([\w$]+)[\s\S]{0,600}?resume:([\w$]+),resumeSessionAt:/,
-        replace: (found, opts, bin, args, env, tail, _nbin, nenv, _nfork, resume) => {
-            if (!nenv)
-                return `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=(()=>{try{` +
-                    HOST_REQUIRE +
-                    `return require(__p).envFor(${env},${opts}.resume,${opts},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){return ${env}}})()${tail}`;
-            const hook =
-                `resume:(()=>{try{let __p=require("path").join(require("os").homedir(),".claude","vannevar","host.js");` +
-                `delete require.cache[require.resolve(__p)];` +
-                `const __o={resume:${resume}},__e=require(__p).envFor(${nenv},${resume},__o,typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null);` +
-                `for(const __k of Object.keys(${nenv}))if(!(__k in __e))delete ${nenv}[__k];` +
-                `Object.assign(${nenv},__e);return __o.resume}catch(__x){return ${resume}}})(),`;
-            return found.replace(`resume:${resume},`, () => hook);
+        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)|([\w$]+)\.abortController=([\w$]+);let ([\w$]+)=\(await ([\w$]+)\(\{options:\6\}\)/,
+        replace: (found, opts, bin, args, env, tail, launchOpts) => {
+            const target = launchOpts || opts;
+            const base = launchOpts ? `${target}.env` : env;
+            const merged = `(()=>{try{` + HOST_REQUIRE +
+                `return require(__p).envFor(${base},${target}.resume,${target},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){return ${base}}})()`;
+            if (launchOpts) return found.replace(';let ', `;${target}.env=${merged};let `);
+            return `${opts}.pathToClaudeCodeExecutable=${bin},${opts}.executableArgs=${args},${opts}.env=${merged}${tail}`;
         },
-        // Both shapes coexist in 2.1.286–2.1.296 — the assignment and the options literal — and only
-        // the literal survives in 2.1.312. Each is its own code path, so hooking both there is right.
         hits: [1, 2],
         where: 'replace',
     },
