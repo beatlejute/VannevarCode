@@ -196,17 +196,18 @@ assert.match(commandReplies.at(-1).text, /Invalid or closed tab/);
 inbound('ordinary message');
 assert.equal(delivered.at(-1).text, 'ordinary message');
 const controlsBefore = delivered.filter((m) => m.type === 'ccx:relayControl').length;
-inbound('/mode auto');
-await wait(20);
-assert.equal(confirmations.length, 1);
-assert.equal(confirmations[0].options.modal, true);
-assert.match(confirmations[0].text, /Second tab/);
-assert.match(commandReplies.at(-1).text, /cancelled/);
-assert.equal(delivered.filter((m) => m.type === 'ccx:relayControl').length, controlsBefore, 'denied escalation never reaches the native setter');
-inbound('/mode ask');
-assert.equal(delivered.at(-1).command, 'mode');
-assert.equal(delivered.at(-1).value, 'ask');
-assert.equal(confirmations.length, 1, 'ask does not require escalation approval');
+for (const mode of ['ask', 'default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions']) {
+    inbound('/mode ' + mode);
+    await wait(20);
+    assert.equal(delivered.at(-1).command, 'mode');
+    assert.equal(delivered.at(-1).value, mode);
+    assert.equal(delivered.at(-1).sessionId, 'session-two');
+}
+assert.equal(confirmations.length, 0, 'an explicit channel mode choice needs no additional IDE approval');
+assert.equal(delivered.filter((m) => m.type === 'ccx:relayControl').length, controlsBefore + 7);
+inbound('/mode invalid');
+assert.match(commandReplies.at(-1).text, /Unknown permission mode/);
+assert.equal(delivered.filter((m) => m.type === 'ccx:relayControl').length, controlsBefore + 7, 'unknown modes never reach the native setter');
 // A reload must retain requests owned by listeners installed by the previous host module.
 const pendingMap = state.relayControls;
 const tabsMap = state.relayCommandTabs;

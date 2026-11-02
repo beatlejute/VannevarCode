@@ -3643,12 +3643,6 @@ async function relayControl(message, command, value) {
     const sessionId = target.__ccxSessionId;
     if (command === 'mode' && value && !['ask', 'default', 'plan', 'acceptEdits', 'auto', 'dontAsk', 'bypassPermissions'].includes(value))
         return relayControlReply(message, 'Unknown permission mode.');
-    if (command === 'mode' && value && !['ask', 'default', 'plan'].includes(value)) {
-        const approved = await vscode.window.showWarningMessage(
-            'Channel requests permission mode "' + value + '" for "' + (target.__ccxTitle || sessionId) + '".',
-            { modal: true }, 'Change mode');
-        if (approved !== 'Change mode') return relayControlReply(message, 'Permission mode change cancelled.');
-    }
     if (!S.webviews.has(target) || target.__ccxSessionId !== sessionId) return relayControlReply(message, 'The receiving tab changed or closed.');
     const requestId = require('crypto').randomUUID();
     const timer = setTimeout(() => {
