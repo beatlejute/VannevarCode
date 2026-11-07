@@ -47,8 +47,11 @@ const PATCHES = [
         optional: true,
         // 2.1.312 wraps the launch in `.finally(...)` before the query is taken, so a single call chain
         // no longer reaches `.query(` from `{options:…}` — the segment between them is skipped, and it
-        // carries no semicolon, so the laziness cannot run past the statement.
-        find: /let ([\w$]+)=\(await ([\w$]+)\(\{options:([\w$]+)\}\)[^;]{0,240}?\)\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
+        // carries no semicolon, so the laziness cannot run past the statement. Later releases drop the
+        // parenthesized await entirely (`let Q=launch({options:O}).finally(...)`), so the whole
+        // chain half is an alternation and the statement is anchored on the query binding itself:
+        // `let Q=<chain>.query(P);return this.trackClaudeProcess(Q),Q`.
+        find: /let ([\w$]+)=(?:\(await ([\w$]+)\(\{options:([\w$]+)\}\)[^;]{0,240}?\)|([\w$]+))\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
         replace: (found, query) => found.replace(';return', ';try{' + HOST_LOAD +
             `require(__p).bindNativeProducer(${query},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){}return`),
         where: 'replace',
@@ -135,9 +138,13 @@ const PATCHES = [
         // A deferred launch finishes building its environment inside a callback. Hook its real
         // options immediately before the SDK call, after those edits and within the launch scope.
         // SDK constructor literals are outside that scope and must never receive this hook.
+        //
+        // The launch itself carries two shapes: the SDK call may sit in parenthesized `let X=(await
+        // FN({options:O}))` or bare `let X=await FN({options:O})`, and the abort-controller
+        // assignment may be followed by more comma-separated assignments before the `;let` lands.
         id: 'PATCH-HOST-ENV-FOR',
         file: 'extension.js',
-        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)|([\w$]+)\.abortController=([\w$]+);let ([\w$]+)=\(await ([\w$]+)\(\{options:\6\}\)/,
+        find: /([\w$]+)\.pathToClaudeCodeExecutable=([\w$]+),\1\.executableArgs=([\w$]+),\1\.env=(\{[^{}]*\}|[\w$]+(?:\([^()]*\))?)(,[\w$]+\)|;)|([\w$]+)\.abortController=([\w$]+)(?:,[\w$]+=[^,;]+)*;let ([\w$]+)=\(?(?:await ([\w$]+)\(\{options:\6\}\))/,
         replace: (found, opts, bin, args, env, tail, launchOpts) => {
             const target = launchOpts || opts;
             const base = launchOpts ? `${target}.env` : env;

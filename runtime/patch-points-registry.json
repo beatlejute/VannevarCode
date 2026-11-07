@@ -59,7 +59,7 @@
             "2.1.312"
           ],
           "justification": "Required for profile-based environment configuration",
-          "anchorPattern": "([\\w$]+)\\.pathToClaudeCodeExecutable=([\\w$]+),\\1\\.executableArgs=([\\w$]+),\\1\\.env=(\\{[^{}]*\\}|[\\w$]+(?:\\([^()]*\\))?)(,[\\w$]+\\)|;)|([\\w$]+)\\.abortController=([\\w$]+);let ([\\w$]+)=\\(await ([\\w$]+)\\(\\{options:\\6\\}\\)"
+          "anchorPattern": "([\\w$]+)\\.pathToClaudeCodeExecutable=([\\w$]+),\\1\\.executableArgs=([\\w$]+),\\1\\.env=(\\{[^{}]*\\}|[\\w$]+(?:\\([^()]*\\))?)(,[\\w$]+\\)|;)|([\\w$]+)\\.abortController=([\\w$]+)(?:,[\\w$]+=[^,;]+)*;let ([\\w$]+)=\\(?(?:await ([\\w$]+)\\(\\{options:\\6\\}\\))"
         }
       ]
     },
@@ -121,7 +121,7 @@
             "2.1.312"
           ],
           "justification": "Required for binding native code production",
-          "anchorPattern": "let ([\\w$]+)=\\(await ([\\w$]+)\\(\\{options:([\\w$]+)\\}\\)[^;]{0,240}?\\)\\.query\\(([\\w$]+)\\);return this\\.trackClaudeProcess\\(\\1\\),\\1"
+          "anchorPattern": "let ([\\w$]+)=(?:\\(await ([\\w$]+)\\(\\{options:([\\w$]+)\\}\\)[^;]{0,240}?\\)|([\\w$]+))\\.query\\(([\\w$]+)\\);return this\\.trackClaudeProcess\\(\\1\\),\\1"
         }
       ]
     },
