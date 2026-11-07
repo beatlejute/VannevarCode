@@ -800,10 +800,20 @@ function editorEnv(base = process.env) {
 
 const PROXY_SCRIPT = path.join(DIR, 'proxy', 'server.mjs');
 
+const ADAPTER_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/;
+
 function localProxyPort(profile) {
-    const url = profileEnv(profile).ANTHROPIC_BASE_URL || '';
-    const match = url.match(/^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/);
+    const match = (profileEnv(profile).ANTHROPIC_BASE_URL || '').match(ADAPTER_URL);
     return match ? Number(match[1]) : null;
+}
+
+// The adapter's first path segment names the upstream it fronts (/codex, /gemini, …) — the same
+// segment `endpointOf()` displays. Without one the URL points straight at a local server of the
+// profile's own: there is no upstream for the adapter to route to, and the port belongs to that
+// server, not to us.
+function adapterUpstream(base) {
+    if (!ADAPTER_URL.test(base)) return '';
+    return base.replace(ADAPTER_URL, '').split(/[?#]/)[0].split('/').filter(Boolean)[0] || '';
 }
 
 function portIsOpen(port) {
@@ -823,6 +833,7 @@ function portIsOpen(port) {
 async function ensureProxy(profile) {
     const port = localProxyPort(profile);
     if (!port || !fs.existsSync(PROXY_SCRIPT)) return;
+    if (!adapterUpstream(profileEnv(profile).ANTHROPIC_BASE_URL || '')) return;
     if (S.proxyStarting) return;
     if (await portIsOpen(port)) return;
 
@@ -1850,10 +1861,8 @@ function endpointOf(name, env) {
         const url = new URL(base);
         // The adapter's first path segment names the upstream it fronts (/codex, /glm, …) — the one
         // thing `127.0.0.1:8787` does not say, and the only part of the URL worth the space.
-        if (port) {
-            const upstream = url.pathname.split('/').filter(Boolean)[0];
-            return upstream ? `adapter :${port} · ${upstream}` : `adapter :${port}`;
-        }
+        const upstream = url.pathname.split('/').filter(Boolean)[0];
+        if (port && upstream) return `adapter :${port} · ${upstream}`;
         return url.host;
     } catch {
         return base;

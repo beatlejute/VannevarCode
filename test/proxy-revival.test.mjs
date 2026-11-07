@@ -30,7 +30,16 @@ writeFileSync(
     join(profiles, 'deepseek.json'),
     JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'https://api.deepseek.com/anthropic', ANTHROPIC_AUTH_TOKEN: 'sk-y' } }),
 );
-writeFileSync(join(runtime, 'bindings.json'), JSON.stringify({ 'sess-codex': 'codex', 'sess-direct': 'deepseek' }));
+// A bare localhost URL with no upstream segment is a local server of the profile's own. The adapter
+// has nothing to front there, and its port is the server's — not something to spawn over.
+writeFileSync(
+    join(profiles, 'llama.json'),
+    JSON.stringify({ env: { ANTHROPIC_BASE_URL: `http://127.0.0.1:${PORT}`, ANTHROPIC_AUTH_TOKEN: 'sk-z' } }),
+);
+writeFileSync(
+    join(runtime, 'bindings.json'),
+    JSON.stringify({ 'sess-codex': 'codex', 'sess-direct': 'deepseek', 'sess-bare': 'llama' }),
+);
 // ensureProxy bails before probing if the adapter script is absent. Child creation is stubbed below,
 // so this script is never executed, even when the test closes the port to exercise a revival.
 writeFileSync(join(runtime, 'proxy', 'server.mjs'), '// stub\n');
@@ -143,7 +152,16 @@ b.send({ type: 'io_message', channelId: 'ch2', message: { type: 'user' } });
 await settle();
 assert.equal(probes, 0, 'a direct provider must not be probed for a local adapter');
 
-// 3. An unbound session resolves to no profile — also nothing to probe.
+// 3. A bare localhost URL names no upstream, so that port belongs to a server of the profile's own.
+const bare = fakeWebview();
+bare.webview.__ccxSessionId = 'sess-bare';
+probes = 0;
+bare.send({ type: 'io_message', channelId: 'ch-bare', message: { type: 'user' } });
+await settle();
+assert.equal(probes, 0, 'a bare localhost profile must not be probed for an adapter');
+assert.equal(spawns.length, 0, 'a bare localhost profile must never have the adapter spawned on its port');
+
+// 4. An unbound session resolves to no profile — also nothing to probe.
 const c = fakeWebview();
 c.webview.__ccxSessionId = 'sess-unknown';
 probes = 0;
@@ -151,7 +169,7 @@ c.send({ type: 'io_message', channelId: 'ch3', message: { type: 'user' } });
 await settle();
 assert.equal(probes, 0, 'an unbound session must not be probed');
 
-// 4. Messages that are not a user turn must not probe on every keystroke of housekeeping traffic.
+// 5. Messages that are not a user turn must not probe on every keystroke of housekeeping traffic.
 const d = fakeWebview();
 d.webview.__ccxSessionId = 'sess-codex';
 probes = 0;
@@ -163,7 +181,7 @@ assert.equal(spawns.length, 0, 'an open adapter port must not spawn a replacemen
 
 await new Promise((r) => server.close(r));
 
-// 5. The first launch must carry the editor settings, not stale values from proxy.json or process.env.
+// 6. The first launch must carry the editor settings, not stale values from proxy.json or process.env.
 a.send({ type: 'launch_claude', channelId: 'ch1', resume: 'sess-codex' });
 await settle();
 assert.equal(spawns.length, 1, 'a closed adapter port must spawn the proxy on launch');
@@ -181,7 +199,7 @@ assert.equal(first.options.env.ELECTRON_RUN_AS_NODE, '1', 'the adapter must run 
 assert.deepEqual({ ...process.env }, ambientEnv, 'spawning the adapter must not mutate the extension host environment');
 assert.equal(unrefs, 1);
 
-// 6. A revival reads the current settings again rather than retaining the first launch's environment.
+// 7. A revival reads the current settings again rather than retaining the first launch's environment.
 configuredEnv = configuredEnv.map((entry) =>
     entry.name === 'HTTPS_PROXY' ? { ...entry, value: 'http://updated-editor-proxy.invalid:8443' } : entry,
 );
@@ -194,7 +212,7 @@ assert.equal(spawns[1].options.env.NODE_EXTRA_CA_CERTS, '/test/proxy-ca.pem');
 assert.deepEqual({ ...process.env }, ambientEnv);
 assert.equal(unrefs, 2);
 
-// 7. The MCP server inherits the editor settings from the CLI and must not replace them with defaults.
+// 8. The MCP server inherits the editor settings from the CLI and must not replace them with defaults.
 // Only probe the local fixture: the direct-provider case above must not launch an outbound probe child.
 rmSync(join(profiles, 'deepseek.json'));
 process.env.VANNEVAR_PROFILES_DIR = profiles;

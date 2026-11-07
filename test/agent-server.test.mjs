@@ -40,6 +40,11 @@ writeProfile('codex', {
         ANTHROPIC_DEFAULT_SONNET_MODEL: 'gpt-5.6-luna',
     },
 });
+// A bare localhost URL names no upstream: that port is a local server of the profile's own, so it is
+// not an adapter endpoint and must never be spawned over.
+writeProfile('llama', {
+    env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:19191', ANTHROPIC_AUTH_TOKEN: 'sk-llama' },
+});
 
 // The module reads these at import time
 process.env.VANNEVAR_PROFILES_DIR = profiles;
@@ -128,6 +133,7 @@ async function main() {
     assert.match(listed, /claude — Anthropic subscription/, 'an empty env means the subscription');
     assert.match(listed, /deepseek — api\.deepseek\.com/, 'a direct provider shows its host');
     assert.match(listed, /codex — local adapter \(codex\)/, 'a 127.0.0.1 profile shows the adapter and its upstream');
+    assert.match(listed, /llama — 127\.0\.0\.1:19191/, 'a bare localhost profile is its own server, not an adapter');
     assert.match(listed, /sonnet=deepseek-v4-flash/, 'family mapping is reported');
 
     // --- env: the calling session's provider must not survive into the delegated run

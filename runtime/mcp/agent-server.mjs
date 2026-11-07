@@ -181,10 +181,19 @@ const CREDENTIAL_KEYS = [
 // as something it is not.
 const SESSION_KEYS = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT'];
 
+const ADAPTER_URL = /^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/;
+
 function localProxyPort(profile) {
-    const url = profileEnv(profile).ANTHROPIC_BASE_URL || '';
-    const match = url.match(/^https?:\/\/(?:127\.0\.0\.1|localhost):(\d+)/);
+    const match = (profileEnv(profile).ANTHROPIC_BASE_URL || '').match(ADAPTER_URL);
     return match ? Number(match[1]) : null;
+}
+
+// The adapter fronts the upstream named by the base URL's first path segment (/codex, /gemini, …).
+// A bare localhost URL names none: it points at a local server of the profile's own, and spawning
+// the adapter there would take the very port that server binds.
+function adapterUpstream(base) {
+    if (!ADAPTER_URL.test(base)) return '';
+    return base.replace(ADAPTER_URL, '').split(/[?#]/)[0].split('/').filter(Boolean)[0] || '';
 }
 
 // Divergence from host.js#envFor: the credential strip is unconditional here. There, the ambient
@@ -335,6 +344,7 @@ function portIsOpen(port) {
 async function ensureProxy(profile) {
     const port = localProxyPort(profile);
     if (!port || !fs.existsSync(PROXY_SCRIPT)) return;
+    if (!adapterUpstream(profileEnv(profile).ANTHROPIC_BASE_URL || '')) return;
     if (await portIsOpen(port)) return;
     try {
         const extraEnv = readJson(path.join(RUNTIME, 'proxy.json'))?.env || {};
@@ -1154,7 +1164,8 @@ function describeProfile(name, now = Date.now(), health = readJson(HEALTH_FILE) 
     if (base) {
         try {
             const url = new URL(base);
-            endpoint = localProxyPort(name) ? `local adapter (${url.pathname.split('/').filter(Boolean)[0]})` : url.host;
+            const upstream = url.pathname.split('/').filter(Boolean)[0];
+            endpoint = localProxyPort(name) && upstream ? `local adapter (${upstream})` : url.host;
         } catch {
             endpoint = base;
         }
