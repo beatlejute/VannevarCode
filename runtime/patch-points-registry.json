@@ -121,7 +121,7 @@
             "2.1.312"
           ],
           "justification": "Required for binding native code production",
-          "anchorPattern": "let ([\\w$]+)=(?:\\(await ([\\w$]+)\\(\\{options:([\\w$]+)\\}\\)[^;]{0,240}?\\)|([\\w$]+))\\.query\\(([\\w$]+)\\);return this\\.trackClaudeProcess\\(\\1\\),\\1"
+          "anchorPattern": "let ([\\w$]+)=(?:\\(await ([\\w$]+)\\(\\{options:([\\w$]+)\\}\\)[^;]{0,240}?\\)|([\\w$]+))\\.query\\(([\\w$]+)\\);[\\s\\S]{0,400}?return this\\.trackClaudeProcess\\(\\1\\),\\1"
         }
       ]
     },
@@ -864,7 +864,7 @@
             "2.1.312"
           ],
           "justification": "Optional: reports progress to host",
-          "anchorPattern": "function ([\\w$]+)\\(\\{agent:([\\w$]+),waiting:([\\w$]+),onClick:([\\w$]+)\\}\\)\\{([\\s\\S]{0,900}?\"data-agent-status\":[\\s\\S]{0,500}?),([\\w$]+)\\(\"span\",\\{className:([\\w$]+)\\.rowMeta,children:([\\w$]+)\\(([\\w$]+),\\{agent:\\2\\}\\)\\}\\)\\]\\}\\)\\}"
+          "anchorPattern": "function ([\\w$]+)\\(\\{agent:([\\w$]+),waiting:([\\w$]+),onClick:([\\w$]+)\\}\\)\\{([\\s\\S]{0,900}?\\.rowTitle[\\s\\S]{0,500}?),([\\w$]+)\\(\"span\",\\{className:([\\w$]+)\\.rowMeta,children:([\\w$]+)\\(([\\w$]+),\\{agent:\\2\\}\\)\\}\\)\\]\\}\\)\\}"
         }
       ]
     }

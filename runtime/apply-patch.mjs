@@ -51,7 +51,9 @@ const PATCHES = [
         // parenthesized await entirely (`let Q=launch({options:O}).finally(...)`), so the whole
         // chain half is an alternation and the statement is anchored on the query binding itself:
         // `let Q=<chain>.query(P);return this.trackClaudeProcess(Q),Q`.
-        find: /let ([\w$]+)=(?:\(await ([\w$]+)\(\{options:([\w$]+)\}\)[^;]{0,240}?\)|([\w$]+))\.query\(([\w$]+)\);return this\.trackClaudeProcess\(\1\),\1/,
+        // 2.1.330 inserts `if(...)` statements between `let Q=...query(P);` and
+        // `return this.trackClaudeProcess(Q),Q`, so the gap is bridged lazily and bounded.
+        find: /let ([\w$]+)=(?:\(await ([\w$]+)\(\{options:([\w$]+)\}\)[^;]{0,240}?\)|([\w$]+))\.query\(([\w$]+)\);[\s\S]{0,400}?return this\.trackClaudeProcess\(\1\),\1/,
         replace: (found, query) => found.replace(';return', ';try{' + HOST_LOAD +
             `require(__p).bindNativeProducer(${query},typeof __ccxSpawnContext!=="undefined"?__ccxSpawnContext:null)}catch(__e){}return`),
         where: 'replace',
@@ -541,9 +543,11 @@ const PATCHES = [
     },
     {
         // Anchor the row's status and meta child together, not an arbitrary text-producing helper.
+        // 2.1.330 dropped the `data-agent-status` attribute, so the title span's `rowTitle`
+        // class carries the marker instead; the row's own `rowMeta` child still bounds the match.
         id: 'PATCH-MAP-PROGRESS',
         file: 'webview/index.js',
-        find: /function ([\w$]+)\(\{agent:([\w$]+),waiting:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,900}?"data-agent-status":[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:([\w$]+)\(([\w$]+),\{agent:\2\}\)\}\)\]\}\)\}/,
+        find: /function ([\w$]+)\(\{agent:([\w$]+),waiting:([\w$]+),onClick:([\w$]+)\}\)\{([\s\S]{0,900}?\.rowTitle[\s\S]{0,500}?),([\w$]+)\("span",\{className:([\w$]+)\.rowMeta,children:([\w$]+)\(([\w$]+),\{agent:\2\}\)\}\)\]\}\)\}/,
         replace: (_found, fn, agent, waiting, click, body, h, styles, metaH, meta) =>
             `function ${fn}({agent:${agent},waiting:${waiting},onClick:${click}}){${body},` +
             `${h}("span",{className:${styles}.rowMeta,children:${metaH}(${meta},{agent:${agent}})}),` +
