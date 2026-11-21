@@ -179,6 +179,18 @@ try {
         assert.doesNotMatch(frameText(), /3\/5/);
     });
 
+    test('task progress paints a bar beside the native frame note', () => {
+        emit();
+        const frame = currentFrame();
+        const head = frame.children.find((child) => child.className === 'ccx-agent-head');
+        const bar = head.children.find((child) => child.tagName === 'progress' && child.className === 'ccx-agent-progress');
+        assert.ok(bar, 'a task with progress gets a progress bar in its frame head');
+        assert.equal(Number(bar.max), 5, 'the bar total is the task progress total');
+        assert.equal(Number(bar.value), 3, 'the bar value is the task progress done');
+        const note = head.children.find((child) => child.className === 'ccx-agent-note');
+        assert.ok(note, 'the note stays beside the bar');
+    });
+
     test('terminal task remains readable after it disappears from the live task map', () => {
         task.status = 'done';
         session.subagentTasks.value = new Map();

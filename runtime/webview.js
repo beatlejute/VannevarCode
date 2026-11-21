@@ -2056,6 +2056,21 @@
         caret.textContent = open ? '▾' : '▸';
         var title = ensureChild(head, 'ccx-agent-title', 'span');
         if (title.textContent !== meta.title) title.textContent = meta.title;
+        var progressBar = null;
+        for (var i = 0; i < head.children.length; i++) {
+            if (head.children[i].className === 'ccx-agent-progress') { progressBar = head.children[i]; break; }
+        }
+        if (meta.progress) {
+            if (!progressBar) {
+                progressBar = document.createElement('progress');
+                progressBar.className = 'ccx-agent-progress';
+                head.appendChild(progressBar);
+            }
+            progressBar.max = meta.progress.total;
+            progressBar.value = meta.progress.done;
+        } else if (progressBar) {
+            progressBar.remove();
+        }
         var note = ensureChild(head, 'ccx-agent-note', 'span');
         if (note.textContent !== meta.note) note.textContent = meta.note;
 
@@ -2205,11 +2220,19 @@
         var binding = nativeScopes[block.id];
         var semantic = binding && scopeSemantic[binding.scopeId];
         var semanticNote = semantic ? semantic.done + '/' + semantic.total : '';
+        var progress = null;
+        if (task && task.progress && typeof task.progress === 'object') {
+            var pd = task.progress.done, pt = task.progress.total;
+            if (Number.isInteger(pd) && Number.isInteger(pt) && pt > 0 && pd >= 0 && pd <= pt) {
+                progress = { done: pd, total: pt, note: typeof task.progress.note === 'string' ? task.progress.note : '' };
+            }
+        }
         return {
             running: running,
             state: running ? 'running' : 'done',
             title: name + (description ? ' · ' + description : ''),
             note: [activityHealth, elapsedStr, tools ? tools + ' tool calls' : '', tokens, usageStr, semanticNote, identity].filter(Boolean).join(' · '),
+            progress: progress,
         };
     }
 
@@ -2314,6 +2337,9 @@
                         meta.note = semantic.done + '/' + semantic.total
                             + (typeof semantic.note === 'string' && semantic.note ? ' · ' + semantic.note : '')
                             + ' · ' + meta.note;
+                        if (semantic.done >= 0 && semantic.done <= semantic.total) {
+                            meta.progress = { done: semantic.done, total: semantic.total, note: typeof semantic.note === 'string' ? semantic.note : '' };
+                        }
                     }
                     paintFrame(host, block.id, open, meta, tree);
                 } else {
@@ -2664,7 +2690,9 @@
             // identity check below is what "nothing to do" means.
             var wanted = mapEntriesFor();
             var memo = {};
+            var delegatedCalls = new Set();
             for (var i = 0; i < wanted.length; i++) {
+                delegatedCalls.add(wanted[i].toolUseId);
                 var stamp = JSON.stringify(wanted[i]);
                 var prev = mapMemo[wanted[i].taskId];
                 if (prev && prev.stamp === stamp) wanted[i] = prev.entry;
@@ -2676,13 +2704,15 @@
             for (var j = 0; j < wanted.length && !dirty; j++) if (current.get(wanted[j].taskId) !== wanted[j]) dirty = true;
             if (!dirty)
                 current.forEach(function (entry, key) {
-                    if (isMapEntry(key) && !memo[key]) dirty = true;
+                    if (isMapEntry(key) ? !memo[key] : delegatedCalls.has(entry.toolUseId)) dirty = true;
                 });
             if (!dirty) return;
 
             var next = new Map();
             current.forEach(function (entry, key) {
-                if (!isMapEntry(key)) next.set(key, entry);
+                // Stock task notifications can also create a row for a delegated call.
+                // Keep its manifest-backed row, but leave unrelated stock agents intact.
+                if (!isMapEntry(key) && !delegatedCalls.has(entry.toolUseId)) next.set(key, entry);
             });
             for (var k = 0; k < wanted.length; k++) next.set(wanted[k].taskId, wanted[k]);
             signal.value = next;
@@ -5925,6 +5955,7 @@
         '.ccx-agent-caret{flex:0 0 auto;width:10px;opacity:.6}',
         '.ccx-agent-title{flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.95}',
         '.ccx-agent-note{margin-left:auto;flex:0 0 auto;opacity:.55;font-size:10px;white-space:nowrap}',
+        '.ccx-agent-progress{flex:0 0 auto;width:96px;height:7px;margin-left:6px;accent-color:var(--vscode-progressBar-background, var(--vscode-textLink-foreground))}',
         // Capped and scrollable rather than free to grow: a long run would otherwise push the rest of
         // the turn off the screen every time it printed a line.
         '.ccx-agent-frame[data-ccx-open="0"] .ccx-agent-body{display:none}',

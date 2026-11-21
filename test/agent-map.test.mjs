@@ -402,6 +402,22 @@ assert.ok(!entry('ccx:run:' + nested.session), 'the same child is not also place
 assert.equal([...mapValue.values()].filter((e) => e.ccxSession === nested.session).length, 1, 'one live run has one card');
 messages.value = savedMessages;
 
+// A stock task notification can add a second row for the same delegated tool call.
+const stockDelegate = { taskId: 'native-delegate', toolUseId: 'toolu_live', description: 'deepseek · Review host', status: 'working' };
+fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative] });
+mapValue = new Map([...mapValue, [stockDelegate.taskId, stockDelegate]]);
+fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative] });
+assert.equal([...mapValue.values()].filter((e) => e.toolUseId === 'toolu_live').length, 1, 'a stock task row and a delegated row for one call become one card');
+assert.equal(entry('ccx:toolu_live').model, liveRun.servedModel, 'the manifest-backed card keeps the served model');
+assert.equal(entry(native.taskId), native, 'unrelated stock agents remain untouched');
+const reconciledWrites = writes;
+fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative] });
+assert.equal(writes, reconciledWrites, 'reconciling the stock duplicate settles without repeated writes');
+mapValue = new Map([[native.taskId, native], [stockDelegate.taskId, stockDelegate]]);
+fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative] });
+assert.ok(!entry(stockDelegate.taskId), 'replaying the stock map does not bring the duplicate back');
+assert.equal(entry('ccx:toolu_live').ccxSession, liveRun.session, 'the surviving card still opens the delegated transcript');
+
 // --- the card's buttons ----------------------------------------------------------------------------
 
 fromHost({ type: 'ccx:agentRuns', runs: [liveRun, underNative, orphan, nested] });
